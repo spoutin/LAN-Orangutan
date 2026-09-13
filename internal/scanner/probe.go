@@ -2,7 +2,9 @@ package scanner
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -70,19 +72,102 @@ func enrichWithServices(ctx context.Context, devices []types.Device) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			ports := probeServices(ctx, d.IP)
+			ports := d.OpenPorts
+			if len(ports) == 0 {
+				ports = probeServices(ctx, d.IP)
+			}
+
 			// Re-classify with the port evidence. Only overwrite when the fuller
 			// signal yields a type, so a probe that finds nothing does not wipe
 			// the vendor or hostname guess made earlier.
 			if t := Classify(d.Vendor, d.Hostname, ports); t != "" {
 				d.Type = t
 			}
-			d.WebUI = hasWebPort(ports)
+
+			// Check for web servers on open ports
+			webPortDetected := 0
+			for _, p := range ports {
+				if isWebPort(ctx, d.IP, p) {
+					webPortDetected = p
+					break
+				}
+			}
+
+			d.WebUI = webPortDetected > 0
+			if webPortDetected > 0 {
+				// Record the port if it's non-standard (standard ports 80/443 don't need port suffix in link)
+				if webPortDetected != 80 && webPortDetected != 443 {
+					d.WebPort = webPortDetected
+				}
+			}
 			d.Risks = risksFromPorts(ports)
 		}(&devices[i])
 	}
 
 	wg.Wait()
+}
+
+// isWebPort checks if an open port serves an HTTP/HTTPS web interface.
+func isWebPort(ctx context.Context, ip string, port int) bool {
+	// 1. Check standard list first
+	if webPorts[port] {
+		return true
+	}
+
+	// Skip standard non-web ports immediately to avoid noise and slow connections
+	switch port {
+	case 21, 22, 23, 25, 110, 143, 445, 515, 631, 9100, 3389:
+		return false
+	}
+
+	// 2. Dynamic HTTP handshake probe
+	url := "http://" + net.JoinHostPort(ip, strconv.Itoa(port))
+	req, err := http.NewRequestWithContext(ctx, "HEAD", url, nil)
+	if err != nil {
+		return false
+	}
+
+	// Use a very light client with extremely short timeout
+	client := &http.Client{
+		Timeout: 200 * time.Millisecond,
+		// Do not follow redirects (if it redirects, it means there is a web server!)
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resp, err := client.Do(req)
+	if err == nil {
+		resp.Body.Close()
+		return true
+	}
+
+	// Fallback to HTTPS probe if HTTP failed
+	urlTLS := "https://" + net.JoinHostPort(ip, strconv.Itoa(port))
+	reqTLS, err := http.NewRequestWithContext(ctx, "HEAD", urlTLS, nil)
+	if err != nil {
+		return false
+	}
+
+	// Create insecure client for self-signed certificates
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	clientTLS := &http.Client{
+		Timeout:   200 * time.Millisecond,
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	respTLS, err := clientTLS.Do(reqTLS)
+	if err == nil {
+		respTLS.Body.Close()
+		return true
+	}
+
+	return false
 }
 
 // probeServices attempts a TCP connection to each port in serviceProbePorts and
@@ -116,16 +201,6 @@ func probeServices(ctx context.Context, ip string) []int {
 	return open
 }
 
-// hasWebPort reports whether any of the probed open ports is a web port.
-func hasWebPort(ports []int) bool {
-	for _, p := range ports {
-		if webPorts[p] {
-			return true
-		}
-	}
-	return false
-}
-
 // risksFromPorts turns the open ports into any security concerns they imply, in
 // the fixed order of serviceProbePorts so the result is stable.
 func risksFromPorts(ports []int) []string {
@@ -142,4 +217,14 @@ func risksFromPorts(ports []int) []string {
 		}
 	}
 	return risks
+}
+
+// hasWebPort reports whether any of the probed open ports is a web port.
+func hasWebPort(ports []int) bool {
+	for _, p := range ports {
+		if webPorts[p] {
+			return true
+		}
+	}
+	return false
 }

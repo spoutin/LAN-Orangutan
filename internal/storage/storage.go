@@ -218,6 +218,9 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		if device.CustomType == "" {
 			device.CustomType = existing.CustomType
 		}
+		if device.WebPort == 0 {
+			device.WebPort = existing.WebPort
+		}
 		if device.FirstSeen.IsZero() {
 			device.FirstSeen = existing.FirstSeen
 		}
@@ -425,6 +428,7 @@ func (s *Storage) addNewDeviceLocked(d *types.Device, now time.Time) {
 			d.CustomHostname = old.CustomHostname
 			d.CustomWebURL = old.CustomWebURL
 			d.CustomType = old.CustomType
+			d.WebPort = old.WebPort
 			d.FirstSeen = old.FirstSeen
 			if d.Type == "" {
 				d.Type = old.Type

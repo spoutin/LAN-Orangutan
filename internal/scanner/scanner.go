@@ -17,18 +17,22 @@ import (
 
 // Scanner performs network scans
 type Scanner struct {
-	minInterval time.Duration
+	minInterval      time.Duration
 	// serviceDetection turns on the opt-in probe that identifies devices by
 	// their open ports. Off by default; a scan stays a quiet ping sweep.
 	serviceDetection bool
+	enablePortScan   bool
+	portScanRange    string
 }
 
 // New creates a new Scanner. serviceDetection enables the opt-in port probe
 // used to identify devices more precisely.
-func New(minIntervalSeconds int, serviceDetection bool) *Scanner {
+func New(minIntervalSeconds int, serviceDetection bool, enablePortScan bool, portScanRange string) *Scanner {
 	return &Scanner{
 		minInterval:      time.Duration(minIntervalSeconds) * time.Second,
 		serviceDetection: serviceDetection,
+		enablePortScan:   enablePortScan,
+		portScanRange:    portScanRange,
 	}
 }
 
@@ -38,12 +42,27 @@ type nmapRun struct {
 	Hosts   []nmapHost `xml:"host"`
 }
 
+type nmapPorts struct {
+	Ports []nmapPort `xml:"port"`
+}
+
+type nmapPort struct {
+	PortID   int           `xml:"portid,attr"`
+	Protocol string        `xml:"protocol,attr"`
+	State    nmapPortState `xml:"state"`
+}
+
+type nmapPortState struct {
+	State string `xml:"state,attr"`
+}
+
 // nmapHost represents a host element in nmap XML output
 type nmapHost struct {
 	Status    nmapStatus    `xml:"status"`
 	Addresses []nmapAddress `xml:"address"`
 	Hostnames nmapHostnames `xml:"hostnames"`
 	Times     nmapTimes     `xml:"times"`
+	Ports     nmapPorts     `xml:"ports"`
 }
 
 // nmapStatus represents the host status
@@ -161,8 +180,14 @@ func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device
 		return nil, "", fmt.Errorf("nmap not found")
 	}
 
-	// Run nmap with ping scan and XML output
-	cmd := exec.CommandContext(ctx, "nmap", "-sn", "-oX", "-", cidr)
+	// Run nmap with ping scan or port scan and XML output
+	var args []string
+	if s.enablePortScan && s.portScanRange != "" {
+		args = []string{"-p", s.portScanRange, "-oX", "-", cidr}
+	} else {
+		args = []string{"-sn", "-oX", "-", cidr}
+	}
+	cmd := exec.CommandContext(ctx, "nmap", args...)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, "", fmt.Errorf("nmap failed: %w", err)
@@ -224,10 +249,19 @@ func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device
 			}
 		}
 
+		// Extract open ports if present
+		var openPorts []int
+		for _, port := range host.Ports.Ports {
+			if port.State.State == "open" {
+				openPorts = append(openPorts, port.PortID)
+			}
+		}
+		device.OpenPorts = openPorts
+
 		// Infer the device type from the vendor and hostname. Port signals are
 		// not available here yet; a ping scan finds no open ports. Opt-in
 		// service detection will pass them in a later step.
-		device.Type = Classify(device.Vendor, device.Hostname, nil)
+		device.Type = Classify(device.Vendor, device.Hostname, openPorts)
 
 		devices = append(devices, device)
 	}

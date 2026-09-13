@@ -33,7 +33,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	store.SetNetworkNames(cfg.Scanning.NetworkNames)
 
 	// Create scanner
-	s := scanner.New(cfg.Scanning.MinScanInterval, cfg.Scanning.EnableServiceDetection)
+	s := scanner.New(cfg.Scanning.MinScanInterval, cfg.Scanning.EnableServiceDetection, cfg.Scanning.EnablePortScan, cfg.Scanning.PortScanRange)
 
 	// Determine networks to scan
 	var networks []string

@@ -43,7 +43,7 @@ func NewHandler(store *storage.Storage, cfg *config.Config) *Handler {
 	return &Handler{
 		store:   store,
 		cfg:     cfg,
-		scanner: scanner.New(cfg.Scanning.MinScanInterval, cfg.Scanning.EnableServiceDetection),
+		scanner: scanner.New(cfg.Scanning.MinScanInterval, cfg.Scanning.EnableServiceDetection, cfg.Scanning.EnablePortScan, cfg.Scanning.PortScanRange),
 		scanCtx: context.Background(),
 	}
 }
