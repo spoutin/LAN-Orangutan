@@ -21,6 +21,13 @@ func runNetworks(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to detect networks: %w", err)
 	}
 
+	// Override FriendlyName using our custom network names configuration
+	for i, n := range networks {
+		if name, ok := cfg.Scanning.NetworkNames[n.CIDR]; ok {
+			networks[i].FriendlyName = name
+		}
+	}
+
 	if len(networks) == 0 {
 		fmt.Println("No networks detected")
 		return nil

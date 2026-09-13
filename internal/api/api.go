@@ -229,7 +229,6 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
-
 // handleNetworks handles GET /api/networks
 func (h *Handler) handleNetworks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -242,7 +241,17 @@ func (h *Handler) handleNetworks(w http.ResponseWriter, r *http.Request) {
 		h.error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.success(w, network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks}))
+
+	compiled := network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
+
+	// Override FriendlyName using our custom network names configuration
+	for i, n := range compiled {
+		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
+			compiled[i].FriendlyName = name
+		}
+	}
+
+	h.success(w, compiled)
 }
 
 // handleScan handles GET /api/scan

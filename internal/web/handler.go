@@ -378,6 +378,13 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	networks, _ := network.DetectNetworks()
 	networks = network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
 
+	// Override FriendlyName using our custom network names configuration
+	for i, n := range networks {
+		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
+			networks[i].FriendlyName = name
+		}
+	}
+
 	// Get Tailscale status
 	tailscale := network.GetTailscaleStatus()
 
