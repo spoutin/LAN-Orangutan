@@ -183,24 +183,70 @@ function showScanProgress(p) {
     panel.style.display = 'flex';
 
     const title = document.getElementById('scan-title');
-    if (title) title.textContent = p.current_network ? `Scanning ${p.current_network}` : 'Starting scan...';
+    const cancelBtn = document.getElementById('scan-cancel');
+
+    const isFinished = p.status === 'done' || p.status === 'cancelled' || p.status === 'failed';
+
+    if (p.status === 'done') {
+        if (title) title.textContent = 'Scan Complete!';
+        if (cancelBtn) {
+            cancelBtn.textContent = 'Close';
+            cancelBtn.onclick = function() {
+                hideScanProgress();
+                refreshAfterScan();
+            };
+        }
+    } else if (p.status === 'failed') {
+        if (title) title.textContent = 'Scan Failed';
+        if (cancelBtn) {
+            cancelBtn.textContent = 'Close';
+            cancelBtn.onclick = function() {
+                hideScanProgress();
+                refreshAfterScan();
+            };
+        }
+    } else if (p.status === 'cancelled') {
+        if (title) title.textContent = 'Scan Cancelled';
+        if (cancelBtn) {
+            cancelBtn.textContent = 'Close';
+            cancelBtn.onclick = function() {
+                hideScanProgress();
+                refreshAfterScan();
+            };
+        }
+    } else {
+        if (title) {
+            let currentName = p.current_network_name ? `${p.current_network_name} (${p.current_network})` : p.current_network;
+            title.textContent = p.current_network ? `Scanning ${currentName}` : 'Starting scan...';
+        }
+        if (cancelBtn) {
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.onclick = cancelScan;
+        }
+    }
 
     // percent is -1 when the network has never been scanned and there is no
     // timing history to estimate from. Show a sweeping bar rather than a
     // made-up number.
     const bar = document.getElementById('scan-bar');
     const fill = document.getElementById('scan-bar-fill');
-    const known = p.percent >= 0;
+    const known = p.percent >= 0 || isFinished;
     if (bar) bar.classList.toggle('indeterminate', !known);
-    if (fill) fill.style.width = known ? `${Math.min(100, p.percent)}%` : '';
+    if (fill) fill.style.width = isFinished ? '100%' : (known ? `${Math.min(100, p.percent)}%` : '');
 
     const detail = document.getElementById('scan-detail');
     if (detail) {
-        const parts = [];
-        if (p.network_count > 1) parts.push(`Network ${p.network_index} of ${p.network_count}`);
-        if (p.current_network) parts.push(p.current_network);
-
-        detail.textContent = parts.join(' · ');
+        if (isFinished) {
+            detail.textContent = `Completed in ${formatSeconds(p.elapsed)}`;
+        } else {
+            const parts = [];
+            if (p.network_count > 1) parts.push(`Network ${p.network_index} of ${p.network_count}`);
+            if (p.current_network) {
+                let currentName = p.current_network_name ? `${p.current_network_name} (${p.current_network})` : p.current_network;
+                parts.push(currentName);
+            }
+            detail.textContent = parts.join(' · ');
+        }
     }
 
     // The running total gets its own line. Appended to the line above it wrapped
@@ -211,24 +257,84 @@ function showScanProgress(p) {
     // rather than an unfinished one.
     const count = document.getElementById('scan-count');
     if (count) {
-        count.textContent = p.device_count > 0
-            ? `${p.device_count} device${p.device_count === 1 ? '' : 's'} found`
-            : '';
+        let countText = '';
+        if (p.device_count > 0) {
+            countText = `${p.device_count} device${p.device_count === 1 ? '' : 's'} found`;
+            if (p.new_device_count > 0) {
+                countText += ` (${p.new_device_count} new)`;
+            }
+        } else if (isFinished) {
+            countText = 'No devices found';
+        }
+        count.textContent = countText;
     }
 
     const eta = document.getElementById('scan-eta');
     if (eta) {
-        eta.textContent = known && p.remaining != null
-            ? `~${formatSeconds(p.remaining)} left · ${Math.round(p.percent)}%`
-            : `${formatSeconds(p.elapsed)} elapsed`;
+        if (isFinished) {
+            eta.textContent = '';
+        } else {
+            eta.textContent = known && p.remaining != null
+                ? `~${formatSeconds(p.remaining)} left · ${Math.round(p.percent)}%`
+                : `${formatSeconds(p.elapsed)} elapsed`;
+        }
     }
 
     // Set expectations explicitly while there is nothing to report yet.
     const hint = document.getElementById('scan-hint');
     if (hint) {
-        hint.textContent = p.device_count > 0
-            ? ''
-            : 'Checking every address on the network. Devices are listed once the sweep finishes.';
+        if (p.error) {
+            hint.textContent = p.error;
+            hint.style.color = '#ef4444';
+        } else {
+            hint.style.color = '';
+            hint.textContent = p.device_count > 0 || isFinished
+                ? ''
+                : 'Checking every address on the network. Devices are listed once the sweep finishes.';
+        }
+    }
+
+    // Dynamic completed subnets list
+    let detailsContainer = document.getElementById('scan-details-container');
+    let detailsList = document.getElementById('scan-details-list');
+
+    // Create container dynamically if it doesn't exist
+    if (!detailsContainer && panel) {
+        detailsContainer = document.createElement('div');
+        detailsContainer.id = 'scan-details-container';
+        detailsContainer.className = 'scan-details-container';
+
+        const header = document.createElement('div');
+        header.className = 'scan-details-header';
+        header.textContent = 'Completed Subnets:';
+        detailsContainer.appendChild(header);
+
+        detailsList = document.createElement('div');
+        detailsList.id = 'scan-details-list';
+        detailsList.className = 'scan-details-list';
+        detailsContainer.appendChild(detailsList);
+
+        panel.appendChild(detailsContainer);
+    }
+
+    if (detailsContainer && detailsList) {
+        if (p.networks && p.networks.length > 0) {
+            detailsContainer.style.display = 'block';
+            detailsList.innerHTML = p.networks.map(n => {
+                const nameLabel = n.network_name ? `${n.network_name} (${n.network})` : n.network;
+                const statusBadge = `<span class="scan-status-badge ${n.status}">${n.status}</span>`;
+                const durationText = n.duration ? `in ${formatSeconds(n.duration)}` : '';
+                return `
+                    <div class="scan-detail-row">
+                        <span class="scan-detail-network">${nameLabel}</span>
+                        <span class="scan-detail-status">${statusBadge}</span>
+                        <span class="scan-detail-summary">${n.device_count} found ${durationText}</span>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            detailsContainer.style.display = 'none';
+        }
     }
 }
 
@@ -283,8 +389,12 @@ async function followScan() {
         // scanner has taken the single job slot, so there is nothing of the
         // user's left to follow. Automatic scans never own the overlay.
         if (progress.status !== 'running' || progress.automatic) {
-            hideScanProgress();
-            if (!progress.automatic) reportScanOutcome(progress);
+            if (!progress.automatic && (progress.status === 'done' || progress.status === 'cancelled' || progress.status === 'failed')) {
+                showScanProgress(progress);
+            } else {
+                hideScanProgress();
+                if (!progress.automatic) reportScanOutcome(progress);
+            }
             return;
         }
         showScanProgress(progress);
@@ -356,7 +466,7 @@ function filterDevices() {
 
     let visible = 0;
     document.querySelectorAll('.device-row').forEach(row => {
-        const text = [row.dataset.ip, row.dataset.hostname, row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type].join(' ').toLowerCase();
+        const text = [row.dataset.ip, row.dataset.hostname, row.dataset.customHostname || '', row.dataset.customWebUrl || '', row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type, row.dataset.network || '', row.dataset.assignment || ''].join(' ').toLowerCase();
         const status = row.dataset.status;
         const group = row.dataset.group || '';
 
@@ -386,6 +496,8 @@ function editDevice(ip) {
     document.getElementById('edit-ip').value = ip;
     document.getElementById('edit-ip-display').value = ip;
     document.getElementById('edit-label').value = row.dataset.labelOriginal || '';
+    document.getElementById('edit-custom-hostname').value = row.dataset.customHostnameOriginal || '';
+    document.getElementById('edit-custom-web-url').value = row.dataset.customWebUrlOriginal || '';
     document.getElementById('edit-group').value = row.dataset.group || '';
     document.getElementById('edit-notes').value = row.dataset.notes || '';
     modal.style.display = 'flex';
@@ -399,10 +511,12 @@ function closeModal() {
 async function saveDevice() {
     const ip = document.getElementById('edit-ip').value;
     const label = document.getElementById('edit-label').value;
+    const custom_hostname = document.getElementById('edit-custom-hostname').value;
+    const custom_web_url = document.getElementById('edit-custom-web-url').value;
     const group = document.getElementById('edit-group').value;
     const notes = document.getElementById('edit-notes').value;
     try {
-        const result = await api('device', { ip, label, group, notes }, 'POST');
+        const result = await api('device', { ip, label, custom_hostname, custom_web_url, group, notes }, 'POST');
         if (result.success) {
             showToast('Device updated', 'success');
             closeModal();
@@ -1209,4 +1323,99 @@ async function disconnectTailscale() {
         if (el && !el.contains(e.relatedTarget)) hide();
     });
     window.addEventListener('scroll', hide, { passive: true });
+})();
+
+(function initResizableColumns() {
+    const table = document.getElementById('devices-table');
+    if (!table) return;
+
+    const storageKey = 'lan-orangutan-col-widths';
+
+    // Apply saved widths
+    function applySavedWidths() {
+        try {
+            const saved = localStorage.getItem(storageKey);
+            if (!saved) return;
+            const widths = JSON.parse(saved);
+            Object.keys(widths).forEach(className => {
+                const elements = table.querySelectorAll('.' + className);
+                elements.forEach(el => {
+                    el.style.width = widths[className];
+                });
+            });
+        } catch (e) {
+            console.error('Failed to apply column widths', e);
+        }
+    }
+
+    // Initialize drag handles
+    function initHandles() {
+        const headers = table.querySelectorAll('thead th');
+        headers.forEach((th, i) => {
+            // No resize handle on the status and action columns
+            if (th.classList.contains('col-status') || th.classList.contains('col-actions')) return;
+
+            // Remove existing handle if any
+            const existing = th.querySelector('.col-resize-handle');
+            if (existing) existing.remove();
+
+            const handle = document.createElement('div');
+            handle.className = 'col-resize-handle';
+            th.appendChild(handle);
+
+            let startX, startWidth;
+
+            handle.addEventListener('mousedown', function (e) {
+                e.preventDefault();
+                startX = e.pageX;
+                startWidth = th.offsetWidth;
+                handle.classList.add('resizing');
+
+                function onMouseMove(e) {
+                    const width = startWidth + (e.pageX - startX);
+                    // Minimum width constraint
+                    const minWidth = 40;
+                    const finalWidth = Math.max(minWidth, width) + 'px';
+
+                    // Apply the width to all cells in this column (by matching class name)
+                    const colClass = Array.from(th.classList).find(c => c.startsWith('col-'));
+                    if (colClass) {
+                        const cells = table.querySelectorAll('.' + colClass);
+                        cells.forEach(cell => {
+                            cell.style.width = finalWidth;
+                        });
+                    }
+                }
+
+                function onMouseUp() {
+                    handle.classList.remove('resizing');
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+
+                    // Save new widths of all columns
+                    const widths = {};
+                    table.querySelectorAll('thead th').forEach(h => {
+                        const colClass = Array.from(h.classList).find(c => c.startsWith('col-'));
+                        if (colClass && h.style.width) {
+                            widths[colClass] = h.style.width;
+                        }
+                    });
+                    localStorage.setItem(storageKey, JSON.stringify(widths));
+                }
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+        });
+    }
+
+    // Run on boot
+    applySavedWidths();
+    initHandles();
+
+    // Re-apply widths and recreate handles after in-place auto refreshes
+    window.addEventListener('devices-refreshed', function() {
+        applySavedWidths();
+        initHandles();
+    });
 })();

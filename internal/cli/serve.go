@@ -74,6 +74,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
+	store.SetNetworkNames(cfg.Scanning.NetworkNames)
 
 	// A password from the config file or environment wins. Otherwise fall back
 	// to one created earlier through the setup page.

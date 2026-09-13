@@ -23,6 +23,42 @@ By [291 Group](https://291group.com)
   <img src="docs/LO2.png" width="48%" />
 </p>
 
+## 🚀 Homelab & IPAM Enhancements (Fork Upgrades)
+
+This fork elevates LAN Orangutan into a lightweight, fully automated **IPAM (IP Address Management) and IT Inventory system** tailored for homelabs and virtualized environments. 
+
+The following key enhancements have been integrated:
+
+### 📡 Active Router IPAM Integrations (OpenWrt & OPNsense)
+* **Native Go Client Integrations:** Built native clients utilizing Go's high-performance standard library to poll your local routers securely (supporting Basic Auth, Bearer Tokens, and custom/self-signed SSL certificates).
+* **DHCP Lease Merging:** Queries **OPNsense** (Kea DHCP leases and reservations) and **OpenWrt** (leases and static host reservations) and dynamically merges them with your live Nmap scans.
+* **Firewall ARP Tables:** Pulls OPNsense's active ARP tables to find and register other active IP addresses on routed subnets/VLANs, and merges them as secondary discovery.
+
+### 🏷️ Intelligent IP & Subnet Management
+* **Subnet Naming & Auto-Scanning:** Define your subnets and friendly names once in `config.ini` under `[network_names]`. The scanning scheduler automatically derives its scan list from these keys—completely eliminating duplicate configuration entry!
+* **Allocation Categorization badges:** Displays responsive, colorful badges indicating how a device obtained its IP:
+  * <span style="color:#10b981">**Static**</span> (authorized router static reservation)
+  * <span style="color:#3b82f6">**Dynamic**</span> (active dynamic DHCP lease)
+  * <span style="color:#f59e0b">**Discovered**</span> (scanned-only / manually configured IP)
+* **Authoritative DHCP Hostnames:** Automatically prioritizes precise client-registered hostnames obtained from your DHCP server over blank or generic DNS sweep names.
+
+### 🔄 Cluster & VM Migration Friendly (MAC-Matched Customizations)
+* **Hostname & Web URL Overrides:** Manually override any device's hostname or web administration link directly from the browser's Edit Modal.
+* **Proxmox / VM Migration Safe:** All user customizations (hostname overrides, web URL overrides, labels, group classifications, and notes) are mapped to physical hardware MAC addresses. **If your virtual machine or container migrates nodes (e.g. in Proxmox) and changes IP address, your overrides and notes dynamically follow it to the new IP address!**
+* **Instant Overridden Search:** Manual hostname and web URL overrides are indexed in the instant row-search query, so searching "My-Custom-Server" works instantly on the grid.
+* **Hover Tooltips:** Hovering over overridden hostnames pops up an instant tooltip displaying the original scanned name.
+
+### 📊 Interactive Table Columns & Drag-Resizing
+* **Drag-to-Resize Columns:** Click and drag the header column borders to set custom column widths. Handles are colored with your active theme accent.
+* **Refreshed-Safe Memory:** Your column width preferences are saved in `localStorage` and automatically preserved across refreshes and background auto-scans.
+* **Responsive Column Hiding:** Tablet-width responsive column hiding has been upgraded to class-based targeting, preventing table layout bugs on mobile devices.
+
+### 🔔 Rich In-Progress & Completed Scan Reports
+* **Subnet-Name Progress Tracking:** Live scan headers resolve named subnets (e.g. `Scanning black (10.5.5.0/24)`).
+* **Completed Subnets Live-List:** Displays a dynamic table inside the scanning progress overlay containing completed subnets, durations, device counts, and outcome badges (`Scanned`, `Skipped`, `Failed`).
+* **New Devices Discovered Counter:** Live-tracks how many brand-new devices were registered in the inventory during the active sweep (e.g., `32 devices found (3 new)`).
+* **Summary Review on Completion:** Overlay stays open on completion, allowing you to review detailed subnet statistics and new devices before clicking `Close` to reload.
+
 ## Features
 
 - Auto-discover devices using nmap<br>

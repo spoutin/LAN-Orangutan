@@ -15,23 +15,25 @@ import (
 
 // Storage manages device data persistence
 type Storage struct {
-	devicesFile string
-	stateFile   string
-	mu          sync.RWMutex
-	devices     map[string]*types.Device
-	state       *types.ScanState
+	devicesFile  string
+	stateFile    string
+	mu           sync.RWMutex
+	devices      map[string]*types.Device
+	state        *types.ScanState
+	networkNames map[string]string
 }
 
 // New creates a new Storage instance
 func New(devicesFile, stateFile string) (*Storage, error) {
 	s := &Storage{
-		devicesFile: devicesFile,
-		stateFile:   stateFile,
-		devices:     make(map[string]*types.Device),
+		devicesFile:  devicesFile,
+		stateFile:    stateFile,
+		devices:      make(map[string]*types.Device),
 		state: &types.ScanState{
 			LastScan:     make(map[string]time.Time),
 			LastDuration: make(map[string]float64),
 		},
+		networkNames: make(map[string]string),
 	}
 
 	// Ensure directories exist
@@ -207,6 +209,12 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		if device.Group == "" {
 			device.Group = existing.Group
 		}
+		if device.CustomHostname == "" {
+			device.CustomHostname = existing.CustomHostname
+		}
+		if device.CustomWebURL == "" {
+			device.CustomWebURL = existing.CustomWebURL
+		}
 		if device.FirstSeen.IsZero() {
 			device.FirstSeen = existing.FirstSeen
 		}
@@ -217,7 +225,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 }
 
 // UpdateDeviceFields updates specific fields of a device
-func (s *Storage) UpdateDeviceFields(ip string, label, notes, group *string) error {
+func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL *string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -234,6 +242,12 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group *string) err
 	}
 	if group != nil {
 		device.Group = *group
+	}
+	if customHostname != nil {
+		device.CustomHostname = *customHostname
+	}
+	if customWebURL != nil {
+		device.CustomWebURL = *customWebURL
 	}
 
 	return s.saveDevices()
@@ -283,8 +297,10 @@ func (s *Storage) MergeDevices(discovered []types.Device) error {
 			existing.WebUI = d.WebUI
 			existing.Risks = d.Risks
 			existing.LastSeen = now
+			existing.NetworkName = resolveNetworkName(d.IP, s.networkNames)
 		} else {
 			dev := d
+			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
 			s.addNewDeviceLocked(&dev, now)
 		}
 	}
@@ -323,8 +339,10 @@ func (s *Storage) MergeSupplemental(discovered []types.Device) error {
 				existing.Type = d.Type
 			}
 			existing.LastSeen = now
+			existing.NetworkName = resolveNetworkName(d.IP, s.networkNames)
 		} else {
 			dev := d
+			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
 			s.addNewDeviceLocked(&dev, now)
 		}
 	}
@@ -367,6 +385,7 @@ func (s *Storage) MergeIPv6Neighbors(discovered []types.Device) error {
 				existing.Type = d.Type
 			}
 			existing.LastSeen = now
+			existing.NetworkName = resolveNetworkName(existing.IP, s.networkNames)
 			changed = true
 			continue
 		}
@@ -376,6 +395,7 @@ func (s *Storage) MergeIPv6Neighbors(discovered []types.Device) error {
 		// address, not a device -- skip it so it cannot accumulate.
 		if !isRandomizedMAC(d.MAC) {
 			dev := d
+			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
 			s.addNewDeviceLocked(&dev, now)
 			changed = true
 		}
@@ -396,6 +416,8 @@ func (s *Storage) addNewDeviceLocked(d *types.Device, now time.Time) {
 			d.Label = old.Label
 			d.Notes = old.Notes
 			d.Group = old.Group
+			d.CustomHostname = old.CustomHostname
+			d.CustomWebURL = old.CustomWebURL
 			d.FirstSeen = old.FirstSeen
 			if d.Type == "" {
 				d.Type = old.Type
@@ -600,4 +622,113 @@ func (s *Storage) GetStats() types.DeviceStats {
 	}
 
 	return stats
+}
+
+// SetNetworkNames updates the Storage instance's network names lookup map.
+func (s *Storage) SetNetworkNames(names map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.networkNames = names
+}
+
+// MergeRouterDHCP merges DHCP leases and static reservations from routers into storage.
+func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.Device) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+
+	// 1. Build a map of IP -> Assignment (Static / Dynamic)
+	assignments := make(map[string]string)
+	for _, r := range reservations {
+		if r.IP != "" {
+			assignments[r.IP] = "Static"
+		}
+	}
+	for _, l := range leases {
+		if l.IP != "" {
+			// Do not overwrite Static with Dynamic
+			if _, exists := assignments[l.IP]; !exists {
+				assignments[l.IP] = "Dynamic"
+			}
+		}
+	}
+
+	// 2. Set Assignments for all currently stored devices
+	for ip, dev := range s.devices {
+		if assign, ok := assignments[ip]; ok {
+			dev.Assignment = assign
+		} else {
+			// If not found in any leases/reservations, default to "Discovered"
+			dev.Assignment = "Discovered"
+		}
+		// Refresh NetworkName while we are here
+		dev.NetworkName = resolveNetworkName(ip, s.networkNames)
+	}
+
+	// 3. For any lease or reservation not currently found by scans, register them!
+	allDHCP := append(reservations, leases...)
+	for _, d := range allDHCP {
+		if d.IP == "" {
+			continue
+		}
+
+		if existing, ok := s.devices[d.IP]; ok {
+			// Enrich missing fields
+			if existing.MAC == "" && d.MAC != "" {
+				existing.MAC = d.MAC
+			}
+			if d.Hostname != "" {
+				existing.Hostname = d.Hostname
+			}
+			if existing.Vendor == "" && d.Vendor != "" {
+				existing.Vendor = d.Vendor
+			}
+			if existing.Type == "" && d.Type != "" {
+				existing.Type = d.Type
+			}
+			existing.Assignment = assignments[d.IP]
+			existing.NetworkName = resolveNetworkName(d.IP, s.networkNames)
+		} else {
+			// Brand new device discovered via DHCP!
+			dev := d
+			dev.Assignment = assignments[d.IP]
+			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
+			
+			// We haven't pinged it, so we won't show it as online unless LastSeen is fresh.
+			// Setting LastSeen to 65 minutes ago makes sure it registers as offline but keeps history.
+			s.addNewDeviceLocked(&dev, now.Add(-65*time.Minute))
+		}
+	}
+
+	return s.saveDevices()
+}
+
+// resolveNetworkName matches an IP against the configured subnet map
+func resolveNetworkName(ipStr string, networkNames map[string]string) string {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return ""
+	}
+	for cidr, name := range networkNames {
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err == nil && ipNet.Contains(ip) {
+			return name
+		}
+	}
+	return ""
+}
+
+// GetNewDevicesCount returns the number of devices discovered since the given time.
+func (s *Storage) GetNewDevicesCount(since time.Time) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for _, d := range s.devices {
+		if d.FirstSeen.After(since) {
+			count++
+		}
+	}
+	return count
 }

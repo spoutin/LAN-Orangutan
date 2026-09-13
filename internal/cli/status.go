@@ -42,6 +42,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		fmt.Printf("  Error: %v\n", err)
 	} else {
+		store.SetNetworkNames(cfg.Scanning.NetworkNames)
 		stats := store.GetStats()
 		fmt.Printf("  Devices: %d total (%d online, %d offline)\n", stats.Total, stats.Online, stats.Offline)
 		fmt.Printf("  Data directory: %s\n", cfg.Storage.DataDir)

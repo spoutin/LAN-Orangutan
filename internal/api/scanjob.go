@@ -5,6 +5,11 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/291-Group/LAN-Orangutan/internal/config"
+	"github.com/291-Group/LAN-Orangutan/internal/scanner"
+	"github.com/291-Group/LAN-Orangutan/internal/storage"
+	"github.com/291-Group/LAN-Orangutan/internal/types"
 )
 
 // percentUnknown is reported when a network has never been scanned before and
@@ -40,13 +45,15 @@ type scanJob struct {
 
 // scanProgress is the snapshot of a job returned to the UI.
 type scanProgress struct {
-	JobID          string  `json:"job_id"`
-	Status         string  `json:"status"`
-	CurrentNetwork string  `json:"current_network,omitempty"`
-	NetworkIndex   int     `json:"network_index"`
-	NetworkCount   int     `json:"network_count"`
-	DeviceCount    int     `json:"device_count"`
-	Elapsed        float64 `json:"elapsed"`
+	JobID              string  `json:"job_id"`
+	Status             string  `json:"status"`
+	CurrentNetwork     string  `json:"current_network,omitempty"`
+	CurrentNetworkName string  `json:"current_network_name,omitempty"`
+	NetworkIndex       int     `json:"network_index"`
+	NetworkCount       int     `json:"network_count"`
+	DeviceCount        int     `json:"device_count"`
+	NewDeviceCount     int     `json:"new_device_count"`
+	Elapsed            float64 `json:"elapsed"`
 	// Percent is the estimated completion of the whole job, or -1 when the
 	// current network has no timing history and progress cannot be estimated.
 	Percent float64 `json:"percent"`
@@ -64,7 +71,7 @@ type scanProgress struct {
 // how long each network took to scan previously, which is real measured data,
 // but it is only ever an estimate: nmap cannot report incremental progress for
 // a ping sweep, so there is nothing more accurate to use.
-func (j *scanJob) snapshot() scanProgress {
+func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgress {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 
@@ -77,9 +84,30 @@ func (j *scanJob) snapshot() scanProgress {
 		DeviceCount:    j.deviceCount,
 		Elapsed:        time.Since(j.startedAt).Seconds(),
 		Percent:        percentUnknown,
-		Networks:       append([]networkScanSummary(nil), j.results...),
 		Error:          j.err,
 		Automatic:      j.automatic,
+	}
+
+	if j.currentNetwork != "" && cfg != nil {
+		if name, ok := cfg.Scanning.NetworkNames[j.currentNetwork]; ok {
+			p.CurrentNetworkName = name
+		}
+	}
+
+	if store != nil {
+		p.NewDeviceCount = store.GetNewDevicesCount(j.startedAt)
+	}
+
+	// Copy and enrich results with network names
+	p.Networks = make([]networkScanSummary, len(j.results))
+	for i, res := range j.results {
+		summary := res
+		if cfg != nil {
+			if name, ok := cfg.Scanning.NetworkNames[res.Network]; ok {
+				summary.NetworkName = name
+			}
+		}
+		p.Networks[i] = summary
 	}
 
 	// Only a job that ran to completion is 100%. A cancelled or failed job
@@ -198,6 +226,55 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		if mdns := h.scanner.DiscoverMDNS(ctx); len(mdns) > 0 {
 			if err := h.store.MergeSupplemental(mdns); err == nil {
 				j.addResult(networkScanSummary{Network: "mDNS", Status: "scanned", DeviceCount: len(mdns)}, len(mdns))
+			}
+		}
+	}
+
+	// Router DHCP and static mappings discovery
+	if ctx.Err() == nil {
+		var allLeases []types.Device
+		var allReservations []types.Device
+		var routerName string
+
+		// Query OpenWrt if enabled
+		if h.cfg.OpenWrt.Enable {
+			leases, reservations, err := scanner.FetchOpenWrtDHCP(ctx, h.cfg.OpenWrt)
+			if err == nil {
+				allLeases = append(allLeases, leases...)
+				allReservations = append(allReservations, reservations...)
+				routerName = "OpenWrt"
+			} else {
+				fmt.Printf("Router OpenWrt DHCP fetch error: %v\n", err)
+			}
+		}
+
+		// Query OPNsense if enabled
+		if h.cfg.OPNsense.Enable {
+			leases, reservations, arpEntries, err := scanner.FetchOPNsenseDHCP(ctx, h.cfg.OPNsense)
+			if err == nil {
+				allLeases = append(allLeases, leases...)
+				allReservations = append(allReservations, reservations...)
+				if len(arpEntries) > 0 {
+					_ = h.store.MergeSupplemental(arpEntries)
+				}
+				if routerName == "" {
+					routerName = "OPNsense"
+				} else {
+					routerName += " & OPNsense"
+				}
+			} else {
+				fmt.Printf("Router OPNsense DHCP fetch error: %v\n", err)
+			}
+		}
+
+		if len(allLeases) > 0 || len(allReservations) > 0 {
+			if err := h.store.MergeRouterDHCP(allLeases, allReservations); err == nil {
+				total := len(allLeases) + len(allReservations)
+				j.addResult(networkScanSummary{
+					Network:     routerName + " DHCP",
+					Status:      "scanned",
+					DeviceCount: total,
+				}, total)
 			}
 		}
 	}

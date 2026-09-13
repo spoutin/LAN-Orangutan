@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -89,6 +90,25 @@ type Config struct {
 	Storage   StorageConfig
 	Tailscale TailscaleConfig
 	UI        UIConfig
+	OpenWrt   OpenWrtConfig
+	OPNsense  OPNsenseConfig
+}
+
+// OpenWrtConfig holds OpenWrt connection settings
+type OpenWrtConfig struct {
+	Enable    bool
+	URL       string
+	APIToken  string
+	VerifySSL bool
+}
+
+// OPNsenseConfig holds OPNsense connection settings
+type OPNsenseConfig struct {
+	Enable    bool
+	URL       string
+	APIKey    string
+	APISecret string
+	VerifySSL bool
 }
 
 // ServerConfig holds web server settings
@@ -145,6 +165,9 @@ type ScanningConfig struct {
 	// automatic detection cannot see the right network. A container only sees
 	// Docker's private network, so without this it can never scan the LAN.
 	Networks []string
+
+	// NetworkNames maps CIDRs to their friendly/user-defined names (e.g. "10.0.0.0/24" -> "LAN")
+	NetworkNames map[string]string
 }
 
 // StorageConfig holds data storage settings
@@ -192,6 +215,7 @@ func Default() *Config {
 			PortScanRange:          "1-1024",
 			ContinuousScan:         true,
 			EnableServiceDetection: false,
+			NetworkNames:           make(map[string]string),
 		},
 		Storage: StorageConfig{
 			MaxDevices:    1000,
@@ -204,6 +228,14 @@ func Default() *Config {
 		},
 		UI: UIConfig{
 			Theme: "auto",
+		},
+		OpenWrt: OpenWrtConfig{
+			Enable:    false,
+			VerifySSL: false,
+		},
+		OPNsense: OPNsenseConfig{
+			Enable:    false,
+			VerifySSL: false,
 		},
 	}
 }
@@ -329,6 +361,35 @@ func (c *Config) setValue(section, key, value string) {
 		case "theme":
 			c.UI.Theme = value
 		}
+	case "network_names":
+		if c.Scanning.NetworkNames == nil {
+			c.Scanning.NetworkNames = make(map[string]string)
+		}
+		c.Scanning.NetworkNames[key] = value
+	case "openwrt":
+		switch key {
+		case "enable":
+			c.OpenWrt.Enable = parseBool(value)
+		case "url":
+			c.OpenWrt.URL = value
+		case "api_token":
+			c.OpenWrt.APIToken = value
+		case "verify_ssl":
+			c.OpenWrt.VerifySSL = parseBool(value)
+		}
+	case "opnsense":
+		switch key {
+		case "enable":
+			c.OPNsense.Enable = parseBool(value)
+		case "url":
+			c.OPNsense.URL = value
+		case "api_key":
+			c.OPNsense.APIKey = value
+		case "api_secret":
+			c.OPNsense.APISecret = value
+		case "verify_ssl":
+			c.OPNsense.VerifySSL = parseBool(value)
+		}
 	}
 }
 
@@ -392,6 +453,37 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("ORANGUTAN_THEME"); v != "" {
 		c.UI.Theme = v
 	}
+
+	if v := os.Getenv("ORANGUTAN_OPENWRT_ENABLE"); v != "" {
+		c.OpenWrt.Enable = parseBool(v)
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_URL"); v != "" {
+		c.OpenWrt.URL = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_API_TOKEN"); v != "" {
+		c.OpenWrt.APIToken = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_VERIFY_SSL"); v != "" {
+		c.OpenWrt.VerifySSL = parseBool(v)
+	}
+
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_ENABLE"); v != "" {
+		c.OPNsense.Enable = parseBool(v)
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_URL"); v != "" {
+		c.OPNsense.URL = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_API_KEY"); v != "" {
+		c.OPNsense.APIKey = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_API_SECRET"); v != "" {
+		c.OPNsense.APISecret = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_VERIFY_SSL"); v != "" {
+		c.OPNsense.VerifySSL = parseBool(v)
+	}
+
+	c.Normalize()
 }
 
 // Normalize repairs out-of-range scan timings, clamping them back to the
@@ -416,6 +508,13 @@ func (c *Config) Normalize() []string {
 			"scan_interval was %d; using %d so continuous scanning works when enabled",
 			c.Scanning.ScanInterval, defaultScanInterval))
 		c.Scanning.ScanInterval = defaultScanInterval
+	}
+
+	if len(c.Scanning.Networks) == 0 && len(c.Scanning.NetworkNames) > 0 {
+		for cidr := range c.Scanning.NetworkNames {
+			c.Scanning.Networks = append(c.Scanning.Networks, cidr)
+		}
+		sort.Strings(c.Scanning.Networks)
 	}
 
 	return notes

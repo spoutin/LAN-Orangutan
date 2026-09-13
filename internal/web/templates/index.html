@@ -239,16 +239,18 @@ orangutan export out.csv</code></pre>
                 <table class="table" id="devices-table">
                     <thead>
                         <tr>
-                            <th data-sort="status" onclick="sortTable('status')">Status <span class="sort-icon">↕</span></th>
-                            <th data-sort="ip" onclick="sortTable('ip')">IP Address <span class="sort-icon">↕</span></th>
-                            <th data-sort="hostname" onclick="sortTable('hostname')">Hostname <span class="sort-icon">↕</span></th>
-                            <th data-sort="type" onclick="sortTable('type')">Type <span class="sort-icon">↕</span></th>
-                            <th data-sort="mac" onclick="sortTable('mac')">MAC Address <span class="sort-icon">↕</span></th>
-                            <th data-sort="vendor" onclick="sortTable('vendor')">Vendor <span class="sort-icon">↕</span></th>
-                            <th>Label</th>
-                            <th>Group</th>
-                            <th data-sort="lastseen" onclick="sortTable('lastseen')">Last Seen <span class="sort-icon">↕</span></th>
-                            <th>Actions</th>
+                            <th class="col-status" data-sort="status" onclick="sortTable('status')">Status <span class="sort-icon">↕</span></th>
+                            <th class="col-ip" data-sort="ip" onclick="sortTable('ip')">IP Address <span class="sort-icon">↕</span></th>
+                            <th class="col-hostname" data-sort="hostname" onclick="sortTable('hostname')">Hostname <span class="sort-icon">↕</span></th>
+                            <th class="col-network" data-sort="network" onclick="sortTable('network')">Network <span class="sort-icon">↕</span></th>
+                            <th class="col-assignment" data-sort="assignment" onclick="sortTable('assignment')">Assignment <span class="sort-icon">↕</span></th>
+                            <th class="col-type" data-sort="type" onclick="sortTable('type')">Type <span class="sort-icon">↕</span></th>
+                            <th class="col-mac" data-sort="mac" onclick="sortTable('mac')">MAC Address <span class="sort-icon">↕</span></th>
+                            <th class="col-vendor" data-sort="vendor" onclick="sortTable('vendor')">Vendor <span class="sort-icon">↕</span></th>
+                            <th class="col-label">Label</th>
+                            <th class="col-group">Group</th>
+                            <th class="col-lastseen" data-sort="lastseen" onclick="sortTable('lastseen')">Last Seen <span class="sort-icon">↕</span></th>
+                            <th class="col-actions">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="devices-tbody">
@@ -259,6 +261,12 @@ orangutan export out.csv</code></pre>
                             data-mac="{{lower .MAC}}"
                             data-vendor="{{lower .Vendor}}"
                             data-type="{{lower .Type}}"
+                            data-network="{{lower .NetworkName}}"
+                            data-assignment="{{lower .Assignment}}"
+                            data-custom-hostname="{{lower .CustomHostname}}"
+                            data-custom-hostname-original="{{.CustomHostname}}"
+                            data-custom-web-url="{{lower .CustomWebURL}}"
+                            data-custom-web-url-original="{{.CustomWebURL}}"
                             data-label="{{lower .Label}}"
                             data-label-original="{{.Label}}"
                             data-notes="{{.Notes}}"
@@ -267,24 +275,61 @@ orangutan export out.csv</code></pre>
                             data-moved="{{if .AddressHistory}}1{{end}}"
                             data-flagged="{{if .Risks}}1{{end}}"
                             data-lastseen="{{.LastSeenUnix}}">
-                            <td data-label="Status">
-                                <span class="status-indicator {{.StatusClass}}"></span>
+                            <td class="col-status" data-label="Status">
+                                {{if eq .Status "online"}}
+                                    <span class="status-indicator {{.StatusClass}}" data-tip="Online (active on network within the last 5 minutes)"></span>
+                                {{else if eq .Status "seen"}}
+                                    <span class="status-indicator {{.StatusClass}}" data-tip="Seen recently (active on network within the last hour)"></span>
+                                {{else}}
+                                    <span class="status-indicator {{.StatusClass}}" data-tip="Offline (no activity seen for over an hour)"></span>
+                                {{end}}
                             </td>
-                            <td class="ip-cell" data-label="IP Address" data-copy="{{.IP}}">
+                            <td class="col-ip ip-cell" data-label="IP Address" data-copy="{{.IP}}">
                                 {{.IP}}{{if .AddressHistory}}<span class="moved-indicator" data-tip="Changed address{{range .AddressHistory}}, was {{.IP}}{{end}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></span>{{end}}
                             </td>
-                            <td class="hostname-cell" data-label="Hostname" data-copy="{{.Hostname}}">{{if .Hostname}}{{.Hostname}}{{else}}<span style="color:var(--text-muted)">-</span>{{end}}</td>
-                            <td class="type-cell" data-label="Type">
+                            <td class="col-hostname hostname-cell" data-label="Hostname" data-copy="{{if .CustomHostname}}{{.CustomHostname}}{{else}}{{.Hostname}}{{end}}">
+                                {{if .CustomHostname}}
+                                    <span class="custom-hostname-wrapper" data-tip="Hostname overridden (originally: {{if .Hostname}}{{.Hostname}}{{else}}none{{end}})">
+                                        {{.CustomHostname}}
+                                        <span class="override-indicator"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+                                    </span>
+                                {{else if .Hostname}}
+                                    {{.Hostname}}
+                                {{else}}
+                                    <span style="color:var(--text-muted)">-</span>
+                                {{end}}
+                            </td>
+                            <td class="col-network network-cell" data-label="Network">
+                                {{if .NetworkName}}<span class="network-badge">{{.NetworkName}}</span>{{else}}<span style="color:var(--text-muted)">-</span>{{end}}
+                            </td>
+                            <td class="col-assignment assignment-cell" data-label="Assignment">
+                                {{if eq .Assignment "Static"}}
+                                    <span class="assignment-badge static">Static</span>
+                                {{else if eq .Assignment "Dynamic"}}
+                                    <span class="assignment-badge dynamic">Dynamic</span>
+                                {{else if eq .Assignment "Discovered"}}
+                                    <span class="assignment-badge discovered">Discovered</span>
+                                {{else if .Assignment}}
+                                    <span class="assignment-badge na">{{.Assignment}}</span>
+                                {{else}}
+                                    <span style="color:var(--text-muted)">-</span>
+                                {{end}}
+                            </td>
+                            <td class="col-type type-cell" data-label="Type">
                                 {{if .Type}}<span class="type-badge">{{typeIcon .Type}}{{.Type}}</span>{{end}}
-                                {{if .WebUI}}<span class="web-indicator" data-tip="Serves a web interface"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>{{end}}
+                                {{if or .WebUI .CustomWebURL}}
+                                    <a href="{{if .CustomWebURL}}{{.CustomWebURL}}{{else if .CustomHostname}}http://{{.CustomHostname}}{{else if .Hostname}}http://{{.Hostname}}{{else}}http://{{.IP}}{{end}}" target="_blank" class="web-indicator clickable" data-tip="Open web interface: {{if .CustomWebURL}}{{.CustomWebURL}}{{else if .CustomHostname}}http://{{.CustomHostname}}{{else if .Hostname}}http://{{.Hostname}}{{else}}http://{{.IP}}{{end}}">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                    </a>
+                                {{end}}
                                 {{if .Risks}}<span class="risk-indicator" data-tip="Security: {{range $i, $r := .Risks}}{{if $i}}; {{end}}{{$r}}{{end}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>{{end}}
                             </td>
-                            <td class="mac-cell" data-label="MAC Address" data-copy="{{.MAC}}">
+                            <td class="col-mac mac-cell" data-label="MAC Address" data-copy="{{.MAC}}">
                                 {{if .MAC}}{{.MAC}}{{else}}<span style="color:var(--text-muted)">-</span>{{end}}
                             </td>
-                            <td class="vendor-cell" data-label="Vendor" data-copy="{{.Vendor}}">{{if .Vendor}}{{.Vendor}}{{else}}<span style="color:var(--text-muted)">Unknown</span>{{end}}</td>
-                            <td class="label-cell" data-label="Label">{{.Label}}{{if .Notes}}<span class="notes-indicator" data-tip="{{.Notes}}"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>{{end}}</td>
-                            <td data-label="Group">
+                            <td class="col-vendor vendor-cell" data-label="Vendor" data-copy="{{.Vendor}}">{{if .Vendor}}{{.Vendor}}{{else}}<span style="color:var(--text-muted)">Unknown</span>{{end}}</td>
+                            <td class="col-label label-cell" data-label="Label">{{.Label}}{{if .Notes}}<span class="notes-indicator" data-tip="{{.Notes}}"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>{{end}}</td>
+                            <td class="col-group" data-label="Group">
                                 <select class="group-select" data-ip="{{.IP}}" onchange="updateDeviceGroup(this)">
                                     <option value="">-</option>
                                     <option value="Server" {{if eq .Group "Server"}}selected{{end}}>Server</option>
@@ -296,8 +341,8 @@ orangutan export out.csv</code></pre>
                                     <option value="Pi" {{if eq .Group "Pi"}}selected{{end}}>Pi</option>
                                 </select>
                             </td>
-                            <td class="time-cell" data-label="Last Seen" data-relative-time="{{.LastSeenUnix}}">{{.TimeAgo}}</td>
-                            <td class="actions-cell" data-label="Actions">
+                            <td class="col-lastseen time-cell" data-label="Last Seen" data-relative-time="{{.LastSeenUnix}}">{{.TimeAgo}}</td>
+                            <td class="col-actions actions-cell" data-label="Actions">
                                 <button class="btn-icon" onclick="editDevice('{{.IP}}')" data-tip="Edit" aria-label="Edit"><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
                                 <button class="btn-icon danger" onclick="deleteDevice('{{.IP}}')" data-tip="Delete" aria-label="Delete"><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg></button>
                             </td>
@@ -351,6 +396,14 @@ orangutan export out.csv</code></pre>
                     <div class="form-group">
                         <label>Label</label>
                         <input type="text" id="edit-label" name="label" class="input" placeholder="e.g., Living Room TV">
+                    </div>
+                    <div class="form-group">
+                        <label>Custom Hostname (Override)</label>
+                        <input type="text" id="edit-custom-hostname" name="custom_hostname" class="input" placeholder="e.g., My-Smart-TV">
+                    </div>
+                    <div class="form-group">
+                        <label>Custom Web URL (Override)</label>
+                        <input type="text" id="edit-custom-web-url" name="custom_web_url" class="input" placeholder="e.g., https://my-nas:5001">
                     </div>
                     <div class="form-group">
                         <label>Group</label>

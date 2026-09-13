@@ -184,10 +184,12 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			IP    string  `json:"ip"`
-			Label *string `json:"label"`
-			Notes *string `json:"notes"`
-			Group *string `json:"group"`
+			IP             string  `json:"ip"`
+			Label          *string `json:"label"`
+			Notes          *string `json:"notes"`
+			Group          *string `json:"group"`
+			CustomHostname *string `json:"custom_hostname"`
+			CustomWebURL   *string `json:"custom_web_url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			h.error(w, http.StatusBadRequest, "invalid JSON")
@@ -204,7 +206,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group); err != nil {
+		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL); err != nil {
 			h.error(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -307,6 +309,7 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 // of a scan-all request.
 type networkScanSummary struct {
 	Network     string  `json:"network"`
+	NetworkName string  `json:"network_name,omitempty"`
 	Status      string  `json:"status"` // scanned, skipped or failed
 	DeviceCount int     `json:"device_count"`
 	Duration    float64 `json:"duration"`
@@ -456,12 +459,12 @@ func (h *Handler) handleScanStart(w http.ResponseWriter, r *http.Request) {
 		// adopt it as user-initiated so the progress overlay follows it and the
 		// user gets the fresh results it is already producing.
 		h.job.adopt()
-		h.success(w, h.job.snapshot())
+		h.success(w, h.job.snapshot(h.cfg, h.store))
 		return
 	}
 
 	h.job = h.startScanJob(networks, false)
-	h.success(w, h.job.snapshot())
+	h.success(w, h.job.snapshot(h.cfg, h.store))
 }
 
 // handleScanProgress handles GET /api/scan/progress.
@@ -479,7 +482,7 @@ func (h *Handler) handleScanProgress(w http.ResponseWriter, r *http.Request) {
 		h.success(w, scanProgress{Status: "idle", Percent: percentUnknown})
 		return
 	}
-	h.success(w, job.snapshot())
+	h.success(w, job.snapshot(h.cfg, h.store))
 }
 
 // handleScanCancel handles POST /api/scan/cancel.

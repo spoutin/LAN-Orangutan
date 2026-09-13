@@ -812,6 +812,54 @@ body.strip-docked .stat-strip .stat-chip-filter {
     border: 1px solid var(--border-color);
 }
 
+.network-badge {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+    padding: 0.15rem 0.55rem;
+    border-radius: 9999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.assignment-badge {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+    padding: 0.15rem 0.55rem;
+    border-radius: 9999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+
+.assignment-badge.static {
+    background-color: rgba(16, 185, 129, 0.12); /* light green */
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.assignment-badge.dynamic {
+    background-color: rgba(59, 130, 246, 0.12); /* light blue */
+    color: #3b82f6;
+    border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.assignment-badge.discovered {
+    background-color: rgba(245, 158, 11, 0.12); /* light amber */
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.assignment-badge.na {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
 .type-icon {
     flex: 0 0 auto;
     opacity: 0.85;
@@ -822,6 +870,16 @@ body.strip-docked .stat-strip .stat-chip-filter {
     vertical-align: middle;
     margin-left: 0.35rem;
     color: var(--text-muted);
+    text-decoration: none;
+}
+
+.web-indicator.clickable {
+    cursor: pointer;
+    transition: color 0.15s ease;
+}
+
+.web-indicator.clickable:hover {
+    color: var(--accent-primary);
 }
 
 /* A device that has changed IP: worth a subtle nudge, so it uses the warning
@@ -1033,16 +1091,41 @@ td[data-copy]:not([data-copy=""]) {
 /* Column widths for the fixed layout (they sum to 100%). When the responsive
    rules further down hide a column, its share is redistributed across the
    rest, so the table always fills its panel exactly. */
-.table th:nth-child(1),  .table td:nth-child(1)  { width: 6%; }   /* Status (just a dot) */
-.table th:nth-child(2),  .table td:nth-child(2)  { width: 12%; }  /* IP       */
-.table th:nth-child(3),  .table td:nth-child(3)  { width: 13%; }  /* Hostname */
-.table th:nth-child(4),  .table td:nth-child(4)  { width: 10%; }  /* Type     */
-.table th:nth-child(5),  .table td:nth-child(5)  { width: 13%; }  /* MAC      */
-.table th:nth-child(6),  .table td:nth-child(6)  { width: 10%; }  /* Vendor   */
-.table th:nth-child(7),  .table td:nth-child(7)  { width: 5%; }   /* Label (just an icon) */
-.table th:nth-child(8),  .table td:nth-child(8)  { width: 11%; }  /* Group (dropdown needs room) */
-.table th:nth-child(9),  .table td:nth-child(9)  { width: 10%; }  /* Last Seen*/
-.table th:nth-child(10), .table td:nth-child(10) { width: 10%; }  /* Actions (two icons) */
+.col-status     { width: 4%; }
+.col-ip         { width: 10%; }
+.col-hostname   { width: 11%; }
+.col-network    { width: 7%; }
+.col-assignment { width: 7%; }
+.col-type       { width: 7%; }
+.col-mac        { width: 10%; }
+.col-vendor     { width: 9%; }
+.col-label      { width: 7%; }
+.col-group      { width: 10%; }
+.col-lastseen   { width: 9%; }
+.col-actions    { width: 9%; }
+
+/* Resizable Table Columns */
+.table th {
+    position: relative;
+}
+
+.col-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: col-resize;
+    z-index: 10;
+    user-select: none;
+    transition: background-color 0.2s ease;
+}
+
+.col-resize-handle:hover,
+.col-resize-handle.resizing {
+    background-color: var(--accent);
+    opacity: 0.8;
+}
 
 /* Single-line cells that should truncate rather than wrap. The group select
    fills its column so it never forces the row wider. */
@@ -1745,8 +1828,7 @@ textarea.input {
 /* Tablets only (phones switch to the card layout below): drop the widest
    optional columns (Vendor, Label) so the rest keep room without cramming. */
 @media (min-width: 769px) and (max-width: 1024px) {
-    .table th:nth-child(6), .table td:nth-child(6),
-    .table th:nth-child(7), .table td:nth-child(7) { display: none; }
+    .col-vendor, .col-label { display: none; }
 }
 
 /* Discovered-devices toolbar: on a full desktop the section title sits on one
@@ -2341,4 +2423,93 @@ img.login-logo {
 
 .noscript-footer a:hover {
     color: var(--accent-hover);
+}
+
+/* Completed Subnets List in Scan Progress Overlay */
+.scan-details-container {
+    margin-top: 1rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid var(--border-color);
+    width: 100%;
+}
+
+.scan-details-header {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+    text-align: left;
+}
+
+.scan-details-list {
+    max-height: 150px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.scan-detail-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.78rem;
+    padding: 0.25rem 0;
+}
+
+.scan-detail-network {
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-align: left;
+}
+
+.scan-detail-status {
+    margin-left: auto;
+    margin-right: 0.8rem;
+}
+
+.scan-status-badge {
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.scan-status-badge.scanned {
+    background-color: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+}
+
+.scan-status-badge.skipped {
+    background-color: rgba(245, 158, 11, 0.12);
+    color: #f59e0b;
+}
+
+.scan-status-badge.failed {
+    background-color: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+}
+
+.scan-detail-summary {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+/* Custom Hostname Overrides */
+.custom-hostname-wrapper {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    cursor: help;
+}
+
+.override-indicator {
+    display: inline-flex;
+    align-items: center;
+    color: var(--accent-primary);
+    opacity: 0.85;
 }

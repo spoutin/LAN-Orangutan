@@ -24,6 +24,10 @@ type Device struct {
 	Label        string    `json:"label"`
 	Notes        string    `json:"notes"`
 	Group        string    `json:"group"`
+	CustomHostname string  `json:"custom_hostname,omitempty"`
+	CustomWebURL   string  `json:"custom_web_url,omitempty"`
+	Assignment   string    `json:"assignment,omitempty"`
+	NetworkName  string    `json:"network_name,omitempty"`
 	FirstSeen    time.Time `json:"first_seen"`
 	LastSeen     time.Time `json:"last_seen"`
 	ResponseTime *float64  `json:"response_time,omitempty"`
