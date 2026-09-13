@@ -293,7 +293,7 @@ jobs:
            with a web dashboard and CLI. Discover devices on your
            local network, track online/offline status, and organize
            with labels and groups.
-          Homepage: https://github.com/291-Group/LAN-Orangutan
+          Homepage: https://github.com/spoutin/LAN-Orangutan
           EOF
 
             # Create postinst script
@@ -385,7 +385,7 @@ jobs:
           Release:        1
           Summary:        Network Discovery Tool
           License:        MIT
-          URL:            https://github.com/291-Group/LAN-Orangutan
+          URL:            https://github.com/spoutin/LAN-Orangutan
           Requires:       nmap
 
           %description
@@ -468,7 +468,7 @@ jobs:
           pkgname = lan-orangutan
           pkgver = ${VERSION}-r0
           pkgdesc = Network Discovery Tool
-          url = https://github.com/291-Group/LAN-Orangutan
+          url = https://github.com/spoutin/LAN-Orangutan
           size = $(du -sb pkg | cut -f1)
           arch = x86_64
           license = MIT
@@ -492,16 +492,16 @@ jobs:
           cat > dist/lan-orangutan.rb << EOF
           class LanOrangutan < Formula
             desc "Network discovery and device tracking tool"
-            homepage "https://github.com/291-Group/LAN-Orangutan"
+            homepage "https://github.com/spoutin/LAN-Orangutan"
             version "${VERSION}"
             license "MIT"
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/291-Group/LAN-Orangutan/releases/download/v${VERSION}/orangutan-darwin-arm64.tar.gz"
+                url "https://github.com/spoutin/LAN-Orangutan/releases/download/v${VERSION}/orangutan-darwin-arm64.tar.gz"
                 sha256 "${SHA_ARM64}"
               else
-                url "https://github.com/291-Group/LAN-Orangutan/releases/download/v${VERSION}/orangutan-darwin-amd64.tar.gz"
+                url "https://github.com/spoutin/LAN-Orangutan/releases/download/v${VERSION}/orangutan-darwin-amd64.tar.gz"
                 sha256 "${SHA_AMD64}"
               end
             end
@@ -540,11 +540,11 @@ jobs:
           {
               "version": "${VERSION}",
               "description": "Network discovery and device tracking tool",
-              "homepage": "https://github.com/291-Group/LAN-Orangutan",
+              "homepage": "https://github.com/spoutin/LAN-Orangutan",
               "license": "MIT",
               "architecture": {
                   "64bit": {
-                      "url": "https://github.com/291-Group/LAN-Orangutan/releases/download/v${VERSION}/orangutan-windows-amd64.zip",
+                      "url": "https://github.com/spoutin/LAN-Orangutan/releases/download/v${VERSION}/orangutan-windows-amd64.zip",
                       "hash": "${SHA_WIN}"
                   }
               },
@@ -553,7 +553,7 @@ jobs:
               "autoupdate": {
                   "architecture": {
                       "64bit": {
-                          "url": "https://github.com/291-Group/LAN-Orangutan/releases/download/v\$version/orangutan-windows-amd64.zip"
+                          "url": "https://github.com/spoutin/LAN-Orangutan/releases/download/v\$version/orangutan-windows-amd64.zip"
                       }
                   }
               }
@@ -572,10 +572,10 @@ jobs:
           pkgrel=1
           pkgdesc="Network discovery and device tracking tool"
           arch=('x86_64')
-          url="https://github.com/291-Group/LAN-Orangutan"
+          url="https://github.com/spoutin/LAN-Orangutan"
           license=('MIT')
           depends=('nmap')
-          source=("https://github.com/291-Group/LAN-Orangutan/releases/download/v\${pkgver}/orangutan-linux-amd64.tar.gz")
+          source=("https://github.com/spoutin/LAN-Orangutan/releases/download/v\${pkgver}/orangutan-linux-amd64.tar.gz")
           sha256sums=('${SHA_AMD64}')
 
           package() {
