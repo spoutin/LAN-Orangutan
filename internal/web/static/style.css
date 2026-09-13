@@ -2514,48 +2514,33 @@ img.login-logo {
     opacity: 0.85;
 }
 
-/* Network Filter Bar */
-.network-filter-bar {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-    padding: 0.1rem 0;
+/* Custom Checkbox Dropdown */
+.dropdown-menu.checkbox-menu {
+    padding: 0.5rem 0;
+    min-width: 185px;
+    max-height: 250px;
+    overflow-y: auto;
+    scrollbar-width: thin;
 }
 
-.network-filter-bar .filter-label {
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    margin-right: 0.4rem;
-}
-
-.network-filter-bar .filter-chip {
-    display: inline-flex;
+.checkbox-label {
+    display: flex !important;
     align-items: center;
-    padding: 0.2rem 0.65rem;
-    border-radius: 9999px;
-    font-size: 0.72rem;
-    font-weight: 600;
+    gap: 0.6rem;
     cursor: pointer;
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
-    border: 1px solid var(--border-color);
-    transition: all 0.15s ease;
+    font-weight: 500;
+    padding: 0.4rem 1rem !important;
 }
 
-.network-filter-bar .filter-chip:hover {
-    border-color: var(--text-muted);
-    color: var(--text-normal);
+.checkbox-label input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: var(--accent-primary);
 }
 
-.network-filter-bar .filter-chip.active {
-    background-color: var(--accent-primary);
-    color: #ffffff;
-    border-color: var(--accent-primary);
+.checkbox-label:hover {
+    background-color: var(--bg-hover);
 }
 
 .type-badge.custom-type {

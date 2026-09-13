@@ -221,6 +221,21 @@ orangutan export out.csv</code></pre>
                         <option value="Pi">Pi</option>
                     </select>
                     <div class="dropdown">
+                        <button class="select" id="network-filter-btn" onclick="toggleDropdown('network-filter-menu'); event.stopPropagation();" style="text-align:left;min-width:135px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">All Networks</button>
+                        <div id="network-filter-menu" class="dropdown-menu checkbox-menu" onclick="event.stopPropagation();">
+                            <label class="dropdown-item checkbox-label">
+                                <input type="checkbox" id="network-filter-all" checked onchange="toggleNetworkDropdownFilter('all')">
+                                <span>All Networks</span>
+                            </label>
+                            {{range .Networks}}
+                                <label class="dropdown-item checkbox-label">
+                                    <input type="checkbox" class="network-filter-checkbox" value="{{lower .FriendlyName}}" onchange="toggleNetworkDropdownFilter('{{lower .FriendlyName}}')">
+                                    <span>{{.FriendlyName}}</span>
+                                </label>
+                            {{end}}
+                        </div>
+                    </div>
+                    <div class="dropdown">
                         <button class="btn" onclick="toggleDropdown('export-menu')">Export</button>
                         <div id="export-menu" class="dropdown-menu">
                             <a class="dropdown-item" onclick="exportDevices('csv')">Export as CSV</a>
@@ -235,13 +250,6 @@ orangutan export out.csv</code></pre>
                 <div class="table-toolbar">
                     <span class="table-info" id="device-count">Showing {{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}</span>
                     <span class="table-scanned" id="scan-time-top"><span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span></span>{{end}}</span>
-                </div>
-                <div class="network-filter-bar">
-                    <span class="filter-label">Filter by Network:</span>
-                    <button class="filter-chip active" data-network="all" onclick="toggleNetworkFilter(this)">All</button>
-                    {{range .Networks}}
-                        <button class="filter-chip" data-network="{{lower .FriendlyName}}" onclick="toggleNetworkFilter(this)">{{.FriendlyName}}</button>
-                    {{end}}
                 </div>
                 <table class="table" id="devices-table">
                     <thead>

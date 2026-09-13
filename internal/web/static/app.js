@@ -455,30 +455,45 @@ function applyStatChipFilter(kind) {
     }
 }
 
-function toggleNetworkFilter(el) {
-    const network = el.dataset.network;
-    const chips = document.querySelectorAll('.network-filter-bar .filter-chip');
+function toggleNetworkDropdownFilter(val) {
+    const allCheckbox = document.getElementById('network-filter-all');
+    const checkboxes = document.querySelectorAll('.network-filter-checkbox');
+    const btn = document.getElementById('network-filter-btn');
 
-    if (network === 'all') {
-        activeNetworkFilters = [];
-        chips.forEach(c => {
-            c.classList.toggle('active', c.dataset.network === 'all');
-        });
-    } else {
-        const index = activeNetworkFilters.indexOf(network);
-        if (index > -1) {
-            activeNetworkFilters.splice(index, 1);
-            el.classList.remove('active');
+    if (!allCheckbox || !btn) return;
+
+    if (val === 'all') {
+        if (allCheckbox.checked) {
+            checkboxes.forEach(cb => cb.checked = false);
+            activeNetworkFilters = [];
+            btn.textContent = 'All Networks';
         } else {
-            activeNetworkFilters.push(network);
-            el.classList.add('active');
+            // Force 'All' to stay checked if clicked while already checked or if nothing else is selected
+            allCheckbox.checked = true;
         }
-
-        const allChip = document.querySelector('.network-filter-bar .filter-chip[data-network="all"]');
-        if (allChip) allChip.classList.remove('active');
+    } else {
+        allCheckbox.checked = false;
+        activeNetworkFilters = [];
+        checkboxes.forEach(cb => {
+            if (cb.checked) {
+                activeNetworkFilters.push(cb.value);
+            }
+        });
 
         if (activeNetworkFilters.length === 0) {
-            if (allChip) allChip.classList.add('active');
+            allCheckbox.checked = true;
+            btn.textContent = 'All Networks';
+        } else {
+            // Collect selected friendly names
+            const friendlyNames = Array.from(checkboxes)
+                .filter(cb => cb.checked)
+                .map(cb => cb.nextElementSibling.textContent);
+
+            if (friendlyNames.length <= 2) {
+                btn.textContent = friendlyNames.join(', ');
+            } else {
+                btn.textContent = `${friendlyNames.length} Networks`;
+            }
         }
     }
 
@@ -491,15 +506,34 @@ function filterDevices() {
     document.querySelectorAll('.stat-chip-filter').forEach(chip =>
         chip.classList.toggle('active', !!statChipFilter && chip.dataset.filter === statChipFilter));
 
-    // Restore active states on network filter chips after an auto-refresh
-    document.querySelectorAll('.network-filter-bar .filter-chip').forEach(chip => {
-        const network = chip.dataset.network;
-        if (network === 'all') {
-            chip.classList.toggle('active', activeNetworkFilters.length === 0);
+    // Restore active states on network filter checkboxes after an auto-refresh
+    const allCheckbox = document.getElementById('network-filter-all');
+    const checkboxes = document.querySelectorAll('.network-filter-checkbox');
+    const btn = document.getElementById('network-filter-btn');
+
+    if (allCheckbox && btn) {
+        if (activeNetworkFilters.length === 0) {
+            allCheckbox.checked = true;
+            checkboxes.forEach(cb => cb.checked = false);
+            btn.textContent = 'All Networks';
         } else {
-            chip.classList.toggle('active', activeNetworkFilters.includes(network));
+            allCheckbox.checked = false;
+            const friendlyNames = [];
+            checkboxes.forEach(cb => {
+                const isActive = activeNetworkFilters.includes(cb.value);
+                cb.checked = isActive;
+                if (isActive) {
+                    friendlyNames.push(cb.nextElementSibling.textContent);
+                }
+            });
+
+            if (friendlyNames.length <= 2) {
+                btn.textContent = friendlyNames.join(', ');
+            } else {
+                btn.textContent = `${friendlyNames.length} Networks`;
+            }
         }
-    });
+    }
 
     const search = (document.getElementById('device-search')?.value || '').toLowerCase();
     const statusFilter = document.getElementById('device-filter')?.value || 'all';
