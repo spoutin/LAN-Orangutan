@@ -215,6 +215,9 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		if device.CustomWebURL == "" {
 			device.CustomWebURL = existing.CustomWebURL
 		}
+		if device.CustomType == "" {
+			device.CustomType = existing.CustomType
+		}
 		if device.FirstSeen.IsZero() {
 			device.FirstSeen = existing.FirstSeen
 		}
@@ -225,7 +228,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 }
 
 // UpdateDeviceFields updates specific fields of a device
-func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL *string) error {
+func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType *string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -248,6 +251,9 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 	}
 	if customWebURL != nil {
 		device.CustomWebURL = *customWebURL
+	}
+	if customType != nil {
+		device.CustomType = *customType
 	}
 
 	return s.saveDevices()
@@ -418,6 +424,7 @@ func (s *Storage) addNewDeviceLocked(d *types.Device, now time.Time) {
 			d.Group = old.Group
 			d.CustomHostname = old.CustomHostname
 			d.CustomWebURL = old.CustomWebURL
+			d.CustomType = old.CustomType
 			d.FirstSeen = old.FirstSeen
 			if d.Type == "" {
 				d.Type = old.Type

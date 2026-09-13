@@ -2513,3 +2513,51 @@ img.login-logo {
     color: var(--accent-primary);
     opacity: 0.85;
 }
+
+/* Network Filter Bar */
+.network-filter-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding: 0.1rem 0;
+}
+
+.network-filter-bar .filter-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-right: 0.4rem;
+}
+
+.network-filter-bar .filter-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.65rem;
+    border-radius: 9999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    transition: all 0.15s ease;
+}
+
+.network-filter-bar .filter-chip:hover {
+    border-color: var(--text-muted);
+    color: var(--text-normal);
+}
+
+.network-filter-bar .filter-chip.active {
+    background-color: var(--accent-primary);
+    color: #ffffff;
+    border-color: var(--accent-primary);
+}
+
+.type-badge.custom-type {
+    cursor: help;
+}

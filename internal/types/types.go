@@ -26,6 +26,7 @@ type Device struct {
 	Group        string    `json:"group"`
 	CustomHostname string  `json:"custom_hostname,omitempty"`
 	CustomWebURL   string  `json:"custom_web_url,omitempty"`
+	CustomType     string  `json:"custom_type,omitempty"`
 	Assignment   string    `json:"assignment,omitempty"`
 	NetworkName  string    `json:"network_name,omitempty"`
 	FirstSeen    time.Time `json:"first_seen"`

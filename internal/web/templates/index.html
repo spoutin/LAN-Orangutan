@@ -236,6 +236,13 @@ orangutan export out.csv</code></pre>
                     <span class="table-info" id="device-count">Showing {{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}</span>
                     <span class="table-scanned" id="scan-time-top"><span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span></span>{{end}}</span>
                 </div>
+                <div class="network-filter-bar">
+                    <span class="filter-label">Filter by Network:</span>
+                    <button class="filter-chip active" data-network="all" onclick="toggleNetworkFilter(this)">All</button>
+                    {{range .Networks}}
+                        <button class="filter-chip" data-network="{{lower .FriendlyName}}" onclick="toggleNetworkFilter(this)">{{.FriendlyName}}</button>
+                    {{end}}
+                </div>
                 <table class="table" id="devices-table">
                     <thead>
                         <tr>
@@ -267,6 +274,8 @@ orangutan export out.csv</code></pre>
                             data-custom-hostname-original="{{.CustomHostname}}"
                             data-custom-web-url="{{lower .CustomWebURL}}"
                             data-custom-web-url-original="{{.CustomWebURL}}"
+                            data-custom-type="{{lower .CustomType}}"
+                            data-custom-type-original="{{.CustomType}}"
                             data-label="{{lower .Label}}"
                             data-label-original="{{.Label}}"
                             data-notes="{{.Notes}}"
@@ -316,7 +325,14 @@ orangutan export out.csv</code></pre>
                                 {{end}}
                             </td>
                             <td class="col-type type-cell" data-label="Type">
-                                {{if .Type}}<span class="type-badge">{{typeIcon .Type}}{{.Type}}</span>{{end}}
+                                {{if .CustomType}}
+                                    <span class="type-badge custom-type" data-tip="Device Type overridden (originally: {{if .Type}}{{.Type}}{{else}}none{{end}})">
+                                        {{typeIcon .CustomType}}{{.CustomType}}
+                                        <span class="override-indicator"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+                                    </span>
+                                {{else if .Type}}
+                                    <span class="type-badge">{{typeIcon .Type}}{{.Type}}</span>
+                                {{end}}
                                 {{if or .WebUI .CustomWebURL}}
                                     <a href="{{if .CustomWebURL}}{{.CustomWebURL}}{{else if .CustomHostname}}http://{{.CustomHostname}}{{else if .Hostname}}http://{{.Hostname}}{{else}}http://{{.IP}}{{end}}" target="_blank" class="web-indicator clickable" data-tip="Open web interface: {{if .CustomWebURL}}{{.CustomWebURL}}{{else if .CustomHostname}}http://{{.CustomHostname}}{{else if .Hostname}}http://{{.Hostname}}{{else}}http://{{.IP}}{{end}}">
                                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
@@ -404,6 +420,21 @@ orangutan export out.csv</code></pre>
                     <div class="form-group">
                         <label>Custom Web URL (Override)</label>
                         <input type="text" id="edit-custom-web-url" name="custom_web_url" class="input" placeholder="e.g., https://my-nas:5001">
+                    </div>
+                    <div class="form-group">
+                        <label>Device Type (Override)</label>
+                        <select id="edit-custom-type" name="custom_type" class="select">
+                            <option value="">Auto-Detect</option>
+                            <option value="Phone">Phone</option>
+                            <option value="Computer">Computer</option>
+                            <option value="Printer">Printer</option>
+                            <option value="TV">TV</option>
+                            <option value="Media Player">Media Player</option>
+                            <option value="Router">Router</option>
+                            <option value="Server">Server</option>
+                            <option value="IoT">IoT</option>
+                            <option value="Game Console">Game Console</option>
+                        </select>
                     </div>
                     <div class="form-group">
                         <label>Group</label>

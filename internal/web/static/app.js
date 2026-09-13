@@ -444,6 +444,7 @@ async function scanAllNetworks() {
 // Device filtering
 // Filter set by clicking a summary chip ("flagged" / "moved"), or null.
 let statChipFilter = null;
+let activeNetworkFilters = [];
 
 // Toggle the chip filter: a second click on the same chip clears it.
 function applyStatChipFilter(kind) {
@@ -454,11 +455,51 @@ function applyStatChipFilter(kind) {
     }
 }
 
+function toggleNetworkFilter(el) {
+    const network = el.dataset.network;
+    const chips = document.querySelectorAll('.network-filter-bar .filter-chip');
+
+    if (network === 'all') {
+        activeNetworkFilters = [];
+        chips.forEach(c => {
+            c.classList.toggle('active', c.dataset.network === 'all');
+        });
+    } else {
+        const index = activeNetworkFilters.indexOf(network);
+        if (index > -1) {
+            activeNetworkFilters.splice(index, 1);
+            el.classList.remove('active');
+        } else {
+            activeNetworkFilters.push(network);
+            el.classList.add('active');
+        }
+
+        const allChip = document.querySelector('.network-filter-bar .filter-chip[data-network="all"]');
+        if (allChip) allChip.classList.remove('active');
+
+        if (activeNetworkFilters.length === 0) {
+            if (allChip) allChip.classList.add('active');
+        }
+    }
+
+    filterDevices();
+}
+
 function filterDevices() {
     // Reflect the active chip filter on the chips, which an auto-refresh may
     // have just swapped out from under us.
     document.querySelectorAll('.stat-chip-filter').forEach(chip =>
         chip.classList.toggle('active', !!statChipFilter && chip.dataset.filter === statChipFilter));
+
+    // Restore active states on network filter chips after an auto-refresh
+    document.querySelectorAll('.network-filter-bar .filter-chip').forEach(chip => {
+        const network = chip.dataset.network;
+        if (network === 'all') {
+            chip.classList.toggle('active', activeNetworkFilters.length === 0);
+        } else {
+            chip.classList.toggle('active', activeNetworkFilters.includes(network));
+        }
+    });
 
     const search = (document.getElementById('device-search')?.value || '').toLowerCase();
     const statusFilter = document.getElementById('device-filter')?.value || 'all';
@@ -469,6 +510,7 @@ function filterDevices() {
         const text = [row.dataset.ip, row.dataset.hostname, row.dataset.customHostname || '', row.dataset.customWebUrl || '', row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type, row.dataset.network || '', row.dataset.assignment || ''].join(' ').toLowerCase();
         const status = row.dataset.status;
         const group = row.dataset.group || '';
+        const network = (row.dataset.network || '').toLowerCase();
 
         const matchSearch = !search || text.includes(search);
         const matchStatus = statusFilter === 'all' ||
@@ -478,8 +520,9 @@ function filterDevices() {
         const matchChip = !statChipFilter ||
             (statChipFilter === 'moved' && row.dataset.moved === '1') ||
             (statChipFilter === 'flagged' && row.dataset.flagged === '1');
+        const matchNetwork = activeNetworkFilters.length === 0 || activeNetworkFilters.includes(network);
 
-        const show = matchSearch && matchStatus && matchGroup && matchChip;
+        const show = matchSearch && matchStatus && matchGroup && matchChip && matchNetwork;
         row.style.display = show ? '' : 'none';
         if (show) visible++;
     });
@@ -498,6 +541,7 @@ function editDevice(ip) {
     document.getElementById('edit-label').value = row.dataset.labelOriginal || '';
     document.getElementById('edit-custom-hostname').value = row.dataset.customHostnameOriginal || '';
     document.getElementById('edit-custom-web-url').value = row.dataset.customWebUrlOriginal || '';
+    document.getElementById('edit-custom-type').value = row.dataset.customTypeOriginal || '';
     document.getElementById('edit-group').value = row.dataset.group || '';
     document.getElementById('edit-notes').value = row.dataset.notes || '';
     modal.style.display = 'flex';
@@ -513,10 +557,11 @@ async function saveDevice() {
     const label = document.getElementById('edit-label').value;
     const custom_hostname = document.getElementById('edit-custom-hostname').value;
     const custom_web_url = document.getElementById('edit-custom-web-url').value;
+    const custom_type = document.getElementById('edit-custom-type').value;
     const group = document.getElementById('edit-group').value;
     const notes = document.getElementById('edit-notes').value;
     try {
-        const result = await api('device', { ip, label, custom_hostname, custom_web_url, group, notes }, 'POST');
+        const result = await api('device', { ip, label, custom_hostname, custom_web_url, custom_type, group, notes }, 'POST');
         if (result.success) {
             showToast('Device updated', 'success');
             closeModal();
