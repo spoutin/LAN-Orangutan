@@ -92,7 +92,7 @@ func TestEnrichWithServices_SetsWebUI(t *testing.T) {
 		t.Fatalf("precondition: expected Server, got %q", devices[0].Type)
 	}
 
-	enrichWithServices(context.Background(), devices)
+	EnrichWithServices(context.Background(), devices)
 
 	if !devices[0].WebUI {
 		t.Error("expected WebUI true after probing an open web port")

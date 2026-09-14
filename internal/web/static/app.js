@@ -216,8 +216,12 @@ function showScanProgress(p) {
         }
     } else {
         if (title) {
-            let currentName = p.current_network_name ? `${p.current_network_name} (${p.current_network})` : p.current_network;
-            title.textContent = p.current_network ? `Scanning ${currentName}` : 'Starting scan...';
+            if (p.port_scan_active) {
+                title.textContent = 'Probing Services & Ports...';
+            } else {
+                let currentName = p.current_network_name ? `${p.current_network_name} (${p.current_network})` : p.current_network;
+                title.textContent = p.current_network ? `Scanning ${currentName}` : 'Starting scan...';
+            }
         }
         if (cancelBtn) {
             cancelBtn.textContent = 'Cancel';
@@ -230,14 +234,25 @@ function showScanProgress(p) {
     // made-up number.
     const bar = document.getElementById('scan-bar');
     const fill = document.getElementById('scan-bar-fill');
-    const known = p.percent >= 0 || isFinished;
+    const known = p.percent >= 0 || isFinished || p.port_scan_active;
     if (bar) bar.classList.toggle('indeterminate', !known);
-    if (fill) fill.style.width = isFinished ? '100%' : (known ? `${Math.min(100, p.percent)}%` : '');
+    if (fill) {
+        if (isFinished) {
+            fill.style.width = '100%';
+        } else if (p.port_scan_active) {
+            const pct = p.port_scan_total > 0 ? (p.port_scan_complete / p.port_scan_total) * 100 : 0;
+            fill.style.width = `${Math.min(100, Math.round(pct))}%`;
+        } else {
+            fill.style.width = known ? `${Math.min(100, p.percent)}%` : '';
+        }
+    }
 
     const detail = document.getElementById('scan-detail');
     if (detail) {
         if (isFinished) {
             detail.textContent = `Completed in ${formatSeconds(p.elapsed)}`;
+        } else if (p.port_scan_active) {
+            detail.textContent = `Probed ${p.port_scan_complete} of ${p.port_scan_total} active devices`;
         } else {
             const parts = [];
             if (p.network_count > 1) parts.push(`Network ${p.network_index} of ${p.network_count}`);
@@ -273,6 +288,9 @@ function showScanProgress(p) {
     if (eta) {
         if (isFinished) {
             eta.textContent = '';
+        } else if (p.port_scan_active) {
+            const pct = p.port_scan_total > 0 ? (p.port_scan_complete / p.port_scan_total) * 100 : 0;
+            eta.textContent = `${formatSeconds(p.elapsed)} elapsed · ${Math.round(pct)}%`;
         } else {
             eta.textContent = known && p.remaining != null
                 ? `~${formatSeconds(p.remaining)} left · ${Math.round(p.percent)}%`
@@ -320,7 +338,7 @@ function showScanProgress(p) {
     if (detailsContainer && detailsList) {
         if (p.networks && p.networks.length > 0) {
             detailsContainer.style.display = 'block';
-            detailsList.innerHTML = p.networks.map(n => {
+            let rowsHtml = p.networks.map(n => {
                 const nameLabel = n.network_name ? `${n.network_name} (${n.network})` : n.network;
                 const statusBadge = `<span class="scan-status-badge ${n.status}">${n.status}</span>`;
                 const durationText = n.duration ? `in ${formatSeconds(n.duration)}` : '';
@@ -332,6 +350,28 @@ function showScanProgress(p) {
                     </div>
                 `;
             }).join('');
+
+            if (p.port_scan_active) {
+                const statusBadge = `<span class="scan-status-badge running">scanning</span>`;
+                rowsHtml += `
+                    <div class="scan-detail-row port-scan-row">
+                        <span class="scan-detail-network">🔌 Active Port Prober</span>
+                        <span class="scan-detail-status">${statusBadge}</span>
+                        <span class="scan-detail-summary">${p.port_scan_complete}/${p.port_scan_total} probed</span>
+                    </div>
+                `;
+            } else if (p.port_scan_total > 0) {
+                const statusBadge = `<span class="scan-status-badge scanned">scanned</span>`;
+                rowsHtml += `
+                    <div class="scan-detail-row port-scan-row">
+                        <span class="scan-detail-network">🔌 Active Port Prober</span>
+                        <span class="scan-detail-status">${statusBadge}</span>
+                        <span class="scan-detail-summary">${p.port_scan_total} probed</span>
+                    </div>
+                `;
+            }
+
+            detailsList.innerHTML = rowsHtml;
         } else {
             detailsContainer.style.display = 'none';
         }

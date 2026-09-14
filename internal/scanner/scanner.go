@@ -134,7 +134,7 @@ func (s *Scanner) Scan(ctx context.Context, cidr string) (*types.ScanResult, err
 	// its type and flag a web interface. This is the only step that sends more
 	// than a ping or a name query, so it stays behind the opt-in flag.
 	if s.serviceDetection {
-		enrichWithServices(ctx, devices)
+		EnrichWithServices(ctx, devices)
 	}
 
 	duration := time.Since(startTime).Seconds()
@@ -180,13 +180,8 @@ func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device
 		return nil, "", fmt.Errorf("nmap not found")
 	}
 
-	// Run nmap with ping scan or port scan and XML output
-	var args []string
-	if s.enablePortScan && s.portScanRange != "" {
-		args = []string{"-p", s.portScanRange, "-oX", "-", cidr}
-	} else {
-		args = []string{"-sn", "-oX", "-", cidr}
-	}
+	// Run nmap with a fast ping sweep (we decouple port scanning to run asynchronously in Stage 2)
+	args := []string{"-sn", "-oX", "-", cidr}
 	cmd := exec.CommandContext(ctx, "nmap", args...)
 	output, err := cmd.Output()
 	if err != nil {
@@ -446,4 +441,34 @@ func getInterfaceForCIDR(ctx context.Context, cidr string) string {
 	}
 
 	return ""
+}
+
+// ScanHostPorts performs a high-speed targeted port scan on a single IP address.
+func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string) ([]int, error) {
+	if _, err := exec.LookPath("nmap"); err != nil {
+		return nil, fmt.Errorf("nmap not found")
+	}
+
+	args := []string{"-p", portRange, "-T4", "--min-rate", "1000", "--max-retries", "0", "--host-timeout", "15s", "-oX", "-", ip}
+	cmd := exec.CommandContext(ctx, "nmap", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("nmap port scan failed: %w", err)
+	}
+
+	var result nmapRun
+	if err := xml.Unmarshal(output, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse nmap output: %w", err)
+	}
+
+	var openPorts []int
+	if len(result.Hosts) > 0 {
+		for _, port := range result.Hosts[0].Ports.Ports {
+			if port.State.State == "open" {
+				openPorts = append(openPorts, port.PortID)
+			}
+		}
+	}
+
+	return openPorts, nil
 }

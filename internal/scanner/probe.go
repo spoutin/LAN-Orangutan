@@ -56,12 +56,12 @@ const serviceProbeTimeout = 400 * time.Millisecond
 // network does not open thousands of sockets in the same instant.
 const serviceProbeConcurrency = 24
 
-// enrichWithServices probes each device's well-known ports and updates its type
+// EnrichWithServices probes each device's well-known ports and updates its type
 // and web-interface flag from what it finds. It only runs when the user has
 // enabled service detection. Devices are probed concurrently up to a cap; each
 // device's ports are probed concurrently in turn, so the whole pass costs about
 // one timeout per batch rather than one per closed port.
-func enrichWithServices(ctx context.Context, devices []types.Device) {
+func EnrichWithServices(ctx context.Context, devices []types.Device) {
 	sem := make(chan struct{}, serviceProbeConcurrency)
 	var wg sync.WaitGroup
 

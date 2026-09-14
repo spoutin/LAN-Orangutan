@@ -41,6 +41,12 @@ type scanJob struct {
 	// the user clicked. Set once at creation. The UI uses it to stay quiet for
 	// automatic scans instead of popping the progress overlay on its own.
 	automatic bool
+
+	// Stage 2 port scanning telemetry
+	portScanActive   bool
+	portScanTotal    int
+	portScanComplete int
+	portScanWG       sync.WaitGroup
 }
 
 // scanProgress is the snapshot of a job returned to the UI.
@@ -65,6 +71,11 @@ type scanProgress struct {
 	// not show its progress overlay for these, so an automatic scan never pops
 	// a dialog with a Cancel button on its own.
 	Automatic bool `json:"automatic"`
+
+	// Stage 2 port scanning progress fields
+	PortScanActive   bool `json:"port_scan_active"`
+	PortScanTotal    int  `json:"port_scan_total"`
+	PortScanComplete int  `json:"port_scan_complete"`
 }
 
 // snapshot returns the current progress of the job. The estimate is based on
@@ -76,16 +87,19 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 	defer j.mu.RUnlock()
 
 	p := scanProgress{
-		JobID:          j.id,
-		Status:         j.status,
-		CurrentNetwork: j.currentNetwork,
-		NetworkIndex:   j.networkIndex,
-		NetworkCount:   len(j.networks),
-		DeviceCount:    j.deviceCount,
-		Elapsed:        time.Since(j.startedAt).Seconds(),
-		Percent:        percentUnknown,
-		Error:          j.err,
-		Automatic:      j.automatic,
+		JobID:            j.id,
+		Status:           j.status,
+		CurrentNetwork:   j.currentNetwork,
+		NetworkIndex:     j.networkIndex,
+		NetworkCount:     len(j.networks),
+		DeviceCount:      j.deviceCount,
+		Elapsed:          time.Since(j.startedAt).Seconds(),
+		Percent:          percentUnknown,
+		Error:            j.err,
+		Automatic:        j.automatic,
+		PortScanActive:   j.portScanActive,
+		PortScanTotal:    j.portScanTotal,
+		PortScanComplete: j.portScanComplete,
 	}
 
 	if j.currentNetwork != "" && cfg != nil {
@@ -210,6 +224,15 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		summary.DeviceCount = result.DeviceCount
 		summary.Duration = result.Duration
 		j.addResult(summary, result.DeviceCount)
+
+		// Launch asynchronous port scan (Stage 2) on discovered active devices
+		if h.cfg.Scanning.EnablePortScan && h.cfg.Scanning.PortScanRange != "" {
+			j.portScanWG.Add(1)
+			go func(devices []types.Device) {
+				defer j.portScanWG.Done()
+				j.startPortScan(ctx, h, devices)
+			}(result.Devices)
+		}
 	}
 
 	// Supplemental discovery, once for the whole job: IPv6 neighbors (an IPv6
@@ -278,6 +301,9 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			}
 		}
 	}
+
+	// Wait for any asynchronous port scanning (Stage 2) to complete before finishing the job
+	j.portScanWG.Wait()
 
 	j.finish("done", "")
 }
@@ -386,4 +412,72 @@ func (h *Handler) runBackgroundScan() {
 		return
 	}
 	h.job = h.startScanJob(networks, true)
+}
+
+// startPortScan runs a targeted high-speed port scan on a list of discovered active devices.
+func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types.Device) {
+	var activeDevices []types.Device
+	for _, d := range devices {
+		if d.IP != "" {
+			activeDevices = append(activeDevices, d)
+		}
+	}
+
+	if len(activeDevices) == 0 {
+		return
+	}
+
+	j.mu.Lock()
+	j.portScanActive = true
+	j.portScanTotal += len(activeDevices)
+	j.mu.Unlock()
+
+	// Use a worker pool to scan devices concurrently (max 4 hosts at once)
+	const concurrency = 4
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	for _, d := range activeDevices {
+		if ctx.Err() != nil {
+			break
+		}
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(device types.Device) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			// Perform targeted port scan
+			ports, err := h.scanner.ScanHostPorts(ctx, device.IP, h.cfg.Scanning.PortScanRange)
+			if err != nil {
+				fmt.Printf("[DEBUG-PORT-SCAN] Failed to scan ports for %s: %v\n", device.IP, err)
+			} else {
+				// Fetch current device from store to preserve customized fields
+				current := h.store.GetDevice(device.IP)
+				if current == nil {
+					current = &device
+				}
+				current.OpenPorts = ports
+
+				// Enrich device with open ports (re-classifies types and finds web servers)
+				tempDevices := []types.Device{*current}
+				scanner.EnrichWithServices(ctx, tempDevices)
+				*current = tempDevices[0]
+
+				// Save back to database
+				_ = h.store.MergeDevices([]types.Device{*current})
+			}
+
+			// Increment completion count
+			j.mu.Lock()
+			j.portScanComplete++
+			if j.portScanComplete >= j.portScanTotal {
+				j.portScanActive = false
+			}
+			j.mu.Unlock()
+		}(d)
+	}
+
+	wg.Wait()
 }
