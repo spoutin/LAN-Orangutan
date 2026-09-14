@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -157,8 +158,10 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 	}
 
 	searchBody := []byte(`{"current": 1, "rowCount": -1}`)
+	log.Printf("[DEBUG-DISCOVERY] OPNsense API scan sequence initiated for URL: %s", baseURL)
 
 	// 1. Fetch Kea Leases
+	log.Printf("[DEBUG-DISCOVERY] [1/3] POST Request starting: %s/api/kea/leases4/search", baseURL)
 	reqLeases, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/kea/leases4/search", bytes.NewReader(searchBody))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create leases request: %w", err)
@@ -166,11 +169,14 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 	reqLeases.SetBasicAuth(cfg.APIKey, cfg.APISecret)
 	reqLeases.Header.Set("Content-Type", "application/json")
 
+	startLeases := time.Now()
 	respLeases, err := client.Do(reqLeases)
 	if err != nil {
+		log.Printf("[DEBUG-DISCOVERY] [1/3] POST Request FAILED after %v: %v", time.Since(startLeases), err)
 		return nil, nil, nil, fmt.Errorf("failed to execute leases request: %w", err)
 	}
 	defer respLeases.Body.Close()
+	log.Printf("[DEBUG-DISCOVERY] [1/3] POST Request completed in %v with status: %s", time.Since(startLeases), respLeases.Status)
 
 	if respLeases.StatusCode != http.StatusOK {
 		return nil, nil, nil, fmt.Errorf("unexpected opnsense leases API response status: %s", respLeases.Status)
@@ -180,6 +186,7 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 	if err := json.NewDecoder(respLeases.Body).Decode(&rawLeases); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to decode opnsense leases: %w", err)
 	}
+	log.Printf("[DEBUG-DISCOVERY] [1/3] Decoded %d leases successfully", len(rawLeases.Rows))
 
 	for _, rl := range rawLeases.Rows {
 		if rl.Address == "" {
@@ -196,6 +203,7 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 	}
 
 	// 2. Fetch Kea Reservations
+	log.Printf("[DEBUG-DISCOVERY] [2/3] POST Request starting: %s/api/kea/dhcpv4/searchReservation", baseURL)
 	reqReservations, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/kea/dhcpv4/searchReservation", bytes.NewReader(searchBody))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create reservations request: %w", err)
@@ -203,11 +211,14 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 	reqReservations.SetBasicAuth(cfg.APIKey, cfg.APISecret)
 	reqReservations.Header.Set("Content-Type", "application/json")
 
+	startReservations := time.Now()
 	respReservations, err := client.Do(reqReservations)
 	if err != nil {
+		log.Printf("[DEBUG-DISCOVERY] [2/3] POST Request FAILED after %v: %v", time.Since(startReservations), err)
 		return nil, nil, nil, fmt.Errorf("failed to execute reservations request: %w", err)
 	}
 	defer respReservations.Body.Close()
+	log.Printf("[DEBUG-DISCOVERY] [2/3] POST Request completed in %v with status: %s", time.Since(startReservations), respReservations.Status)
 
 	if respReservations.StatusCode != http.StatusOK {
 		return nil, nil, nil, fmt.Errorf("unexpected opnsense reservations API response status: %s", respReservations.Status)
@@ -217,6 +228,7 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 	if err := json.NewDecoder(respReservations.Body).Decode(&rawReservations); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to decode opnsense reservations: %w", err)
 	}
+	log.Printf("[DEBUG-DISCOVERY] [2/3] Decoded %d reservations successfully", len(rawReservations.Rows))
 
 	for _, rr := range rawReservations.Rows {
 		if rr.IPAddress == "" {
@@ -233,14 +245,18 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 	}
 
 	// 3. Fetch OPNsense ARP Table as supplementary leases/devices
+	log.Printf("[DEBUG-DISCOVERY] [3/3] GET Request starting: %s/api/diagnostics/interface/getArp", baseURL)
 	reqArp, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/diagnostics/interface/getArp", nil)
 	if err == nil {
 		reqArp.SetBasicAuth(cfg.APIKey, cfg.APISecret)
+		startArp := time.Now()
 		if respArp, err := client.Do(reqArp); err == nil {
 			defer respArp.Body.Close()
+			log.Printf("[DEBUG-DISCOVERY] [3/3] GET Request completed in %v with status: %s", time.Since(startArp), respArp.Status)
 			if respArp.StatusCode == http.StatusOK {
 				var rawArp []opnSenseArp
 				if err := json.NewDecoder(respArp.Body).Decode(&rawArp); err == nil {
+					log.Printf("[DEBUG-DISCOVERY] [3/3] Decoded %d ARP entries successfully", len(rawArp))
 					for _, ra := range rawArp {
 						if ra.IP == "" {
 							continue
@@ -253,10 +269,15 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 							Type:   Classify(vendor, "", nil),
 						})
 					}
+				} else {
+					log.Printf("[DEBUG-DISCOVERY] [3/3] Failed to decode ARP response: %v", err)
 				}
 			}
+		} else {
+			log.Printf("[DEBUG-DISCOVERY] [3/3] GET Request FAILED after %v: %v", time.Since(startArp), err)
 		}
 	}
 
+	log.Printf("[DEBUG-DISCOVERY] OPNsense API scan sequence complete.")
 	return leases, reservations, arpEntries, nil
 }
