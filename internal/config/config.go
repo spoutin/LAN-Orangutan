@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/291-Group/LAN-Orangutan/internal/network"
+	"github.com/spoutin/LAN-Orangutan/internal/network"
 )
 
 // GetDefaultDataDir returns the appropriate default data directory for the current OS

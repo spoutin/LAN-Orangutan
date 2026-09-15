@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 // InContainer reports whether this process is running inside a container.

@@ -76,7 +76,7 @@ The following key enhancements have been integrated:
 
 ### Download
 
-Grab the latest release of LAN Orangutan for your platform from [GitHub Releases](https://github.com/291-Group/LAN-Orangutan/releases).
+Grab the latest release of LAN Orangutan for your platform from [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases).
 
 ### Docker
 
@@ -95,7 +95,7 @@ docker compose up -d
 
 Then open `http://<that-machine>:291` and create a password. Your data is kept in a `data/` folder next to the compose file.
 
-The image is published to both [Docker Hub](https://hub.docker.com/r/291group/lan-orangutan) (`291group/lan-orangutan`) and [GitHub Container Registry](https://github.com/291-Group/LAN-Orangutan/pkgs/container/lan-orangutan) (`ghcr.io/291-group/lan-orangutan`). The compose file uses GHCR; pull from whichever you prefer.
+The image is published to both [Docker Hub](https://hub.docker.com/r/291group/lan-orangutan) (`291group/lan-orangutan`) and [GitHub Container Registry](https://github.com/spoutin/LAN-Orangutan/pkgs/container/lan-orangutan) (`ghcr.io/291-group/lan-orangutan`). The compose file uses GHCR; pull from whichever you prefer.
 
 **Docker requires Linux.** The container uses host networking, because on Docker's own private network it would only ever see other containers (`172.17.0.0/16`) rather than the devices on your LAN. Docker Desktop on macOS and Windows runs Linux inside a virtual machine, so host networking attaches to that VM instead of your computer: the dashboard is unreachable and a scan finds nothing but the VM. On macOS and Windows, download the binary and run it directly, as described below.
 
@@ -290,7 +290,7 @@ Every setting can also be supplied through the environment, which is usually eas
 ## Building from Source
 
 ```bash
-git clone https://github.com/291-Group/LAN-Orangutan.git
+git clone https://github.com/spoutin/LAN-Orangutan.git
 cd LAN-Orangutan
 make build          # builds to bin/orangutan with version details baked in
 ```
@@ -306,7 +306,7 @@ There are already excellent, deeply capable tools in this space, and they're the
 If you don't need the extra features, and the extra friction that comes with them, then this is for you. We'll keep pushing back on anything that makes it harder to use or deploy, because staying simple and fast is the whole reason it exists.
 
 ## Feedback & Contributing
-Found a bug, hit a problem, or have an idea? Open an [issue](https://github.com/291-Group/LAN-Orangutan/issues) and let us know.
+Found a bug, hit a problem, or have an idea? Open an [issue](https://github.com/spoutin/LAN-Orangutan/issues) and let us know.
 
 Feature requests are welcome too, with one caveat that follows from the philosophy above: if something would add real complexity or setup, it's probably not a fit for LAN Orangutan. But we'd still rather hear the idea, so don't hold back.
 

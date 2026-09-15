@@ -1,4 +1,4 @@
-module github.com/291-Group/LAN-Orangutan
+module github.com/spoutin/LAN-Orangutan
 
 go 1.25.12
 

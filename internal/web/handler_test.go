@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/291-Group/LAN-Orangutan/internal/auth"
-	"github.com/291-Group/LAN-Orangutan/internal/config"
-	"github.com/291-Group/LAN-Orangutan/internal/storage"
+	"github.com/spoutin/LAN-Orangutan/internal/auth"
+	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/storage"
 )
 
 const testPassword = "test-password"

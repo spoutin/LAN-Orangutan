@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/291-Group/LAN-Orangutan/internal/scanner"
-	"github.com/291-Group/LAN-Orangutan/internal/storage"
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/scanner"
+	"github.com/spoutin/LAN-Orangutan/internal/storage"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 var exportCmd = &cobra.Command{

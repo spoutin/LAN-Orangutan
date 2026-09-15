@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/291-Group/LAN-Orangutan/internal/config"
-	"github.com/291-Group/LAN-Orangutan/internal/network"
-	"github.com/291-Group/LAN-Orangutan/internal/scanner"
-	"github.com/291-Group/LAN-Orangutan/internal/storage"
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/network"
+	"github.com/spoutin/LAN-Orangutan/internal/scanner"
+	"github.com/spoutin/LAN-Orangutan/internal/storage"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 // Handler handles API requests

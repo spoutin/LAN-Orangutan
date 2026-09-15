@@ -3,7 +3,7 @@ package storage
 import (
 	"testing"
 
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 // TestDeviceMovingIPIsTrackedByMAC covers a device that reappears at a new IP:

@@ -4,7 +4,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 // Filter describes how the detected network list should be adjusted before it

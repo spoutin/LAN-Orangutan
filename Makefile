@@ -5,9 +5,9 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 LDFLAGS := -ldflags "-s -w \
-	-X 'github.com/291-Group/LAN-Orangutan/internal/cli.Version=$(VERSION)' \
-	-X 'github.com/291-Group/LAN-Orangutan/internal/cli.Commit=$(COMMIT)' \
-	-X 'github.com/291-Group/LAN-Orangutan/internal/cli.BuildDate=$(BUILD_DATE)'"
+	-X 'github.com/spoutin/LAN-Orangutan/internal/cli.Version=$(VERSION)' \
+	-X 'github.com/spoutin/LAN-Orangutan/internal/cli.Commit=$(COMMIT)' \
+	-X 'github.com/spoutin/LAN-Orangutan/internal/cli.BuildDate=$(BUILD_DATE)'"
 
 BINARY := orangutan
 BUILD_DIR := bin

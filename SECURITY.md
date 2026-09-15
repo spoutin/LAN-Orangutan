@@ -6,7 +6,7 @@ LAN Orangutan scans your network and stores a record of what it finds, so it is 
 
 Please report security issues privately rather than opening a public issue.
 
-- Use [GitHub's private vulnerability reporting](https://github.com/291-Group/LAN-Orangutan/security/advisories/new)
+- Use [GitHub's private vulnerability reporting](https://github.com/spoutin/LAN-Orangutan/security/advisories/new)
 
 Please include what you found, how to reproduce it, and what an attacker could do with it. We will acknowledge your report within a few days and keep you updated while we work on a fix.
 

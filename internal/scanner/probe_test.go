@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 func TestRisksFromPorts(t *testing.T) {

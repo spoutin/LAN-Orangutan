@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 // netbiosTimeout bounds a single NetBIOS name query. A device on the LAN answers

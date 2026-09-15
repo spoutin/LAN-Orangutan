@@ -4,7 +4,7 @@
 
 Scan your networks, discover devices, label and track them, all from a clean web UI or CLI. One binary, almost no configuration, running in seconds.
 
-By [291 Group](https://291group.com) · [GitHub](https://github.com/291-Group/LAN-Orangutan) · MIT licensed
+By [291 Group](https://291group.com) · [GitHub](https://github.com/spoutin/LAN-Orangutan) · MIT licensed
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/291-Group/LAN-Orangutan/main/docs/LO1.png" width="48%" />
@@ -19,7 +19,7 @@ This image needs **host networking**, which means it only works on Linux.
 
 Docker Desktop on macOS and Windows runs Linux inside a virtual machine. `network_mode: host` attaches to that VM, not your computer: the dashboard is unreachable, and the VM's gateway answers probes for addresses that do not exist, so a scan *looks* successful while reporting devices that were never there. No setting fixes this.
 
-On macOS and Windows, [download the binary](https://github.com/291-Group/LAN-Orangutan/releases) and run it directly instead. It is a single file and takes one command.
+On macOS and Windows, [download the binary](https://github.com/spoutin/LAN-Orangutan/releases) and run it directly instead. It is a single file and takes one command.
 
 LAN Orangutan detects this situation itself and warns at startup and on the dashboard, so results are never silently wrong.
 
@@ -139,7 +139,7 @@ If Tailscale is connected, its online peers are added to your device list alongs
 - **Turn auth off** with `ORANGUTAN_ALLOW_INSECURE=true` only when access control genuinely lives elsewhere, such as a reverse proxy that handles login.
 - **No built-in HTTPS.** Put LAN Orangutan behind a reverse proxy, or reach it over Tailscale, if you need the connection encrypted.
 
-Full details, known limitations, and how to report a vulnerability: [SECURITY.md](https://github.com/291-Group/LAN-Orangutan/blob/main/SECURITY.md).
+Full details, known limitations, and how to report a vulnerability: [SECURITY.md](https://github.com/spoutin/LAN-Orangutan/blob/main/SECURITY.md).
 
 ### Why the container runs as root
 
@@ -170,7 +170,7 @@ LAN Orangutan isn't trying to be the most powerful scanner out there, and that's
 
 ## Feedback
 
-Bugs, problems and ideas: [open an issue](https://github.com/291-Group/LAN-Orangutan/issues).
+Bugs, problems and ideas: [open an issue](https://github.com/spoutin/LAN-Orangutan/issues).
 
 ---
 

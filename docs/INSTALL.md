@@ -2,13 +2,13 @@
 
 ## Quick Install (Recommended)
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/291-Group/LAN-Orangutan/releases).
+Download the latest release for your platform from [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases).
 
 ### Linux
 
 ```bash
 # Download and extract
-wget https://github.com/291-Group/LAN-Orangutan/releases/latest/download/orangutan-linux-amd64.tar.gz
+wget https://github.com/spoutin/LAN-Orangutan/releases/latest/download/orangutan-linux-amd64.tar.gz
 tar xzf orangutan-linux-amd64.tar.gz
 
 # Run (use sudo for MAC addresses and vendor info)
@@ -19,7 +19,7 @@ sudo ./orangutan serve
 
 ```bash
 # Download and extract
-curl -LO https://github.com/291-Group/LAN-Orangutan/releases/latest/download/orangutan-darwin-arm64.tar.gz
+curl -LO https://github.com/spoutin/LAN-Orangutan/releases/latest/download/orangutan-darwin-arm64.tar.gz
 tar xzf orangutan-darwin-arm64.tar.gz
 
 # Run (use sudo for MAC addresses and vendor info)
@@ -28,7 +28,7 @@ sudo ./orangutan serve
 
 ### Windows
 
-Download `orangutan-windows-amd64.zip` from [GitHub Releases](https://github.com/291-Group/LAN-Orangutan/releases), extract, and run as Administrator.
+Download `orangutan-windows-amd64.zip` from [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases), extract, and run as Administrator.
 
 ## Requirements
 
@@ -40,7 +40,7 @@ Download `orangutan-windows-amd64.zip` from [GitHub Releases](https://github.com
 ## Building from Source
 
 ```bash
-git clone https://github.com/291-Group/LAN-Orangutan.git
+git clone https://github.com/spoutin/LAN-Orangutan.git
 cd LAN-Orangutan
 go build -o orangutan ./cmd/orangutan
 ```

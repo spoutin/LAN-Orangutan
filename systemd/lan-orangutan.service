@@ -1,6 +1,6 @@
 [Unit]
 Description=LAN Orangutan Network Discovery
-Documentation=https://github.com/291-Group/LAN-Orangutan
+Documentation=https://github.com/spoutin/LAN-Orangutan
 After=network-online.target
 Wants=network-online.target
 

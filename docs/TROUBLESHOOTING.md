@@ -156,7 +156,7 @@ orangutan version
 
 ## Still having issues?
 
-1. Check the [GitHub Issues](https://github.com/291-Group/LAN-Orangutan/issues)
+1. Check the [GitHub Issues](https://github.com/spoutin/LAN-Orangutan/issues)
 2. Open a new issue with:
    - Your OS and version
    - Output of `orangutan version`

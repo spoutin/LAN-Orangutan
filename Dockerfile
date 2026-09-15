@@ -23,9 +23,9 @@ ARG BUILD_DATE=""
 # Build binary
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w \
-      -X 'github.com/291-Group/LAN-Orangutan/internal/cli.Version=${VERSION}' \
-      -X 'github.com/291-Group/LAN-Orangutan/internal/cli.Commit=${COMMIT}' \
-      -X 'github.com/291-Group/LAN-Orangutan/internal/cli.BuildDate=${BUILD_DATE}'" \
+      -X 'github.com/spoutin/LAN-Orangutan/internal/cli.Version=${VERSION}' \
+      -X 'github.com/spoutin/LAN-Orangutan/internal/cli.Commit=${COMMIT}' \
+      -X 'github.com/spoutin/LAN-Orangutan/internal/cli.BuildDate=${BUILD_DATE}'" \
     -o orangutan ./cmd/orangutan
 
 # Runtime stage

@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/291-Group/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/config"
 )
 
 var (

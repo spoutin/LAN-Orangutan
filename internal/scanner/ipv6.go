@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 // ipv6CommandTimeout bounds each helper command (a ping or a neighbor-table

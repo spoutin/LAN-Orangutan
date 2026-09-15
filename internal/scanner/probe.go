@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 // serviceProbePorts is the short, fixed set of ports the opt-in service probe

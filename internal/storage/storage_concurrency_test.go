@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 // TestConcurrentReadDuringMerge guards against the data race where a reader of

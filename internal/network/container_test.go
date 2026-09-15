@@ -3,7 +3,7 @@ package network
 import (
 	"testing"
 
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 func TestDockerPrivateRangeDetection(t *testing.T) {

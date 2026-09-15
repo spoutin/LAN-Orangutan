@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/291-Group/LAN-Orangutan/internal/types"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 // tailscaleStatusJSON represents the JSON output from `tailscale status --json`

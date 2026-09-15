@@ -63,7 +63,7 @@ if [[ -z "$SOURCE_BIN" ]]; then
     echo -e "${RED}✗${NC} Could not find the orangutan binary next to this script."
     echo "   Expected $BIN_NAME or orangutan in $SOURCE_DIR"
     echo "   Download the release for your platform from:"
-    echo "   https://github.com/291-Group/LAN-Orangutan/releases"
+    echo "   https://github.com/spoutin/LAN-Orangutan/releases"
     exit 1
 fi
 
