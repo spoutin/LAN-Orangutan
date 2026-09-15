@@ -26,9 +26,9 @@ type Storage struct {
 // New creates a new Storage instance
 func New(devicesFile, stateFile string) (*Storage, error) {
 	s := &Storage{
-		devicesFile:  devicesFile,
-		stateFile:    stateFile,
-		devices:      make(map[string]*types.Device),
+		devicesFile: devicesFile,
+		stateFile:   stateFile,
+		devices:     make(map[string]*types.Device),
 		state: &types.ScanState{
 			LastScan:     make(map[string]time.Time),
 			LastDuration: make(map[string]float64),
@@ -718,7 +718,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 			dev := d
 			dev.Assignment = assignments[d.IP]
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			
+
 			// We haven't pinged it, so we won't show it as online unless LastSeen is fresh.
 			// Setting LastSeen to 65 minutes ago makes sure it registers as offline but keeps history.
 			s.addNewDeviceLocked(&dev, now.Add(-65*time.Minute))

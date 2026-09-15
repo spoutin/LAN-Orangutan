@@ -229,6 +229,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
+
 // handleNetworks handles GET /api/networks
 func (h *Handler) handleNetworks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

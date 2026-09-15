@@ -17,7 +17,7 @@ import (
 
 // Scanner performs network scans
 type Scanner struct {
-	minInterval      time.Duration
+	minInterval time.Duration
 	// serviceDetection turns on the opt-in probe that identifies devices by
 	// their open ports. Off by default; a scan stays a quiet ping sweep.
 	serviceDetection bool
