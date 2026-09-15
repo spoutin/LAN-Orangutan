@@ -1,7 +1,10 @@
 // Package types defines the core domain types for LAN Orangutan
 package types
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Device represents a discovered network device
 type Device struct {
@@ -28,6 +31,8 @@ type Device struct {
 	CustomWebURL   string  `json:"custom_web_url,omitempty"`
 	CustomType     string  `json:"custom_type,omitempty"`
 	WebPort        int     `json:"web_port,omitempty"`
+	WebScheme      string  `json:"web_scheme,omitempty"`
+	Probed         bool    `json:"probed,omitempty"`
 	Assignment     string  `json:"assignment,omitempty"`
 	OpenPorts      []int   `json:"-"`
 	NetworkName  string    `json:"network_name,omitempty"`
@@ -149,4 +154,33 @@ type DeviceStats struct {
 	Online  int            `json:"online"`
 	Offline int            `json:"offline"`
 	Groups  map[string]int `json:"groups"`
+}
+
+// WebURL returns the full web interface URL for the device.
+func (d Device) WebURL() string {
+	if d.CustomWebURL != "" {
+		return d.CustomWebURL
+	}
+
+	scheme := d.WebScheme
+	if scheme == "" {
+		scheme = "http" // default fallback
+	}
+
+	host := d.IP
+	if d.CustomHostname != "" {
+		host = d.CustomHostname
+	} else if d.Hostname != "" {
+		host = d.Hostname
+	}
+
+	portSuffix := ""
+	if d.WebPort > 0 {
+		// Only include port if it is non-standard for the scheme
+		if !(scheme == "http" && d.WebPort == 80) && !(scheme == "https" && d.WebPort == 443) {
+			portSuffix = fmt.Sprintf(":%d", d.WebPort)
+		}
+	}
+
+	return fmt.Sprintf("%s://%s%s", scheme, host, portSuffix)
 }

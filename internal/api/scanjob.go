@@ -464,6 +464,7 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 				tempDevices := []types.Device{*current}
 				scanner.EnrichWithServices(ctx, tempDevices)
 				*current = tempDevices[0]
+				current.Probed = true
 
 				// Save back to database
 				_ = h.store.MergeDevices([]types.Device{*current})

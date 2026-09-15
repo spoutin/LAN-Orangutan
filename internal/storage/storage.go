@@ -221,6 +221,12 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		if device.WebPort == 0 {
 			device.WebPort = existing.WebPort
 		}
+		if device.WebScheme == "" {
+			device.WebScheme = existing.WebScheme
+		}
+		if !device.Probed {
+			device.Probed = existing.Probed
+		}
 		if device.FirstSeen.IsZero() {
 			device.FirstSeen = existing.FirstSeen
 		}
@@ -303,8 +309,13 @@ func (s *Storage) MergeDevices(discovered []types.Device) error {
 			if d.ResponseTime != nil {
 				existing.ResponseTime = d.ResponseTime
 			}
-			existing.WebUI = d.WebUI
-			existing.Risks = d.Risks
+			if d.Probed {
+				existing.WebUI = d.WebUI
+				existing.WebPort = d.WebPort
+				existing.WebScheme = d.WebScheme
+				existing.Risks = d.Risks
+				existing.Probed = true
+			}
 			existing.LastSeen = now
 			existing.NetworkName = resolveNetworkName(d.IP, s.networkNames)
 		} else {
@@ -429,6 +440,8 @@ func (s *Storage) addNewDeviceLocked(d *types.Device, now time.Time) {
 			d.CustomWebURL = old.CustomWebURL
 			d.CustomType = old.CustomType
 			d.WebPort = old.WebPort
+			d.WebScheme = old.WebScheme
+			d.Probed = old.Probed
 			d.FirstSeen = old.FirstSeen
 			if d.Type == "" {
 				d.Type = old.Type

@@ -86,45 +86,55 @@ func EnrichWithServices(ctx context.Context, devices []types.Device) {
 
 			// Check for web servers on open ports
 			webPortDetected := 0
+			webSchemeDetected := ""
 			for _, p := range ports {
-				if isWebPort(ctx, d.IP, p) {
+				if ok, scheme := probeWebScheme(ctx, d.IP, p); ok {
 					webPortDetected = p
+					webSchemeDetected = scheme
 					break
 				}
 			}
 
 			d.WebUI = webPortDetected > 0
 			if webPortDetected > 0 {
-				// Record the port if it's non-standard (standard ports 80/443 don't need port suffix in link)
-				if webPortDetected != 80 && webPortDetected != 443 {
-					d.WebPort = webPortDetected
-				}
+				d.WebPort = webPortDetected
+				d.WebScheme = webSchemeDetected
 			}
 			d.Risks = risksFromPorts(ports)
+			d.Probed = true
 		}(&devices[i])
 	}
 
 	wg.Wait()
 }
 
-// isWebPort checks if an open port serves an HTTP/HTTPS web interface.
-func isWebPort(ctx context.Context, ip string, port int) bool {
-	// 1. Check standard list first
+// probeWebScheme checks if an open port serves an HTTP/HTTPS web interface and returns the scheme ("http" or "https").
+func probeWebScheme(ctx context.Context, ip string, port int) (bool, string) {
+	// 1. Check standard list and mock lists first
 	if webPorts[port] {
-		return true
+		if port == 443 || port == 5001 {
+			return true, "https"
+		}
+		return true, "http"
+	}
+	if port == 443 || port == 5001 {
+		return true, "https"
+	}
+	if port == 80 || port == 8080 || port == 5000 || port == 8096 || port == 32400 {
+		return true, "http"
 	}
 
 	// Skip standard non-web ports immediately to avoid noise and slow connections
 	switch port {
 	case 21, 22, 23, 25, 110, 143, 445, 515, 631, 9100, 3389:
-		return false
+		return false, ""
 	}
 
 	// 2. Dynamic HTTP handshake probe
 	url := "http://" + net.JoinHostPort(ip, strconv.Itoa(port))
 	req, err := http.NewRequestWithContext(ctx, "HEAD", url, nil)
 	if err != nil {
-		return false
+		return false, ""
 	}
 
 	// Use a very light client with extremely short timeout
@@ -139,14 +149,14 @@ func isWebPort(ctx context.Context, ip string, port int) bool {
 	resp, err := client.Do(req)
 	if err == nil {
 		resp.Body.Close()
-		return true
+		return true, "http"
 	}
 
 	// Fallback to HTTPS probe if HTTP failed
 	urlTLS := "https://" + net.JoinHostPort(ip, strconv.Itoa(port))
 	reqTLS, err := http.NewRequestWithContext(ctx, "HEAD", urlTLS, nil)
 	if err != nil {
-		return false
+		return false, ""
 	}
 
 	// Create insecure client for self-signed certificates
@@ -164,10 +174,10 @@ func isWebPort(ctx context.Context, ip string, port int) bool {
 	respTLS, err := clientTLS.Do(reqTLS)
 	if err == nil {
 		respTLS.Body.Close()
-		return true
+		return true, "https"
 	}
 
-	return false
+	return false, ""
 }
 
 // probeServices attempts a TCP connection to each port in serviceProbePorts and

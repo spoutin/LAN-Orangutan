@@ -341,11 +341,11 @@ orangutan export out.csv</code></pre>
                                 {{else if .Type}}
                                     <span class="type-badge">{{typeIcon .Type}}{{.Type}}</span>
                                 {{end}}
-                                {{if or .WebUI .CustomWebURL}}
-                                    <a href="{{if .CustomWebURL}}{{.CustomWebURL}}{{else if .CustomHostname}}http://{{.CustomHostname}}{{if .WebPort}}:{{.WebPort}}{{end}}{{else if .Hostname}}http://{{.Hostname}}{{if .WebPort}}:{{.WebPort}}{{end}}{{else}}http://{{.IP}}{{if .WebPort}}:{{.WebPort}}{{end}}{{end}}" target="_blank" class="web-indicator clickable" data-tip="Open web interface: {{if .CustomWebURL}}{{.CustomWebURL}}{{else if .CustomHostname}}http://{{.CustomHostname}}{{if .WebPort}}:{{.WebPort}}{{end}}{{else if .Hostname}}http://{{.Hostname}}{{if .WebPort}}:{{.WebPort}}{{end}}{{else}}http://{{.IP}}{{if .WebPort}}:{{.WebPort}}{{end}}{{end}}">
-                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                                    </a>
-                                {{end}}
+                                 {{if or .WebUI .CustomWebURL}}
+                                     <a href="{{.WebURL}}" target="_blank" class="web-indicator clickable" data-tip="Open web interface: {{.WebURL}}">
+                                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                     </a>
+                                 {{end}}
                                 {{if .Risks}}<span class="risk-indicator" data-tip="Security: {{range $i, $r := .Risks}}{{if $i}}; {{end}}{{$r}}{{end}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>{{end}}
                             </td>
                             <td class="col-mac mac-cell" data-label="MAC Address" data-copy="{{.MAC}}">
