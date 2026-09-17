@@ -187,6 +187,24 @@ func (h *Handler) startScanJob(networks []string, automatic bool) *scanJob {
 // is rate limited or fails does not abort the job, so one bad interface cannot
 // hide results from the others.
 func (j *scanJob) run(ctx context.Context, h *Handler) {
+	activeIPsMap := make(map[string]bool)
+
+	defer func() {
+		dur := time.Since(j.startedAt).Seconds()
+		networkName := "All Networks"
+		if len(j.networks) == 1 {
+			networkName = j.networks[0]
+		}
+
+		j.mu.RLock()
+		status := j.status
+		errStr := j.err
+		j.mu.RUnlock()
+
+		success := status == "done"
+		_ = h.store.RecordScanHistory(networkName, success, errStr, j.startedAt, dur)
+	}()
+
 	for i, cidr := range j.networks {
 		if ctx.Err() != nil {
 			j.finish("cancelled", "")
@@ -225,13 +243,43 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		summary.Duration = result.Duration
 		j.addResult(summary, result.DeviceCount)
 
+		for _, d := range result.Devices {
+			if d.IP != "" {
+				activeIPsMap[d.IP] = true
+			}
+		}
+
 		// Launch asynchronous port scan (Stage 2) on discovered active devices
 		if h.cfg.Scanning.EnablePortScan && h.cfg.Scanning.PortScanRange != "" {
-			j.portScanWG.Add(1)
-			go func(devices []types.Device) {
-				defer j.portScanWG.Done()
-				j.startPortScan(ctx, h, devices)
-			}(result.Devices)
+			shouldPortScan := false
+			if !j.automatic {
+				// Keep manual scans immediate
+				shouldPortScan = true
+			} else {
+				// Automatic background scan: quiet-hour 3:00 AM Eastern Time prober
+				loc, err := time.LoadLocation("America/New_York")
+				if err != nil {
+					// Fallback to UTC if America/New_York is not loaded/available
+					loc = time.UTC
+				}
+				nowET := time.Now().In(loc)
+				if nowET.Hour() == 3 {
+					todayStr := nowET.Format("2006-01-02")
+					lastDeepScan, _ := h.store.GetSetting("last_deep_scan_date")
+					if lastDeepScan != todayStr {
+						shouldPortScan = true
+						_ = h.store.SetSetting("last_deep_scan_date", todayStr)
+					}
+				}
+			}
+
+			if shouldPortScan {
+				j.portScanWG.Add(1)
+				go func(devices []types.Device) {
+					defer j.portScanWG.Done()
+					j.startPortScan(ctx, h, devices)
+				}(result.Devices)
+			}
 		}
 	}
 
@@ -242,6 +290,11 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		if ipv6 := h.scanner.DiscoverIPv6(ctx); len(ipv6) > 0 {
 			if err := h.store.MergeIPv6Neighbors(ipv6); err == nil {
 				j.addResult(networkScanSummary{Network: "IPv6 neighbors", Status: "scanned", DeviceCount: len(ipv6)}, len(ipv6))
+				for _, d := range ipv6 {
+					if d.IP != "" {
+						activeIPsMap[d.IP] = true
+					}
+				}
 			}
 		}
 	}
@@ -249,6 +302,11 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		if mdns := h.scanner.DiscoverMDNS(ctx); len(mdns) > 0 {
 			if err := h.store.MergeSupplemental(mdns); err == nil {
 				j.addResult(networkScanSummary{Network: "mDNS", Status: "scanned", DeviceCount: len(mdns)}, len(mdns))
+				for _, d := range mdns {
+					if d.IP != "" {
+						activeIPsMap[d.IP] = true
+					}
+				}
 			}
 		}
 	}
@@ -279,6 +337,11 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 				allReservations = append(allReservations, reservations...)
 				if len(arpEntries) > 0 {
 					_ = h.store.MergeSupplemental(arpEntries)
+					for _, d := range arpEntries {
+						if d.IP != "" {
+							activeIPsMap[d.IP] = true
+						}
+					}
 				}
 				if routerName == "" {
 					routerName = "OPNsense"
@@ -305,7 +368,19 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	// Wait for any asynchronous port scanning (Stage 2) to complete before finishing the job
 	j.portScanWG.Wait()
 
-	j.finish("done", "")
+	if ctx.Err() == nil {
+		var activeIPs []string
+		for ip := range activeIPsMap {
+			activeIPs = append(activeIPs, ip)
+		}
+		_, err := h.store.ProcessMissingDevices(j.networks, activeIPs)
+		if err != nil {
+			fmt.Printf("[DEBUG] ProcessMissingDevices error: %v\n", err)
+		}
+		j.finish("done", "")
+	} else {
+		j.finish("cancelled", "")
+	}
 }
 
 // beginNetwork records that the job has started scanning a network.
@@ -432,8 +507,8 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 	j.portScanTotal += len(activeDevices)
 	j.mu.Unlock()
 
-	// Use a worker pool to scan devices concurrently (max 4 hosts at once)
-	const concurrency = 4
+	// Use a worker pool to scan devices sequentially (max 1 host at once)
+	const concurrency = 1
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 

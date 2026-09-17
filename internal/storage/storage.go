@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -11,186 +12,272 @@ import (
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/types"
+	_ "modernc.org/sqlite"
 )
 
-// Storage manages device data persistence
+// Storage manages device data persistence using SQLite
 type Storage struct {
 	devicesFile  string
 	stateFile    string
+	db           *sql.DB
 	mu           sync.RWMutex
-	devices      map[string]*types.Device
-	state        *types.ScanState
 	networkNames map[string]string
 }
 
 // New creates a new Storage instance
 func New(devicesFile, stateFile string) (*Storage, error) {
-	s := &Storage{
-		devicesFile: devicesFile,
-		stateFile:   stateFile,
-		devices:     make(map[string]*types.Device),
-		state: &types.ScanState{
-			LastScan:     make(map[string]time.Time),
-			LastDuration: make(map[string]float64),
-		},
-		networkNames: make(map[string]string),
-	}
-
 	// Ensure directories exist
 	if err := os.MkdirAll(filepath.Dir(devicesFile), 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	// Load existing data. Name the file in the error: a damaged file is
-	// something the user has to go and look at, and "invalid character 'h'"
-	// on its own does not say where to look.
-	if err := s.loadDevices(); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("could not read the device list at %s: %w", devicesFile, err)
-	}
-	if err := s.loadState(); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("could not read the scan history at %s: %w", stateFile, err)
+	dbPath := filepath.Join(filepath.Dir(devicesFile), "devices.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
 
-	// One-time cleanup: drop phantom devices created from noisy IPv6 neighbour
-	// data (link-local and privacy addresses) before that path was fixed, so an
-	// upgraded install heals down to the real device count. Safe here because
-	// New runs before the store is shared with any other goroutine.
-	if s.pruneEphemeralIPv6Locked() {
-		_ = s.saveDevices()
+	// Configure DB
+	db.SetMaxOpenConns(1) // Keep open connections to 1 since we're using SQLite, prevents locking
+	if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to configure sqlite pragma: %w", err)
+	}
+
+	// Run migrations
+	if err := MigrateDatabase(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
+	}
+
+	s := &Storage{
+		devicesFile:  devicesFile,
+		stateFile:    stateFile,
+		db:           db,
+		networkNames: make(map[string]string),
+	}
+
+	// Run legacy JSON migration
+	if err := s.migrateLegacyJSON(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to migrate legacy JSON: %w", err)
+	}
+
+	// Run prune ephemeral IPv6 on load
+	if err := s.pruneEphemeralIPv6(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to prune ephemeral IPv6: %w", err)
 	}
 
 	return s, nil
 }
 
-// loadDevices reads devices from the JSON file
-func (s *Storage) loadDevices() error {
-	data, err := os.ReadFile(s.devicesFile)
-	if err != nil {
-		return err
-	}
-
-	if len(data) == 0 {
-		return nil
-	}
-
-	return json.Unmarshal(data, &s.devices)
-}
-
-// loadState reads scan state from the JSON file
-func (s *Storage) loadState() error {
-	data, err := os.ReadFile(s.stateFile)
-	if err != nil {
-		return err
-	}
-
-	if len(data) == 0 {
-		return nil
-	}
-
-	if err := json.Unmarshal(data, &s.state); err != nil {
-		return err
-	}
-
-	// State files written before durations were tracked have no such map, so
-	// recreate it rather than leave a nil map that cannot be written to.
-	if s.state.LastScan == nil {
-		s.state.LastScan = make(map[string]time.Time)
-	}
-	if s.state.LastDuration == nil {
-		s.state.LastDuration = make(map[string]float64)
+// Close closes the SQLite database connection
+func (s *Storage) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		return s.db.Close()
 	}
 	return nil
 }
 
-// saveDevices writes devices to the JSON file atomically
-func (s *Storage) saveDevices() error {
-	data, err := json.MarshalIndent(s.devices, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal devices: %w", err)
+// migrateLegacyJSON migrates devices and scan state from legacy JSON files to SQLite
+func (s *Storage) migrateLegacyJSON() error {
+	if _, err := os.Stat(s.devicesFile); os.IsNotExist(err) {
+		return nil
 	}
 
-	return atomicWrite(s.devicesFile, data)
-}
-
-// saveState writes scan state to the JSON file atomically
-func (s *Storage) saveState() error {
-	data, err := json.MarshalIndent(s.state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal state: %w", err)
+	// Check if devices table is empty
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM devices").Scan(&count); err != nil {
+		return fmt.Errorf("failed to check if devices table is empty: %w", err)
+	}
+	if count > 0 {
+		return nil // Migration already completed previously
 	}
 
-	return atomicWrite(s.stateFile, data)
-}
-
-// atomicWrite writes data to a file atomically using a temp file
-func atomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tempFile, err := os.CreateTemp(dir, ".tmp-*")
+	// Begin TX
+	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
+		return fmt.Errorf("failed to begin transaction for migration: %w", err)
 	}
-	tempPath := tempFile.Name()
+	defer tx.Rollback()
 
-	// Clean up temp file on error
-	defer func() {
-		if tempPath != "" {
-			os.Remove(tempPath)
+	// Read and unmarshal s.devicesFile
+	devData, err := os.ReadFile(s.devicesFile)
+	if err != nil {
+		return fmt.Errorf("failed to read devices.json: %w", err)
+	}
+
+	var legacyDevices map[string]types.Device
+	if len(devData) > 0 {
+		if err := json.Unmarshal(devData, &legacyDevices); err != nil {
+			return fmt.Errorf("failed to unmarshal legacy devices: %w", err)
 		}
-	}()
 
-	if _, err := tempFile.Write(data); err != nil {
-		tempFile.Close()
-		return fmt.Errorf("failed to write temp file: %w", err)
+		for _, d := range legacyDevices {
+			risksJSON, _ := json.Marshal(d.Risks)
+			historyJSON, _ := json.Marshal(d.AddressHistory)
+			isOnline := 0
+			if d.IsOnline() {
+				isOnline = 1
+			}
+
+			_, err := tx.Exec(`
+				INSERT INTO devices (
+					ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+					custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+					assignment, network_name, first_seen, last_seen, response_time, address_history,
+					is_online, missed_sweeps, last_presence_change
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+			`, d.IP, d.MAC, d.Hostname, d.Vendor, d.Type, boolToInt(d.WebUI), string(risksJSON),
+				d.Label, d.Notes, d.Group, d.CustomHostname, d.CustomWebURL, d.CustomType,
+				d.WebPort, d.WebScheme, boolToInt(d.Probed), d.Assignment, d.NetworkName,
+				d.FirstSeen, d.LastSeen, d.ResponseTime, string(historyJSON), isOnline, d.LastSeen)
+			if err != nil {
+				return fmt.Errorf("failed to insert migrated device %s: %w", d.IP, err)
+			}
+		}
 	}
 
-	if err := tempFile.Sync(); err != nil {
-		tempFile.Close()
-		return fmt.Errorf("failed to sync temp file: %w", err)
+	// Read s.stateFile if it exists
+	if _, err := os.Stat(s.stateFile); err == nil {
+		stateData, err := os.ReadFile(s.stateFile)
+		if err == nil && len(stateData) > 0 {
+			var state types.ScanState
+			if err := json.Unmarshal(stateData, &state); err == nil {
+				// Migrate last_scan
+				for netw, t := range state.LastScan {
+					dur := state.LastDuration[netw]
+					_, err = tx.Exec(`
+						INSERT INTO scan_state (network, last_scan, last_duration)
+						VALUES (?, ?, ?)
+						ON CONFLICT(network) DO UPDATE SET last_scan = excluded.last_scan, last_duration = excluded.last_duration
+					`, netw, t, dur)
+					if err != nil {
+						return fmt.Errorf("failed to migrate scan state for %s: %w", netw, err)
+					}
+				}
+
+				// Migrate continuous_scan settings
+				if state.ContinuousScan != nil {
+					val := "false"
+					if *state.ContinuousScan {
+						val = "true"
+					}
+					_, err = tx.Exec(`
+						INSERT INTO settings (key, value)
+						VALUES ('continuous_scan', ?)
+						ON CONFLICT(key) DO UPDATE SET value = excluded.value
+					`, val)
+					if err != nil {
+						return fmt.Errorf("failed to migrate continuous scan setting: %w", err)
+					}
+				}
+			}
+		}
 	}
 
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
+	// Commit TX
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit legacy migration transaction: %w", err)
 	}
 
-	if err := os.Rename(tempPath, path); err != nil {
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
+	// Rename legacy JSON files to .json.bak
+	_ = os.Rename(s.devicesFile, s.devicesFile+".bak")
+	_ = os.Rename(s.stateFile, s.stateFile+".bak")
 
-	tempPath = "" // Prevent cleanup of renamed file
 	return nil
 }
 
-// GetDevices returns all devices.
-//
-// Each device is copied, not shared. A later scan merges results by mutating
-// the stored structs in place, so handing out the live pointers would let a
-// caller read a field while it is being written. The copies are snapshots the
-// caller can read freely.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func (s *Storage) scanDevice(scanner interface {
+	Scan(dest ...interface{}) error
+}) (*types.Device, error) {
+	var d types.Device
+	var webUIVal, probedVal int
+	var risksStr, addressHistoryStr string
+	err := scanner.Scan(
+		&d.IP, &d.MAC, &d.Hostname, &d.Vendor, &d.Type, &webUIVal, &risksStr, &d.Label, &d.Notes, &d.Group,
+		&d.CustomHostname, &d.CustomWebURL, &d.CustomType, &d.WebPort, &d.WebScheme, &probedVal, &d.Assignment,
+		&d.NetworkName, &d.FirstSeen, &d.LastSeen, &d.ResponseTime, &addressHistoryStr,
+	)
+	if err != nil {
+		return nil, err
+	}
+	d.WebUI = webUIVal != 0
+	d.Probed = probedVal != 0
+	_ = json.Unmarshal([]byte(risksStr), &d.Risks)
+	_ = json.Unmarshal([]byte(addressHistoryStr), &d.AddressHistory)
+	return &d, nil
+}
+
+// GetDevices returns all devices
 func (s *Storage) GetDevices() map[string]*types.Device {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	result := make(map[string]*types.Device, len(s.devices))
-	for k, v := range s.devices {
-		cp := *v
-		result[k] = &cp
+	rows, err := s.db.Query(`
+		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		FROM devices
+	`)
+	if err != nil {
+		return make(map[string]*types.Device)
+	}
+	defer rows.Close()
+
+	result := make(map[string]*types.Device)
+	for rows.Next() {
+		d, err := s.scanDevice(rows)
+		if err == nil {
+			result[d.IP] = d
+		}
 	}
 	return result
 }
 
-// GetDevice returns a single device by IP, or nil if there is none.
-//
-// The returned device is a copy, for the same reason as GetDevices: the stored
-// struct is mutated in place by later scans.
+// GetDevice returns a single device by IP, or nil if there is none
 func (s *Storage) GetDevice(ip string) *types.Device {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	d, ok := s.devices[ip]
-	if !ok {
+
+	row := s.db.QueryRow(`
+		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		FROM devices
+		WHERE ip = ?
+	`, ip)
+	d, err := s.scanDevice(row)
+	if err != nil {
 		return nil
 	}
-	cp := *d
-	return &cp
+	return d
+}
+
+// GetDeviceLocked returns a device while holding a lock
+func (s *Storage) GetDeviceLocked(ip string) *types.Device {
+	row := s.db.QueryRow(`
+		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		FROM devices
+		WHERE ip = ?
+	`, ip)
+	d, err := s.scanDevice(row)
+	if err != nil {
+		return nil
+	}
+	return d
 }
 
 // UpdateDevice updates or creates a device
@@ -199,7 +286,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 	defer s.mu.Unlock()
 
 	// Preserve existing user data if device exists
-	if existing, ok := s.devices[device.IP]; ok {
+	existing := s.GetDeviceLocked(device.IP)
+	if existing != nil {
 		if device.Label == "" {
 			device.Label = existing.Label
 		}
@@ -232,8 +320,52 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		}
 	}
 
-	s.devices[device.IP] = device
-	return s.saveDevices()
+	if device.FirstSeen.IsZero() {
+		device.FirstSeen = time.Now()
+	}
+
+	risksJSON, _ := json.Marshal(device.Risks)
+	historyJSON, _ := json.Marshal(device.AddressHistory)
+	isOnline := 0
+	if device.IsOnline() {
+		isOnline = 1
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO devices (
+			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			assignment, network_name, first_seen, last_seen, response_time, address_history,
+			is_online, missed_sweeps, last_presence_change
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+		ON CONFLICT(ip) DO UPDATE SET
+			mac = excluded.mac,
+			hostname = excluded.hostname,
+			vendor = excluded.vendor,
+			type = excluded.type,
+			web_ui = excluded.web_ui,
+			risks = excluded.risks,
+			label = excluded.label,
+			notes = excluded.notes,
+			"group" = excluded."group",
+			custom_hostname = excluded.custom_hostname,
+			custom_web_url = excluded.custom_web_url,
+			custom_type = excluded.custom_type,
+			web_port = excluded.web_port,
+			web_scheme = excluded.web_scheme,
+			probed = excluded.probed,
+			assignment = excluded.assignment,
+			network_name = excluded.network_name,
+			first_seen = excluded.first_seen,
+			last_seen = excluded.last_seen,
+			response_time = excluded.response_time,
+			address_history = excluded.address_history,
+			is_online = excluded.is_online
+	`, device.IP, device.MAC, device.Hostname, device.Vendor, device.Type, boolToInt(device.WebUI), string(risksJSON),
+		device.Label, device.Notes, device.Group, device.CustomHostname, device.CustomWebURL, device.CustomType,
+		device.WebPort, device.WebScheme, boolToInt(device.Probed), device.Assignment, device.NetworkName,
+		device.FirstSeen, device.LastSeen, device.ResponseTime, string(historyJSON), isOnline, device.LastSeen)
+	return err
 }
 
 // UpdateDeviceFields updates specific fields of a device
@@ -241,31 +373,60 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	device, ok := s.devices[ip]
-	if !ok {
+	existing := s.GetDeviceLocked(ip)
+	if existing == nil {
 		return fmt.Errorf("device not found: %s", ip)
 	}
 
+	query := `UPDATE devices SET `
+	var args []interface{}
+	var fields []string
+
 	if label != nil {
-		device.Label = *label
+		fields = append(fields, `label = ?`)
+		args = append(args, *label)
 	}
 	if notes != nil {
-		device.Notes = *notes
+		fields = append(fields, `notes = ?`)
+		args = append(args, *notes)
 	}
 	if group != nil {
-		device.Group = *group
+		fields = append(fields, `"group" = ?`)
+		args = append(args, *group)
 	}
 	if customHostname != nil {
-		device.CustomHostname = *customHostname
+		fields = append(fields, `custom_hostname = ?`)
+		args = append(args, *customHostname)
 	}
 	if customWebURL != nil {
-		device.CustomWebURL = *customWebURL
+		fields = append(fields, `custom_web_url = ?`)
+		args = append(args, *customWebURL)
 	}
 	if customType != nil {
-		device.CustomType = *customType
+		fields = append(fields, `custom_type = ?`)
+		args = append(args, *customType)
 	}
 
-	return s.saveDevices()
+	if len(fields) == 0 {
+		return nil
+	}
+
+	query += joinStrings(fields, ", ") + ` WHERE ip = ?`
+	args = append(args, ip)
+
+	_, err := s.db.Exec(query, args...)
+	return err
+}
+
+func joinStrings(elems []string, sep string) string {
+	if len(elems) == 0 {
+		return ""
+	}
+	res := elems[0]
+	for _, s := range elems[1:] {
+		res += sep + s
+	}
+	return res
 }
 
 // DeleteDevice removes a device by IP
@@ -273,12 +434,212 @@ func (s *Storage) DeleteDevice(ip string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.devices[ip]; !ok {
+	res, err := s.db.Exec("DELETE FROM devices WHERE ip = ?", ip)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
 		return fmt.Errorf("device not found: %s", ip)
 	}
+	return nil
+}
 
-	delete(s.devices, ip)
-	return s.saveDevices()
+func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *types.Device, error) {
+	if mac == "" {
+		return "", nil, nil
+	}
+	wantV4 := isIPv4(excludeIP)
+	rows, err := tx.Query(`
+		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		FROM devices
+		WHERE mac = ? AND ip != ?
+	`, mac, excludeIP)
+	if err != nil {
+		return "", nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		d, err := s.scanDevice(rows)
+		if err == nil {
+			if isIPv4(d.IP) == wantV4 {
+				return d.IP, d, nil
+			}
+		}
+	}
+	return "", nil, nil
+}
+
+func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, error) {
+	if mac == "" {
+		return nil, nil
+	}
+	row := tx.QueryRow(`
+		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		FROM devices
+		WHERE mac = ?
+		LIMIT 1
+	`, mac)
+	d, err := s.scanDevice(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return d, nil
+}
+
+func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time) error {
+	if d.MAC != "" {
+		oldIP, old, err := s.findByMACLocked(tx, d.MAC, d.IP)
+		if err != nil {
+			return err
+		}
+		if old != nil {
+			d.Label = old.Label
+			d.Notes = old.Notes
+			d.Group = old.Group
+			d.CustomHostname = old.CustomHostname
+			d.CustomWebURL = old.CustomWebURL
+			d.CustomType = old.CustomType
+			d.WebPort = old.WebPort
+			d.WebScheme = old.WebScheme
+			d.Probed = old.Probed
+			d.FirstSeen = old.FirstSeen
+			if d.Type == "" {
+				d.Type = old.Type
+			}
+			d.AddressHistory = appendAddressChange(old.AddressHistory, oldIP, now)
+			_, err = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if d.FirstSeen.IsZero() {
+		d.FirstSeen = now
+	}
+	d.LastSeen = now
+
+	risksJSON, _ := json.Marshal(d.Risks)
+	historyJSON, _ := json.Marshal(d.AddressHistory)
+	isOnline := 0
+	if d.IsOnline() {
+		isOnline = 1
+	}
+
+	_, err := tx.Exec(`
+		INSERT INTO devices (
+			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			assignment, network_name, first_seen, last_seen, response_time, address_history,
+			is_online, missed_sweeps, last_presence_change
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+	`, d.IP, d.MAC, d.Hostname, d.Vendor, d.Type, boolToInt(d.WebUI), string(risksJSON),
+		d.Label, d.Notes, d.Group, d.CustomHostname, d.CustomWebURL, d.CustomType,
+		d.WebPort, d.WebScheme, boolToInt(d.Probed), d.Assignment, d.NetworkName,
+		d.FirstSeen, d.LastSeen, d.ResponseTime, string(historyJSON), isOnline, d.LastSeen)
+	return err
+}
+
+func isIPv4(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.To4() != nil
+}
+
+func isRandomizedMAC(mac string) bool {
+	hw, err := net.ParseMAC(mac)
+	if err != nil || len(hw) == 0 {
+		return false
+	}
+	return hw[0]&0x02 != 0
+}
+
+func (s *Storage) pruneEphemeralIPv6() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.Query(`
+		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		FROM devices
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var toDelete []string
+	for rows.Next() {
+		d, err := s.scanDevice(rows)
+		if err == nil {
+			parsed := net.ParseIP(d.IP)
+			if parsed == nil || parsed.To4() != nil {
+				continue // not IPv6
+			}
+			if d.Label != "" || d.Notes != "" || d.Group != "" {
+				continue // curated by the user: never auto-delete
+			}
+			if parsed.IsLinkLocalUnicast() || (d.MAC != "" && isRandomizedMAC(d.MAC)) {
+				toDelete = append(toDelete, d.IP)
+			}
+		}
+	}
+
+	if len(toDelete) > 0 {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, ip := range toDelete {
+			_, err = tx.Exec("DELETE FROM devices WHERE ip = ?", ip)
+			if err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	}
+	return nil
+}
+
+// GetSetting retrieves a setting value by key
+func (s *Storage) GetSetting(key string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var val string
+	err := s.db.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return val, nil
+}
+
+// SetSetting saves or updates a setting by key
+func (s *Storage) SetSetting(key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT INTO settings (key, value)
+		VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, key, value)
+	return err
 }
 
 // MergeDevices merges discovered devices with existing data
@@ -286,14 +647,41 @@ func (s *Storage) MergeDevices(discovered []types.Device) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	now := time.Now()
 	for _, d := range discovered {
-		if existing, ok := s.devices[d.IP]; ok {
-			// A primary scan is authoritative. It replaces the probe fields
-			// (WebUI and Risks reflect the latest probe, so a fixed risk stops
-			// showing), but it does not wipe an identity field it happened to
-			// gather less of this time: a scan without sudo has no MAC, and a
-			// device that did not resolve this time keeps its known name.
+		row := tx.QueryRow(`
+			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			       assignment, network_name, first_seen, last_seen, response_time, address_history,
+			       is_online, last_presence_change
+			FROM devices WHERE ip = ?
+		`, d.IP)
+
+		var existing types.Device
+		var webUIVal, probedVal int
+		var risksStr, addressHistoryStr string
+		var isOnlineVal int
+		var lastPresenceChange time.Time
+
+		err := row.Scan(
+			&existing.IP, &existing.MAC, &existing.Hostname, &existing.Vendor, &existing.Type, &webUIVal, &risksStr, &existing.Label, &existing.Notes, &existing.Group,
+			&existing.CustomHostname, &existing.CustomWebURL, &existing.CustomType, &existing.WebPort, &existing.WebScheme, &probedVal, &existing.Assignment,
+			&existing.NetworkName, &existing.FirstSeen, &existing.LastSeen, &existing.ResponseTime, &addressHistoryStr,
+			&isOnlineVal, &lastPresenceChange,
+		)
+
+		if err == nil {
+			existing.WebUI = webUIVal != 0
+			existing.Probed = probedVal != 0
+			_ = json.Unmarshal([]byte(risksStr), &existing.Risks)
+			_ = json.Unmarshal([]byte(addressHistoryStr), &existing.AddressHistory)
+
 			if d.MAC != "" {
 				existing.MAC = d.MAC
 			}
@@ -318,34 +706,103 @@ func (s *Storage) MergeDevices(discovered []types.Device) error {
 			}
 			existing.LastSeen = now
 			existing.NetworkName = resolveNetworkName(d.IP, s.networkNames)
+
+			if isOnlineVal == 0 {
+				offlineDur := now.Sub(lastPresenceChange).Seconds()
+				if offlineDur < 0 {
+					offlineDur = 0
+				}
+				_, err = tx.Exec(`
+					INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+					VALUES (?, ?, ?, 'return', ?, ?)
+				`, existing.IP, existing.MAC, existing.Hostname, offlineDur, now)
+				if err != nil {
+					return err
+				}
+				isOnlineVal = 1
+				lastPresenceChange = now
+			} else {
+				_, err = tx.Exec("UPDATE devices SET missed_sweeps = 0 WHERE ip = ?", existing.IP)
+				if err != nil {
+					return err
+				}
+			}
+
+			risksJSON, _ := json.Marshal(existing.Risks)
+			historyJSON, _ := json.Marshal(existing.AddressHistory)
+
+			_, err = tx.Exec(`
+				UPDATE devices SET
+					mac = ?, hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
+					label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
+					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, assignment = ?,
+					network_name = ?, first_seen = ?, last_seen = ?, response_time = ?,
+					address_history = ?, is_online = ?, last_presence_change = ?
+				WHERE ip = ?
+			`, existing.MAC, existing.Hostname, existing.Vendor, existing.Type, boolToInt(existing.WebUI), string(risksJSON),
+				existing.Label, existing.Notes, existing.Group, existing.CustomHostname, existing.CustomWebURL,
+				existing.CustomType, existing.WebPort, existing.WebScheme, boolToInt(existing.Probed), existing.Assignment,
+				existing.NetworkName, existing.FirstSeen, existing.LastSeen, existing.ResponseTime,
+				string(historyJSON), isOnlineVal, lastPresenceChange, existing.IP)
+			if err != nil {
+				return err
+			}
 		} else {
 			dev := d
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			s.addNewDeviceLocked(&dev, now)
+			if err := s.addNewDeviceLocked(tx, &dev, now); err != nil {
+				return err
+			}
 		}
 	}
 
-	return s.saveDevices()
+	return tx.Commit()
 }
 
-// MergeSupplemental folds in devices from a secondary source, such as mDNS or
-// IPv6 neighbor discovery, that carries only part of a device's picture. It
-// fills gaps on a known device but never clobbers what the primary scan found,
-// and never touches the probe fields, so an mDNS answer with no MAC cannot erase
-// a MAC the scan discovered, nor clear a web or risk flag.
+// MergeSupplemental folds in devices from secondary sources
 func (s *Storage) MergeSupplemental(discovered []types.Device) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	now := time.Now()
 	for _, d := range discovered {
-		// A link-local IPv6 address is never a device (same reasoning as
-		// MergeIPv6Neighbors); skip it so a supplemental source like mDNS cannot
-		// create a phantom keyed by fe80::.
 		if parsed := net.ParseIP(d.IP); parsed != nil && parsed.To4() == nil && parsed.IsLinkLocalUnicast() {
 			continue
 		}
-		if existing, ok := s.devices[d.IP]; ok {
+
+		row := tx.QueryRow(`
+			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			       assignment, network_name, first_seen, last_seen, response_time, address_history,
+			       is_online, last_presence_change
+			FROM devices WHERE ip = ?
+		`, d.IP)
+
+		var existing types.Device
+		var webUIVal, probedVal int
+		var risksStr, addressHistoryStr string
+		var isOnlineVal int
+		var lastPresenceChange time.Time
+
+		err := row.Scan(
+			&existing.IP, &existing.MAC, &existing.Hostname, &existing.Vendor, &existing.Type, &webUIVal, &risksStr, &existing.Label, &existing.Notes, &existing.Group,
+			&existing.CustomHostname, &existing.CustomWebURL, &existing.CustomType, &existing.WebPort, &existing.WebScheme, &probedVal, &existing.Assignment,
+			&existing.NetworkName, &existing.FirstSeen, &existing.LastSeen, &existing.ResponseTime, &addressHistoryStr,
+			&isOnlineVal, &lastPresenceChange,
+		)
+
+		if err == nil {
+			existing.WebUI = webUIVal != 0
+			existing.Probed = probedVal != 0
+			_ = json.Unmarshal([]byte(risksStr), &existing.Risks)
+			_ = json.Unmarshal([]byte(addressHistoryStr), &existing.AddressHistory)
+
 			if existing.MAC == "" && d.MAC != "" {
 				existing.MAC = d.MAC
 			}
@@ -360,41 +817,84 @@ func (s *Storage) MergeSupplemental(discovered []types.Device) error {
 			}
 			existing.LastSeen = now
 			existing.NetworkName = resolveNetworkName(d.IP, s.networkNames)
+
+			if isOnlineVal == 0 {
+				offlineDur := now.Sub(lastPresenceChange).Seconds()
+				if offlineDur < 0 {
+					offlineDur = 0
+				}
+				_, err = tx.Exec(`
+					INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+					VALUES (?, ?, ?, 'return', ?, ?)
+				`, existing.IP, existing.MAC, existing.Hostname, offlineDur, now)
+				if err != nil {
+					return err
+				}
+				isOnlineVal = 1
+				lastPresenceChange = now
+			} else {
+				_, err = tx.Exec("UPDATE devices SET missed_sweeps = 0 WHERE ip = ?", existing.IP)
+				if err != nil {
+					return err
+				}
+			}
+
+			risksJSON, _ := json.Marshal(existing.Risks)
+			historyJSON, _ := json.Marshal(existing.AddressHistory)
+
+			_, err = tx.Exec(`
+				UPDATE devices SET
+					mac = ?, hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
+					label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
+					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, assignment = ?,
+					network_name = ?, first_seen = ?, last_seen = ?, response_time = ?,
+					address_history = ?, is_online = ?, last_presence_change = ?
+				WHERE ip = ?
+			`, existing.MAC, existing.Hostname, existing.Vendor, existing.Type, boolToInt(existing.WebUI), string(risksJSON),
+				existing.Label, existing.Notes, existing.Group, existing.CustomHostname, existing.CustomWebURL,
+				existing.CustomType, existing.WebPort, existing.WebScheme, boolToInt(existing.Probed), existing.Assignment,
+				existing.NetworkName, existing.FirstSeen, existing.LastSeen, existing.ResponseTime,
+				string(historyJSON), isOnlineVal, lastPresenceChange, existing.IP)
+			if err != nil {
+				return err
+			}
 		} else {
 			dev := d
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			s.addNewDeviceLocked(&dev, now)
+			if err := s.addNewDeviceLocked(tx, &dev, now); err != nil {
+				return err
+			}
 		}
 	}
 
-	return s.saveDevices()
+	return tx.Commit()
 }
 
-// MergeIPv6Neighbors folds IPv6 neighbour-discovery results into the inventory.
-// The IPv6 neighbour cache is noisy: it is full of link-local and rotating
-// privacy addresses, each often behind a randomised MAC, so a device sighted
-// over IPv6 can look brand new every time. Using it to create a device per
-// address is what produces hundreds of phantom entries. Instead it ENRICHES a
-// device already found by the reliable IPv4/ARP scan, matched by MAC across
-// address families. A new device is created only for a routable address whose
-// MAC is a real (universally-administered) hardware address not already known --
-// a genuine IPv6-only device. Link-local, and randomised-MAC addresses with no
-// match, are dropped, so privacy addresses cannot pile up.
+// MergeIPv6Neighbors folds IPv6 neighbour-discovery results
 func (s *Storage) MergeIPv6Neighbors(discovered []types.Device) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
 	now := time.Now()
 	changed := false
 	for _, d := range discovered {
 		parsed := net.ParseIP(d.IP)
 		if parsed == nil || parsed.To4() != nil || parsed.IsLinkLocalUnicast() || d.MAC == "" {
-			continue // not a routable IPv6 address we can attribute
+			continue
 		}
 
-		// Enrich the device we already know by this MAC rather than creating a
-		// second entry for its IPv6 address.
-		if existing := s.findAnyByMACLocked(d.MAC); existing != nil {
+		existing, err := s.findAnyByMACLocked(tx, d.MAC)
+		if err != nil {
+			return err
+		}
+
+		if existing != nil {
 			if existing.Hostname == "" && d.Hostname != "" {
 				existing.Hostname = d.Hostname
 			}
@@ -406,137 +906,240 @@ func (s *Storage) MergeIPv6Neighbors(discovered []types.Device) error {
 			}
 			existing.LastSeen = now
 			existing.NetworkName = resolveNetworkName(existing.IP, s.networkNames)
+
+			// Get the database row to see if it's currently online
+			var isOnlineVal int
+			var lastPresenceChange time.Time
+			err := tx.QueryRow("SELECT is_online, last_presence_change FROM devices WHERE ip = ?", existing.IP).Scan(&isOnlineVal, &lastPresenceChange)
+			if err == nil {
+				if isOnlineVal == 0 {
+					offlineDur := now.Sub(lastPresenceChange).Seconds()
+					if offlineDur < 0 {
+						offlineDur = 0
+					}
+					_, err = tx.Exec(`
+						INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+						VALUES (?, ?, ?, 'return', ?, ?)
+					`, existing.IP, existing.MAC, existing.Hostname, offlineDur, now)
+					if err != nil {
+						return err
+					}
+					isOnlineVal = 1
+					lastPresenceChange = now
+				} else {
+					_, err = tx.Exec("UPDATE devices SET missed_sweeps = 0 WHERE ip = ?", existing.IP)
+					if err != nil {
+						return err
+					}
+				}
+			} else {
+				isOnlineVal = 0
+				if existing.IsOnline() {
+					isOnlineVal = 1
+				}
+				lastPresenceChange = now
+			}
+
+			risksJSON, _ := json.Marshal(existing.Risks)
+			historyJSON, _ := json.Marshal(existing.AddressHistory)
+
+			_, err = tx.Exec(`
+				UPDATE devices SET
+					mac = ?, hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
+					label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
+					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, assignment = ?,
+					network_name = ?, first_seen = ?, last_seen = ?, response_time = ?,
+					address_history = ?, is_online = ?, last_presence_change = ?
+				WHERE ip = ?
+			`, existing.MAC, existing.Hostname, existing.Vendor, existing.Type, boolToInt(existing.WebUI), string(risksJSON),
+				existing.Label, existing.Notes, existing.Group, existing.CustomHostname, existing.CustomWebURL,
+				existing.CustomType, existing.WebPort, existing.WebScheme, boolToInt(existing.Probed), existing.Assignment,
+				existing.NetworkName, existing.FirstSeen, existing.LastSeen, existing.ResponseTime,
+				string(historyJSON), isOnlineVal, lastPresenceChange, existing.IP)
+			if err != nil {
+				return err
+			}
 			changed = true
 			continue
 		}
 
-		// No match: create a device only for a real hardware MAC (a genuine
-		// IPv6-only device). A randomised MAC with no match is a privacy
-		// address, not a device -- skip it so it cannot accumulate.
 		if !isRandomizedMAC(d.MAC) {
 			dev := d
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			s.addNewDeviceLocked(&dev, now)
+			if err := s.addNewDeviceLocked(tx, &dev, now); err != nil {
+				return err
+			}
 			changed = true
 		}
 	}
 
 	if changed {
-		return s.saveDevices()
+		return tx.Commit()
 	}
 	return nil
 }
 
-// addNewDeviceLocked stores a device newly seen at its IP. If one with the same
-// MAC exists at another IP in the same address family, it moved: its identity
-// and user data carry across and the change is recorded. Callers hold s.mu.
-func (s *Storage) addNewDeviceLocked(d *types.Device, now time.Time) {
-	if d.MAC != "" {
-		if oldIP, old := s.findByMACLocked(d.MAC, d.IP); old != nil {
-			d.Label = old.Label
-			d.Notes = old.Notes
-			d.Group = old.Group
-			d.CustomHostname = old.CustomHostname
-			d.CustomWebURL = old.CustomWebURL
-			d.CustomType = old.CustomType
-			d.WebPort = old.WebPort
-			d.WebScheme = old.WebScheme
-			d.Probed = old.Probed
-			d.FirstSeen = old.FirstSeen
-			if d.Type == "" {
-				d.Type = old.Type
+// ProcessMissingDevices checks and flags online devices not seen in the current sweep
+func (s *Storage) ProcessMissingDevices(scannedNetworks []string, activeIPs []string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	now := time.Now()
+
+	activeMap := make(map[string]bool)
+	for _, ip := range activeIPs {
+		activeMap[ip] = true
+	}
+
+	var nets []*net.IPNet
+	for _, netStr := range scannedNetworks {
+		_, ipNet, err := net.ParseCIDR(netStr)
+		if err == nil {
+			nets = append(nets, ipNet)
+		}
+	}
+
+	rows, err := tx.Query(`
+		SELECT ip, mac, hostname, last_seen, missed_sweeps, last_presence_change
+		FROM devices
+		WHERE is_online = 1
+	`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type missingDevice struct {
+		ip                 string
+		mac                string
+		hostname           string
+		lastSeen           time.Time
+		missedSweeps       int
+		lastPresenceChange time.Time
+	}
+
+	var candidates []missingDevice
+	for rows.Next() {
+		var md missingDevice
+		if err := rows.Scan(&md.ip, &md.mac, &md.hostname, &md.lastSeen, &md.missedSweeps, &md.lastPresenceChange); err == nil {
+			if !activeMap[md.ip] {
+				ip := net.ParseIP(md.ip)
+				if ip != nil {
+					belongs := false
+					for _, ipNet := range nets {
+						if ipNet.Contains(ip) {
+							belongs = true
+							break
+						}
+					}
+					if belongs {
+						candidates = append(candidates, md)
+					}
+				}
 			}
-			d.AddressHistory = appendAddressChange(old.AddressHistory, oldIP, now)
-			delete(s.devices, oldIP)
 		}
 	}
-	if d.FirstSeen.IsZero() {
-		d.FirstSeen = now
-	}
-	d.LastSeen = now
-	s.devices[d.IP] = d
-}
+	rows.Close()
 
-// findByMACLocked returns the IP and device of a stored device with the given
-// MAC at an IP other than excludeIP, or "" and nil if there is none. Callers
-// must hold s.mu.
-//
-// The match is confined to the same address family. A dual-stack device has an
-// IPv4 and an IPv6 address at once, and those are not a "move" from one to the
-// other: matching across families would wrongly collapse the two into one when
-// IPv6 discovery runs alongside an IPv4 scan.
-func (s *Storage) findByMACLocked(mac, excludeIP string) (string, *types.Device) {
-	wantV4 := isIPv4(excludeIP)
-	for ip, dev := range s.devices {
-		if ip != excludeIP && dev.MAC == mac && isIPv4(ip) == wantV4 {
-			return ip, dev
+	leftCount := 0
+	for _, md := range candidates {
+		newMissed := md.missedSweeps + 1
+		expired := newMissed >= 3 || now.Sub(md.lastSeen) >= 15*time.Minute
+
+		if expired {
+			sessionDur := md.lastSeen.Sub(md.lastPresenceChange).Seconds()
+			if sessionDur < 0 {
+				sessionDur = 0
+			}
+
+			_, err = tx.Exec(`
+				INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+				VALUES (?, ?, ?, 'leave', ?, ?)
+			`, md.ip, md.mac, md.hostname, sessionDur, now)
+			if err != nil {
+				return 0, err
+			}
+
+			_, err = tx.Exec(`
+				UPDATE devices
+				SET is_online = 0, missed_sweeps = 0, last_presence_change = ?
+				WHERE ip = ?
+			`, now, md.ip)
+			if err != nil {
+				return 0, err
+			}
+
+			leftCount++
+		} else {
+			_, err = tx.Exec(`
+				UPDATE devices
+				SET missed_sweeps = ?
+				WHERE ip = ?
+			`, newMissed, md.ip)
+			if err != nil {
+				return 0, err
+			}
 		}
 	}
-	return "", nil
-}
 
-func isIPv4(ip string) bool {
-	parsed := net.ParseIP(ip)
-	return parsed != nil && parsed.To4() != nil
-}
-
-// findAnyByMACLocked returns any stored device with the given MAC, regardless of
-// address family, or nil. Used to attach an IPv6 sighting to the device already
-// known from the IPv4 scan. Callers hold s.mu.
-func (s *Storage) findAnyByMACLocked(mac string) *types.Device {
-	if mac == "" {
-		return nil
+	if err := tx.Commit(); err != nil {
+		return 0, err
 	}
-	for _, dev := range s.devices {
-		if dev.MAC == mac {
-			return dev
+
+	return leftCount, nil
+}
+
+// RecordScanHistory records execution history metrics of a scan job
+func (s *Storage) RecordScanHistory(network string, success bool, errStr string, startedAt time.Time, duration float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var joined, returned, left int
+	rows, err := s.db.Query(`
+		SELECT event, COUNT(*)
+		FROM device_presence_history
+		WHERE created_at >= ?
+		GROUP BY event
+	`, startedAt)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var event string
+			var count int
+			if err := rows.Scan(&event, &count); err == nil {
+				switch event {
+				case "join":
+					joined = count
+				case "return":
+					returned = count
+				case "leave":
+					left = count
+				}
+			}
 		}
 	}
-	return nil
-}
 
-// isRandomizedMAC reports whether a MAC is locally administered (the
-// second-least-significant bit of the first octet is set), which is how phones
-// and laptops mark privacy-randomised addresses. Such a MAC cannot reliably
-// identify a device across sightings.
-func isRandomizedMAC(mac string) bool {
-	hw, err := net.ParseMAC(mac)
-	if err != nil || len(hw) == 0 {
-		return false
+	var online int
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM devices WHERE is_online = 1").Scan(&online)
+
+	successVal := 0
+	if success {
+		successVal = 1
 	}
-	return hw[0]&0x02 != 0
+
+	_, err = s.db.Exec(`
+		INSERT INTO scan_history (network, success, error, devices_online, devices_joined, devices_returned, devices_left, duration, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, network, successVal, errStr, online, joined, returned, left, duration, time.Now())
+	return err
 }
 
-// pruneEphemeralIPv6Locked removes phantom devices that noisy IPv6 neighbour
-// data created before that path was fixed: link-local addresses, and privacy
-// (randomised-MAC) IPv6 addresses, which are not real, persistent devices. It
-// runs on load so existing installs heal down to the real device count; once
-// healed it is a no-op, because no code path creates such entries any more.
-//
-// It never removes a device the user has curated (a label, notes or a group),
-// so a real device that happens to be keyed by such an address keeps its data
-// instead of being wiped and re-created on every restart. Returns whether
-// anything was removed. Callers hold s.mu.
-func (s *Storage) pruneEphemeralIPv6Locked() bool {
-	removed := false
-	for ip, dev := range s.devices {
-		parsed := net.ParseIP(ip)
-		if parsed == nil || parsed.To4() != nil {
-			continue // not IPv6
-		}
-		if dev.Label != "" || dev.Notes != "" || dev.Group != "" {
-			continue // curated by the user: never auto-delete
-		}
-		if parsed.IsLinkLocalUnicast() || (dev.MAC != "" && isRandomizedMAC(dev.MAC)) {
-			delete(s.devices, ip)
-			removed = true
-		}
-	}
-	return removed
-}
-
-// maxAddressHistory bounds how many previous addresses a device keeps, so the
-// history cannot grow without limit on a device that changes IP often.
 const maxAddressHistory = 10
 
 func appendAddressChange(history []types.AddressChange, ip string, at time.Time) []types.AddressChange {
@@ -551,27 +1154,26 @@ func appendAddressChange(history []types.AddressChange, ip string, at time.Time)
 func (s *Storage) GetLastScan(network string) time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.state.LastScan[network]
+
+	var t time.Time
+	err := s.db.QueryRow("SELECT last_scan FROM scan_state WHERE network = ?", network).Scan(&t)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
-// GetMostRecentScan returns the time of the most recent scan of any network.
-//
-// The device list is only as current as the last scan, so the dashboard shows
-// this alongside the per-device "last seen" times. Without it, a device last
-// seen during a scan hours ago still reads as though it were just checked.
-//
-// The zero time means nothing has ever been scanned.
+// GetMostRecentScan returns the time of the most recent scan
 func (s *Storage) GetMostRecentScan() time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var latest time.Time
-	for _, t := range s.state.LastScan {
-		if t.After(latest) {
-			latest = t
-		}
+	var t time.Time
+	err := s.db.QueryRow("SELECT last_scan FROM scan_state ORDER BY last_scan DESC LIMIT 1").Scan(&t)
+	if err != nil {
+		return time.Time{}
 	}
-	return latest
+	return t
 }
 
 // SetLastScan updates the last scan time for a network
@@ -579,49 +1181,69 @@ func (s *Storage) SetLastScan(network string, t time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.state.LastScan[network] = t
-	return s.saveState()
+	_, err := s.db.Exec(`
+		INSERT INTO scan_state (network, last_scan, last_duration)
+		VALUES (?, ?, 0.0)
+		ON CONFLICT(network) DO UPDATE SET last_scan = excluded.last_scan
+	`, network, t)
+	return err
 }
 
-// GetLastDuration returns how long the previous scan of a network took, in
-// seconds. It returns 0 when the network has not been scanned before.
+// GetLastDuration returns how long the previous scan took
 func (s *Storage) GetLastDuration(network string) float64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.state.LastDuration[network]
+
+	var d float64
+	err := s.db.QueryRow("SELECT last_duration FROM scan_state WHERE network = ?", network).Scan(&d)
+	if err != nil {
+		return 0.0
+	}
+	return d
 }
 
-// SetLastDuration records how long a scan of a network took, in seconds.
+// SetLastDuration records how long a scan took
 func (s *Storage) SetLastDuration(network string, seconds float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.state.LastDuration == nil {
-		s.state.LastDuration = make(map[string]float64)
-	}
-	s.state.LastDuration[network] = seconds
-	return s.saveState()
+	_, err := s.db.Exec(`
+		INSERT INTO scan_state (network, last_scan, last_duration)
+		VALUES (?, ?, ?)
+		ON CONFLICT(network) DO UPDATE SET last_duration = excluded.last_duration
+	`, network, time.Time{}, seconds)
+	return err
 }
 
-// ContinuousScanEnabled reports whether background scanning should run. It
-// honours a runtime override the user set from the UI, and falls back to the
-// configured default when no override has been saved.
+// ContinuousScanEnabled reports whether background scanning should run
 func (s *Storage) ContinuousScanEnabled(configDefault bool) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.state.ContinuousScan != nil {
-		return *s.state.ContinuousScan
+
+	var val string
+	err := s.db.QueryRow("SELECT value FROM settings WHERE key = 'continuous_scan'").Scan(&val)
+	if err != nil {
+		return configDefault
 	}
-	return configDefault
+	return val == "true"
 }
 
-// SetContinuousScan saves the user's runtime override for background scanning so
-// it survives a restart.
+// SetContinuousScan saves override for background scanning
 func (s *Storage) SetContinuousScan(enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.ContinuousScan = &enabled
-	return s.saveState()
+
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO settings (key, value)
+		VALUES ('continuous_scan', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, val)
+	return err
 }
 
 // GetStats returns device statistics
@@ -633,7 +1255,8 @@ func (s *Storage) GetStats() types.DeviceStats {
 		Groups: make(map[string]int),
 	}
 
-	for _, d := range s.devices {
+	devices := s.GetDevices()
+	for _, d := range devices {
 		stats.Total++
 		if d.IsOnline() {
 			stats.Online++
@@ -648,21 +1271,26 @@ func (s *Storage) GetStats() types.DeviceStats {
 	return stats
 }
 
-// SetNetworkNames updates the Storage instance's network names lookup map.
+// SetNetworkNames updates the network names lookup map
 func (s *Storage) SetNetworkNames(names map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.networkNames = names
 }
 
-// MergeRouterDHCP merges DHCP leases and static reservations from routers into storage.
+// MergeRouterDHCP merges DHCP leases and static reservations
 func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.Device) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	now := time.Now()
 
-	// 1. Build a map of IP -> Assignment (Static / Dynamic)
 	assignments := make(map[string]string)
 	for _, r := range reservations {
 		if r.IP != "" {
@@ -671,34 +1299,69 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 	}
 	for _, l := range leases {
 		if l.IP != "" {
-			// Do not overwrite Static with Dynamic
 			if _, exists := assignments[l.IP]; !exists {
 				assignments[l.IP] = "Dynamic"
 			}
 		}
 	}
 
-	// 2. Set Assignments for all currently stored devices
-	for ip, dev := range s.devices {
-		if assign, ok := assignments[ip]; ok {
+	rows, err := tx.Query(`
+		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		FROM devices
+	`)
+	if err != nil {
+		return err
+	}
+	var storedDevices []*types.Device
+	for rows.Next() {
+		d, err := s.scanDevice(rows)
+		if err == nil {
+			storedDevices = append(storedDevices, d)
+		}
+	}
+	rows.Close()
+
+	for _, dev := range storedDevices {
+		if assign, ok := assignments[dev.IP]; ok {
 			dev.Assignment = assign
 		} else {
-			// If not found in any leases/reservations, default to "Discovered"
 			dev.Assignment = "Discovered"
 		}
-		// Refresh NetworkName while we are here
-		dev.NetworkName = resolveNetworkName(ip, s.networkNames)
+		dev.NetworkName = resolveNetworkName(dev.IP, s.networkNames)
+
+		risksJSON, _ := json.Marshal(dev.Risks)
+		historyJSON, _ := json.Marshal(dev.AddressHistory)
+		isOnline := 0
+		if dev.IsOnline() {
+			isOnline = 1
+		}
+
+		_, err = tx.Exec(`
+			UPDATE devices SET
+				assignment = ?, network_name = ?, risks = ?, address_history = ?, is_online = ?
+			WHERE ip = ?
+		`, dev.Assignment, dev.NetworkName, string(risksJSON), string(historyJSON), isOnline, dev.IP)
+		if err != nil {
+			return err
+		}
 	}
 
-	// 3. For any lease or reservation not currently found by scans, register them!
 	allDHCP := append(reservations, leases...)
 	for _, d := range allDHCP {
 		if d.IP == "" {
 			continue
 		}
 
-		if existing, ok := s.devices[d.IP]; ok {
-			// Enrich missing fields
+		row := tx.QueryRow(`
+			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			       assignment, network_name, first_seen, last_seen, response_time, address_history
+			FROM devices WHERE ip = ?
+		`, d.IP)
+		existing, err := s.scanDevice(row)
+		if err == nil {
 			if existing.MAC == "" && d.MAC != "" {
 				existing.MAC = d.MAC
 			}
@@ -713,22 +1376,43 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 			}
 			existing.Assignment = assignments[d.IP]
 			existing.NetworkName = resolveNetworkName(d.IP, s.networkNames)
+
+			risksJSON, _ := json.Marshal(existing.Risks)
+			historyJSON, _ := json.Marshal(existing.AddressHistory)
+			isOnline := 0
+			if existing.IsOnline() {
+				isOnline = 1
+			}
+
+			_, err = tx.Exec(`
+				UPDATE devices SET
+					mac = ?, hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
+					label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
+					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, assignment = ?,
+					network_name = ?, first_seen = ?, last_seen = ?, response_time = ?,
+					address_history = ?, is_online = ?
+				WHERE ip = ?
+			`, existing.MAC, existing.Hostname, existing.Vendor, existing.Type, boolToInt(existing.WebUI), string(risksJSON),
+				existing.Label, existing.Notes, existing.Group, existing.CustomHostname, existing.CustomWebURL,
+				existing.CustomType, existing.WebPort, existing.WebScheme, boolToInt(existing.Probed), existing.Assignment,
+				existing.NetworkName, existing.FirstSeen, existing.LastSeen, existing.ResponseTime,
+				string(historyJSON), isOnline, existing.IP)
+			if err != nil {
+				return err
+			}
 		} else {
-			// Brand new device discovered via DHCP!
 			dev := d
 			dev.Assignment = assignments[d.IP]
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-
-			// We haven't pinged it, so we won't show it as online unless LastSeen is fresh.
-			// Setting LastSeen to 65 minutes ago makes sure it registers as offline but keeps history.
-			s.addNewDeviceLocked(&dev, now.Add(-65*time.Minute))
+			if err := s.addNewDeviceLocked(tx, &dev, now.Add(-65*time.Minute)); err != nil {
+				return err
+			}
 		}
 	}
 
-	return s.saveDevices()
+	return tx.Commit()
 }
 
-// resolveNetworkName matches an IP against the configured subnet map
 func resolveNetworkName(ipStr string, networkNames map[string]string) string {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
@@ -743,16 +1427,69 @@ func resolveNetworkName(ipStr string, networkNames map[string]string) string {
 	return ""
 }
 
-// GetNewDevicesCount returns the number of devices discovered since the given time.
+// GetNewDevicesCount returns the count of devices discovered since the given time
 func (s *Storage) GetNewDevicesCount(since time.Time) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	count := 0
-	for _, d := range s.devices {
-		if d.FirstSeen.After(since) {
-			count++
-		}
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM devices WHERE first_seen > ?", since).Scan(&count)
+	if err != nil {
+		return 0
 	}
 	return count
+}
+
+// GetScanHistory returns the chronological scan history records, newest first
+func (s *Storage) GetScanHistory() ([]types.ScanHistoryRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT id, network, success, error, devices_online, devices_joined, devices_returned, devices_left, duration, timestamp
+		FROM scan_history
+		ORDER BY timestamp DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []types.ScanHistoryRecord
+	for rows.Next() {
+		var r types.ScanHistoryRecord
+		var successVal int
+		err := rows.Scan(&r.ID, &r.Network, &successVal, &r.Error, &r.DevicesOnline, &r.DevicesJoined, &r.DevicesReturned, &r.DevicesLeft, &r.Duration, &r.Timestamp)
+		if err == nil {
+			r.Success = successVal != 0
+			result = append(result, r)
+		}
+	}
+	return result, nil
+}
+
+// GetPresenceEvents returns the chronological presence events, newest first
+func (s *Storage) GetPresenceEvents() ([]types.PresenceEventRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT id, ip, mac, hostname, event, duration, created_at
+		FROM device_presence_history
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []types.PresenceEventRecord
+	for rows.Next() {
+		var r types.PresenceEventRecord
+		err := rows.Scan(&r.ID, &r.IP, &r.MAC, &r.Hostname, &r.Event, &r.Duration, &r.CreatedAt)
+		if err == nil {
+			result = append(result, r)
+		}
+	}
+	return result, nil
 }

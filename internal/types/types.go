@@ -148,6 +148,31 @@ type APIResponse struct {
 	Error   string      `json:"error,omitempty"`
 }
 
+// ScanHistoryRecord represents a past scan execution log
+type ScanHistoryRecord struct {
+	ID              int       `json:"id"`
+	Network         string    `json:"network"`
+	Success         bool      `json:"success"`
+	Error           string    `json:"error,omitempty"`
+	DevicesOnline   int       `json:"devices_online"`
+	DevicesJoined   int       `json:"devices_joined"`
+	DevicesReturned int       `json:"devices_returned"`
+	DevicesLeft     int       `json:"devices_left"`
+	Duration        float64   `json:"duration"`
+	Timestamp       time.Time `json:"timestamp"`
+}
+
+// PresenceEventRecord represents a device presence history log
+type PresenceEventRecord struct {
+	ID        int       `json:"id"`
+	IP        string    `json:"ip"`
+	MAC       string    `json:"mac"`
+	Hostname  string    `json:"hostname"`
+	Event     string    `json:"event"`
+	Duration  float64   `json:"duration"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // DeviceStats holds device statistics for the dashboard
 type DeviceStats struct {
 	Total   int            `json:"total"`

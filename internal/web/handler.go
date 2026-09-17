@@ -302,6 +302,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch path {
 	case "/", "/index.html":
 		h.handleIndex(w, r)
+	case "/scans", "/scans.html":
+		h.handleScans(w, r)
 	case "/settings", "/settings.html":
 		h.handleSettings(w, r)
 	default:
@@ -446,6 +448,33 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	// Buffer the template output to avoid superfluous WriteHeader on error
 	var buf bytes.Buffer
 	if err := h.templates.ExecuteTemplate(&buf, "settings.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
+}
+
+// handleScans renders the scans page
+func (h *Handler) handleScans(w http.ResponseWriter, r *http.Request) {
+	// Get Tailscale status
+	tailscale := network.GetTailscaleStatus()
+
+	// Get stats
+	stats := h.store.GetStats()
+
+	data := PageData{
+		Title:       "Scans - LAN Orangutan",
+		Theme:       h.cfg.UI.Theme,
+		Version:     h.version,
+		Tailscale:   tailscale,
+		Stats:       stats,
+		AuthEnabled: h.auth.Enabled(),
+	}
+
+	// Buffer the template output to avoid superfluous WriteHeader on error
+	var buf bytes.Buffer
+	if err := h.templates.ExecuteTemplate(&buf, "scans.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

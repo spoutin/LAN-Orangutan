@@ -107,6 +107,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleStatus(w, r)
 	case path == "settings":
 		h.handleSettings(w, r)
+	case path == "scans/history":
+		h.handleScansHistory(w, r)
+	case path == "scans/events":
+		h.handleScansEvents(w, r)
 	default:
 		h.error(w, http.StatusNotFound, "endpoint not found")
 	}
@@ -685,4 +689,36 @@ func (h *Handler) error(w http.ResponseWriter, status int, message string) {
 		Error:   message,
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+// handleScansHistory handles GET /api/scans/history
+func (h *Handler) handleScansHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	history, err := h.store.GetScanHistory()
+	if err != nil {
+		h.error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.success(w, history)
+}
+
+// handleScansEvents handles GET /api/scans/events
+func (h *Handler) handleScansEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	events, err := h.store.GetPresenceEvents()
+	if err != nil {
+		h.error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.success(w, events)
 }

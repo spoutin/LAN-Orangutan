@@ -1538,3 +1538,181 @@ async function disconnectTailscale() {
         initHandles();
     });
 })();
+
+// Scans Page Live Updates & Timeline Rendering
+async function initScansPage() {
+    await refreshScansData();
+    // Poll every 5 seconds
+    setInterval(refreshScansData, 5000);
+}
+
+async function refreshScansData() {
+    try {
+        const historyRes = await fetch('/api/scans/history');
+        const historyData = await historyRes.json();
+        if (historyData.success) {
+            renderScanHistory(historyData.data);
+        }
+
+        const eventsRes = await fetch('/api/scans/events');
+        const eventsData = await eventsRes.json();
+        if (eventsData.success) {
+            renderPresenceTimeline(eventsData.data);
+        }
+
+        // Also update live progress if visible
+        const progressRes = await fetch('/api/scan/progress');
+        const progressData = await progressRes.json();
+        if (progressData.success) {
+            renderLiveProgressCard(progressData.data);
+        }
+    } catch (e) {
+        console.error('Failed to refresh scans page data', e);
+    }
+}
+
+function renderLiveProgressCard(progress) {
+    const card = document.getElementById('live-progress-card');
+    if (!card) return;
+
+    if (progress.status === 'running') {
+        let pct = progress.percent;
+        if (pct < 0) pct = 0;
+        let html = `
+            <div class="progress-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <h3>Scanning ${progress.current_network_name || progress.current_network || ''}</h3>
+                <span class="badge badge-running" style="background: var(--accent); color: white; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: bold; animation: pulse 1.5s infinite;">Running</span>
+            </div>
+            <div class="scan-bar" style="margin: 1rem 0; height: 12px; background: var(--bg-card-hover); border-radius: 6px; overflow: hidden;">
+                <div class="scan-bar-fill" style="width: ${pct}%; height: 100%; background: var(--accent); transition: width 0.4s ease;"></div>
+            </div>
+            <div class="progress-meta" style="display: flex; justify-content: space-between; font-size: 0.9rem; color: var(--text-muted);">
+                <span>Network ${progress.network_index} of ${progress.network_count}</span>
+                <span>${pct.toFixed(0)}% Complete</span>
+            </div>
+        `;
+
+        if (progress.port_scan_active) {
+            let portPct = (progress.port_scan_complete / progress.port_scan_total) * 100;
+            if (isNaN(portPct)) portPct = 0;
+            html += `
+                <div class="port-progress" style="margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.5rem;">
+                        <span>Port Prober (Stage 2)</span>
+                        <span>${progress.port_scan_complete}/${progress.port_scan_total} hosts done (${portPct.toFixed(0)}%)</span>
+                    </div>
+                    <div class="scan-bar" style="height: 6px; background: var(--bg-card-hover); border-radius: 3px; overflow: hidden;">
+                        <div class="scan-bar-fill" style="width: ${portPct}%; height: 100%; background: var(--accent); transition: width 0.4s ease;"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        card.innerHTML = html;
+        card.style.display = 'block';
+    } else {
+        card.innerHTML = `
+            <div style="text-align: center; color: var(--text-muted); padding: 1.5rem 0;">
+                <p>Scanner is currently idle</p>
+                <button class="btn btn-primary" style="margin-top: 1rem;" onclick="startScan('all')">Run Manual Scan</button>
+            </div>
+        `;
+    }
+}
+
+function renderScanHistory(history) {
+    const tbody = document.getElementById('scan-history-tbody');
+    if (!tbody) return;
+
+    if (!history || history.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No scan history recorded yet</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = history.map(row => {
+        const date = new Date(row.timestamp);
+        const dateStr = date.toLocaleString();
+        const successBadge = row.success 
+            ? `<span class="badge badge-success" style="background: rgba(44, 158, 107, 0.15); color: #2c9e6b; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.8rem;">Success</span>` 
+            : `<span class="badge badge-failed" style="background: rgba(224, 132, 44, 0.15); color: #e0842c; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.8rem;" title="${row.error || ''}">Failed</span>`;
+        
+        return `
+            <tr>
+                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);">${dateStr}</td>
+                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><strong>${row.network}</strong></td>
+                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);">${successBadge}</td>
+                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: var(--accent); font-weight: bold;">${row.devices_online}</span></td>
+                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: #2c9e6b; font-weight: bold;">+${row.devices_joined}</span></td>
+                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: #2f7fd4; font-weight: bold;">+${row.devices_returned}</span></td>
+                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: #e0842c; font-weight: bold;">-${row.devices_left}</span></td>
+                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);">${row.duration.toFixed(1)}s</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderPresenceTimeline(events) {
+    const container = document.getElementById('presence-timeline');
+    if (!container) return;
+
+    if (!events || events.length === 0) {
+        container.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 2rem 0;">No presence changes recorded yet</div>`;
+        return;
+    }
+
+    container.innerHTML = events.map(evt => {
+        const date = new Date(evt.created_at);
+        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        
+        let icon = '';
+        let color = '';
+        let bg = '';
+        let description = '';
+
+        if (evt.event === 'join') {
+            icon = '✦';
+            color = '#2c9e6b';
+            bg = 'rgba(44, 158, 107, 0.1)';
+            description = `joined the network for the first time`;
+        } else if (evt.event === 'return') {
+            icon = '✓';
+            color = '#2f7fd4';
+            bg = 'rgba(47, 127, 212, 0.1)';
+            const durStr = formatEventDuration(evt.duration);
+            description = `returned (offline for ${durStr})`;
+        } else if (evt.event === 'leave') {
+            icon = '✗';
+            color = '#e0842c';
+            bg = 'rgba(224, 132, 44, 0.1)';
+            const durStr = formatEventDuration(evt.duration);
+            description = `went offline (online session: ${durStr})`;
+        }
+
+        const name = evt.hostname || evt.mac || 'Unknown Device';
+
+        return `
+            <div class="timeline-item" style="display: flex; gap: 1rem; margin-bottom: 1.5rem; position: relative;">
+                <div class="timeline-badge" style="width: 32px; height: 32px; border-radius: 50%; background: ${bg}; color: ${color}; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; border: 1px solid ${color};">
+                    ${icon}
+                </div>
+                <div class="timeline-content" style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; flex-grow: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                    <div class="timeline-header" style="font-size: 0.95rem; margin-bottom: 0.25rem;">
+                        <strong>${name}</strong> <span style="color: var(--text-muted); font-size: 0.85rem;">(${evt.ip})</span> ${description}
+                    </div>
+                    <div class="timeline-time" style="font-size: 0.8rem; color: var(--text-muted);">${dateStr} at ${timeStr}</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function formatEventDuration(seconds) {
+    if (seconds < 60) return `${seconds.toFixed(0)}s`;
+    const minutes = seconds / 60;
+    if (minutes < 60) return `${minutes.toFixed(0)}m`;
+    const hours = minutes / 60;
+    if (hours < 24) return `${hours.toFixed(1)}h`;
+    const days = hours / 24;
+    return `${days.toFixed(1)}d`;
+}
