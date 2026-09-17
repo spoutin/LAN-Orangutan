@@ -180,8 +180,8 @@ func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device
 		return nil, "", fmt.Errorf("nmap not found")
 	}
 
-	// Run nmap with a fast ping sweep (we decouple port scanning to run asynchronously in Stage 2)
-	args := []string{"-sn", "-oX", "-", cidr}
+	// Run nmap with a fast ping sweep and disable reverse DNS (we decouple port scanning to run asynchronously in Stage 2)
+	args := []string{"-sn", "-n", "-oX", "-", cidr}
 	cmd := exec.CommandContext(ctx, "nmap", args...)
 	output, err := cmd.Output()
 	if err != nil {
@@ -449,7 +449,7 @@ func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string
 		return nil, fmt.Errorf("nmap not found")
 	}
 
-	args := []string{"-p", portRange, "-T4", "--min-rate", "1000", "--max-retries", "0", "--host-timeout", "15s", "-oX", "-", ip}
+	args := []string{"-p", portRange, "-T4", "-n", "--min-rate", "1000", "--max-retries", "0", "--host-timeout", "15s", "-oX", "-", ip}
 	cmd := exec.CommandContext(ctx, "nmap", args...)
 	output, err := cmd.Output()
 	if err != nil {
