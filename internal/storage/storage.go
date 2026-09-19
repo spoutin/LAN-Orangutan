@@ -19,12 +19,14 @@ import (
 
 // Storage manages device data persistence using SQLite
 type Storage struct {
-	devicesFile  string
-	stateFile    string
-	db           *sql.DB
-	mu           sync.RWMutex
-	networkNames map[string]string
-	scanRunning  int32
+	devicesFile            string
+	stateFile              string
+	db                     *sql.DB
+	mu                     sync.RWMutex
+	networkNames           map[string]string
+	scanRunning            int32
+	currentScanningNetwork string
+	completedNetworks      []string
 }
 
 // New creates a new Storage instance
@@ -87,6 +89,51 @@ func (s *Storage) SetScanRunning(running bool) {
 // IsScanRunning reports whether a scan is currently running thread-safely
 func (s *Storage) IsScanRunning() bool {
 	return atomic.LoadInt32(&s.scanRunning) != 0
+}
+
+// SetCurrentScanningNetwork sets the network CIDR currently being scanned
+func (s *Storage) SetCurrentScanningNetwork(cidr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.currentScanningNetwork = cidr
+}
+
+// GetCurrentScanningNetwork returns the network CIDR currently being scanned
+func (s *Storage) GetCurrentScanningNetwork() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.currentScanningNetwork
+}
+
+// AddCompletedNetwork adds a network CIDR to the list of completed networks in the current run
+func (s *Storage) AddCompletedNetwork(cidr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, n := range s.completedNetworks {
+		if n == cidr {
+			return
+		}
+	}
+	s.completedNetworks = append(s.completedNetworks, cidr)
+}
+
+// ClearCompletedNetworks empties the list of completed networks
+func (s *Storage) ClearCompletedNetworks() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.completedNetworks = nil
+}
+
+// IsNetworkCompletedInCurrentRun reports whether a network CIDR has completed scanning in the current active run
+func (s *Storage) IsNetworkCompletedInCurrentRun(cidr string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, n := range s.completedNetworks {
+		if n == cidr {
+			return true
+		}
+	}
+	return false
 }
 
 // Close closes the SQLite database connection

@@ -38,7 +38,11 @@ type Handler struct {
 // NetworkView holds network info and device statistics for rendering
 type NetworkView struct {
 	types.Network
-	DeviceCount int
+	DeviceCount  int
+	IsScanning   bool
+	IsCompleted  bool
+	LastScanUnix int64
+	LastScanAgo  string
 }
 
 // PageData holds data passed to templates
@@ -402,15 +406,34 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	currentScanning := h.store.GetCurrentScanningNetwork()
+
 	var networkViews []NetworkView
 	for _, n := range networks {
 		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
 			n.FriendlyName = name
 		}
 		friendlyLower := strings.ToLower(n.FriendlyName)
+
+		// Get last scan info
+		lastScanTime := h.store.GetLastScan(n.CIDR)
+		var lastScanUnix int64
+		var lastScanAgo string
+		if !lastScanTime.IsZero() {
+			lastScanUnix = lastScanTime.Unix()
+			lastScanAgo = timeAgo(lastScanTime)
+		}
+
+		isScanning := currentScanning == n.CIDR
+		isCompleted := h.store.IsNetworkCompletedInCurrentRun(n.CIDR)
+
 		networkViews = append(networkViews, NetworkView{
-			Network:     n,
-			DeviceCount: networkCounts[friendlyLower],
+			Network:      n,
+			DeviceCount:  networkCounts[friendlyLower],
+			IsScanning:   isScanning,
+			IsCompleted:  isCompleted,
+			LastScanUnix: lastScanUnix,
+			LastScanAgo:  lastScanAgo,
 		})
 	}
 

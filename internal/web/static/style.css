@@ -1091,18 +1091,18 @@ td[data-copy]:not([data-copy=""]) {
 /* Column widths for the fixed layout (they sum to 100%). When the responsive
    rules further down hide a column, its share is redistributed across the
    rest, so the table always fills its panel exactly. */
-.col-status     { width: 4%; }
-.col-ip         { width: 10%; }
-.col-hostname   { width: 11%; }
+.col-status     { width: 6.5%; min-width: 60px; }
+.col-ip         { width: 9%; }
+.col-hostname   { width: 10%; }
 .col-network    { width: 7%; }
 .col-assignment { width: 7%; }
 .col-type       { width: 7%; }
-.col-mac        { width: 10%; }
-.col-vendor     { width: 9%; }
+.col-mac        { width: 9%; }
+.col-vendor     { width: 7.5%; }
 .col-label      { width: 7%; }
-.col-group      { width: 10%; }
+.col-group      { width: 9%; }
 .col-lastseen   { width: 9%; }
-.col-actions    { width: 9%; }
+.col-actions    { width: 12%; min-width: 110px; }
 
 /* Resizable Table Columns */
 .table th {
@@ -2827,4 +2827,38 @@ img.login-logo {
         padding-bottom: 1.5rem;
         margin-bottom: 1rem;
     }
+}
+
+/* Sidebar Network Scanning Status */
+.sidebar-net-status {
+    font-size: 0.75rem;
+    margin-top: 0.2rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.sidebar-net-status.scanning {
+    color: var(--success);
+    font-weight: 500;
+}
+
+.sidebar-net-status.scanning svg {
+    animation: spin 1.5s linear infinite;
+    stroke: var(--success);
+}
+
+.sidebar-net-status.completed {
+    color: var(--success);
+    font-weight: 500;
+}
+
+.sidebar-net-status.waiting {
+    color: var(--text-muted);
+    opacity: 0.8;
+}
+
+.sidebar-net-status.last-scan {
+    color: var(--text-muted);
+    opacity: 0.75;
 }

@@ -104,6 +104,32 @@ orangutan export out.csv</code></pre>
                         <div class="sidebar-net-info">
                             <span class="sidebar-net-name">{{.FriendlyName}}</span>
                             <span class="sidebar-net-cidr">{{.CIDR}} &middot; {{.Interface}}</span>
+                            {{if $.ScanRunning}}
+                                {{if .IsScanning}}
+                                    <span class="sidebar-net-status scanning">
+                                        <svg class="spinner-svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
+                                        Scanning...
+                                    </span>
+                                {{else if .IsCompleted}}
+                                    <span class="sidebar-net-status completed">
+                                        ✓ Completed
+                                    </span>
+                                {{else}}
+                                    <span class="sidebar-net-status waiting">
+                                        Waiting...
+                                    </span>
+                                {{end}}
+                            {{else}}
+                                {{if .LastScanAgo}}
+                                    <span class="sidebar-net-status last-scan" data-relative-time="{{.LastScanUnix}}">
+                                        scanned {{.LastScanAgo}}
+                                    </span>
+                                {{else}}
+                                    <span class="sidebar-net-status last-scan">
+                                        never scanned
+                                    </span>
+                                {{end}}
+                            {{end}}
                         </div>
                         <div class="sidebar-net-actions">
                             {{if .DeviceCount}}
@@ -331,17 +357,17 @@ orangutan export out.csv</code></pre>
                                 {{else if .Type}}
                                     <span class="type-badge">{{typeIcon .Type}}{{.Type}}</span>
                                 {{end}}
-                                 {{if or .WebUI .CustomWebURL}}
-                                     <a href="{{.WebURL}}" target="_blank" class="web-indicator clickable" data-tip="Open web interface: {{.WebURL}}">
-                                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                                     </a>
-                                 {{end}}
                                 {{if .Risks}}<span class="risk-indicator" data-tip="Security: {{range $i, $r := .Risks}}{{if $i}}; {{end}}{{$r}}{{end}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>{{end}}
                             </td>
                             <td class="col-vendor vendor-cell" data-label="Vendor" data-copy="{{.Vendor}}">{{if .Vendor}}{{.Vendor}}{{else}}<span style="color:var(--text-muted)">Unknown</span>{{end}}</td>
                             <td class="col-label label-cell" data-label="Label">{{.Label}}{{if .Notes}}<span class="notes-indicator" data-tip="{{.Notes}}"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>{{end}}</td>
                             <td class="col-lastseen time-cell" data-label="Last Seen" data-relative-time="{{.LastSeenUnix}}">{{.TimeAgo}}</td>
                             <td class="col-actions actions-cell" data-label="Actions">
+                                {{if or .WebUI .CustomWebURL}}
+                                <a href="{{.WebURL}}" target="_blank" class="btn-icon" data-tip="Open Web UI: {{.WebURL}}" aria-label="Open Web UI">
+                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                </a>
+                                {{end}}
                                 <button class="btn-icon" onclick="editDevice('{{.IP}}')" data-tip="View Details" aria-label="View Details">
                                     <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>

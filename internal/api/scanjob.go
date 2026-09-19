@@ -175,6 +175,8 @@ func (h *Handler) startScanJob(networks []string, automatic bool) *scanJob {
 		automatic: automatic,
 	}
 
+	h.store.ClearCompletedNetworks()
+	h.store.SetCurrentScanningNetwork("")
 	h.store.SetScanRunning(true)
 
 	h.scanWG.Add(1)
@@ -194,6 +196,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	defer h.store.SetScanRunning(false)
 
 	defer func() {
+		h.store.SetCurrentScanningNetwork("")
 		dur := time.Since(j.startedAt).Seconds()
 		networkName := "All Networks"
 		if len(j.networks) == 1 {
@@ -216,6 +219,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		}
 
 		j.beginNetwork(cidr, i+1, h.store.GetLastDuration(cidr))
+		h.store.SetCurrentScanningNetwork(cidr)
 
 		summary := networkScanSummary{Network: cidr}
 
@@ -224,6 +228,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			summary.Status = "skipped"
 			summary.Error = "rate limited, wait " + waitTime.Round(time.Second).String()
 			j.addResult(summary, 0)
+			h.store.AddCompletedNetwork(cidr)
 			continue
 		}
 
@@ -239,6 +244,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			summary.Status = "failed"
 			summary.Error = err.Error()
 			j.addResult(summary, 0)
+			h.store.AddCompletedNetwork(cidr)
 			continue
 		}
 
@@ -246,6 +252,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		summary.DeviceCount = result.DeviceCount
 		summary.Duration = result.Duration
 		j.addResult(summary, result.DeviceCount)
+		h.store.AddCompletedNetwork(cidr)
 
 		for _, d := range result.Devices {
 			if d.IP != "" {
