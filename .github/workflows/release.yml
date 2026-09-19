@@ -312,7 +312,7 @@ jobs:
           echo ""
           echo "Access the web UI at: http://localhost:291"
           echo ""
-POSTINST
+          POSTINST
             chmod 755 "${PKG_DIR}/DEBIAN/postinst"
 
             # Create prerm script
