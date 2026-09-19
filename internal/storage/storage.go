@@ -1271,9 +1271,6 @@ func (s *Storage) SetContinuousScan(enabled bool) error {
 
 // GetStats returns device statistics
 func (s *Storage) GetStats() types.DeviceStats {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	stats := types.DeviceStats{
 		Groups: make(map[string]int),
 	}
