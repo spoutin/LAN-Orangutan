@@ -35,13 +35,19 @@ type Handler struct {
 	staticFS  http.Handler
 }
 
+// NetworkView holds network info and device statistics for rendering
+type NetworkView struct {
+	types.Network
+	DeviceCount int
+}
+
 // PageData holds data passed to templates
 type PageData struct {
 	Title        string
 	Theme        string
 	Version      string
 	Devices      []*DeviceView
-	Networks     []types.Network
+	Networks     []NetworkView
 	Tailscale    types.TailscaleStatus
 	Stats        types.DeviceStats
 	Groups       []string
@@ -376,15 +382,27 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(groups)
 
-	// Get networks
+	// Get networks and count active devices per network
 	networks, _ := network.DetectNetworks()
 	networks = network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
 
-	// Override FriendlyName using our custom network names configuration
-	for i, n := range networks {
-		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
-			networks[i].FriendlyName = name
+	networkCounts := make(map[string]int)
+	for _, d := range devices {
+		if d.IsOnline() && d.NetworkName != "" {
+			networkCounts[strings.ToLower(d.NetworkName)]++
 		}
+	}
+
+	var networkViews []NetworkView
+	for _, n := range networks {
+		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
+			n.FriendlyName = name
+		}
+		friendlyLower := strings.ToLower(n.FriendlyName)
+		networkViews = append(networkViews, NetworkView{
+			Network:     n,
+			DeviceCount: networkCounts[friendlyLower],
+		})
 	}
 
 	// Get Tailscale status
@@ -397,7 +415,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Title:          "LAN Orangutan",
 		Theme:          h.cfg.UI.Theme,
 		Devices:        deviceViews,
-		Networks:       networks,
+		Networks:       networkViews,
 		Tailscale:      tailscale,
 		Stats:          stats,
 		Groups:         groups,
