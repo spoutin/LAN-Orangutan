@@ -25,6 +25,7 @@ type Storage struct {
 	mu                     sync.RWMutex
 	networkNames           map[string]string
 	scanRunning            int32
+	scanInterval           int32
 	currentScanningNetwork string
 	completedNetworks      []string
 }
@@ -89,6 +90,20 @@ func (s *Storage) SetScanRunning(running bool) {
 // IsScanRunning reports whether a scan is currently running thread-safely
 func (s *Storage) IsScanRunning() bool {
 	return atomic.LoadInt32(&s.scanRunning) != 0
+}
+
+// SetScanInterval sets the configured scan interval thread-safely
+func (s *Storage) SetScanInterval(seconds int) {
+	atomic.StoreInt32(&s.scanInterval, int32(seconds))
+}
+
+// GetScanInterval returns the configured scan interval thread-safely
+func (s *Storage) GetScanInterval() time.Duration {
+	secs := atomic.LoadInt32(&s.scanInterval)
+	if secs <= 0 {
+		return time.Hour // default fallback
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // SetCurrentScanningNetwork sets the network CIDR currently being scanned
@@ -569,8 +584,13 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			return err
 		}
 		if old != nil {
-			// Check if the old IP is also active in the current scan run (coexistence)
-			oldIPActive := activeIPs != nil && activeIPs[oldIP]
+			// Check if the old IP is also active (either in the current scan sweep list, or currently online in the DB)
+			var oldIPActive bool
+			if activeIPs != nil {
+				oldIPActive = activeIPs[oldIP]
+			} else {
+				oldIPActive = old.IsOnline(s.GetScanInterval())
+			}
 
 			d.Label = old.Label
 			d.Notes = old.Notes
@@ -587,7 +607,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			}
 
 			if !oldIPActive {
-				// Relocation: Old IP is not active anymore, so migrate completely and delete
+				// Relocation: Old IP is offline, so migrate and delete
 				d.AddressHistory = appendAddressChange(old.AddressHistory, oldIP, now)
 				_, err = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP)
 				if err != nil {

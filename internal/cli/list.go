@@ -44,6 +44,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
+	store.SetScanInterval(cfg.Scanning.ScanInterval)
 	store.SetNetworkNames(cfg.Scanning.NetworkNames)
 
 	devices := store.GetDevices()
