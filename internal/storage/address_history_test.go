@@ -180,3 +180,48 @@ func TestVirtualIPCoexistenceSweepAndPortScan(t *testing.T) {
 		t.Errorf("expected 0 address history records, got dev10=%v, dev20=%v", dev10.AddressHistory, dev20.AddressHistory)
 	}
 }
+
+// TestVirtualIPCoexistenceCrossSubnet replicates a sequential multi-subnet scan:
+// Subnet A is scanned (discovering only IP A), then Subnet B is scanned (discovering only IP B).
+// Both virtual IPs share the same MAC and must coexist cleanly without any deletions or move history.
+func TestVirtualIPCoexistenceCrossSubnet(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Step 1: Declare two configured subnets
+	s.SetNetworkNames(map[string]string{
+		"10.0.0.0/24":    "LAN",
+		"192.168.1.0/24": "Tailscale",
+	})
+
+	// Step 2: Scan Subnet A (discovers only .10)
+	if err := s.MergeDevices([]types.Device{
+		{IP: "10.0.0.10", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server-lan", Type: "Server"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 3: Scan Subnet B (discovers only .20 on the same MAC)
+	// This is the sequential cross-subnet sweep!
+	if err := s.MergeDevices([]types.Device{
+		{IP: "192.168.1.20", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server-vpn", Type: "Server"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 4: Verify both coexist with zero history after the cross-subnet scan
+	devices := s.GetDevices()
+	if len(devices) != 2 {
+		t.Fatalf("expected 2 coexisting devices, got %d. Cross-subnet IP was deleted!", len(devices))
+	}
+
+	devA := devices["10.0.0.10"]
+	devB := devices["192.168.1.20"]
+
+	if devA == nil || devB == nil {
+		t.Fatal("both IPs must exist in the database simultaneously")
+	}
+
+	if len(devA.AddressHistory) != 0 || len(devB.AddressHistory) != 0 {
+		t.Errorf("expected 0 address history records, got devA=%v, devB=%v", devA.AddressHistory, devB.AddressHistory)
+	}
+}

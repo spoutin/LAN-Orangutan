@@ -106,6 +106,37 @@ func (s *Storage) GetScanInterval() time.Duration {
 	return time.Duration(secs) * time.Second
 }
 
+// inSameSubnetLocked checks if two IP addresses reside inside the same configured subnet CIDR.
+// Must be called while holding s.mu (Lock or RLock).
+func (s *Storage) inSameSubnetLocked(ip1, ip2 string) bool {
+	p1 := net.ParseIP(ip1)
+	p2 := net.ParseIP(ip2)
+	if p1 == nil || p2 == nil {
+		return false
+	}
+
+	networkNames := s.networkNames
+
+	if len(networkNames) > 0 {
+		for cidr := range networkNames {
+			_, ipNet, err := net.ParseCIDR(cidr)
+			if err == nil {
+				if ipNet.Contains(p1) && ipNet.Contains(p2) {
+					return true
+				}
+			}
+		}
+	} else {
+		// Fallback for default home networks (/24)
+		v41 := p1.To4()
+		v42 := p2.To4()
+		if v41 != nil && v42 != nil {
+			return v41[0] == v42[0] && v41[1] == v42[1] && v41[2] == v42[2]
+		}
+	}
+	return false
+}
+
 // SetCurrentScanningNetwork sets the network CIDR currently being scanned
 func (s *Storage) SetCurrentScanningNetwork(cidr string) {
 	s.mu.Lock()
@@ -584,11 +615,13 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			return err
 		}
 		if old != nil {
-			// Check if the old IP is also active (either in the current scan sweep list, or currently online in the DB)
+			// Check if the old IP is also active (using either sweep active list, or DB online state depending on subnet boundary)
 			var oldIPActive bool
-			if activeIPs != nil {
-				oldIPActive = activeIPs[oldIP]
+			if s.inSameSubnetLocked(d.IP, oldIP) {
+				// Same subnet: both must be present in the active sweep list to coexist
+				oldIPActive = activeIPs != nil && activeIPs[oldIP]
 			} else {
+				// Different subnets/concurrency: check if the old IP is online in the DB state
 				oldIPActive = old.IsOnline(s.GetScanInterval())
 			}
 
