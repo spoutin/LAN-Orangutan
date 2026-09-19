@@ -403,14 +403,14 @@ jobs:
           %dir /var/lib/lan-orangutan
           %dir /etc/lan-orangutan
 
-           %post
-           systemctl daemon-reload
-           systemctl enable lan-orangutan
-           if systemctl is-active --quiet lan-orangutan; then
-               systemctl restart lan-orangutan
-           else
-               systemctl start lan-orangutan
-           fi
+          %post
+          systemctl daemon-reload
+          systemctl enable lan-orangutan
+          if systemctl is-active --quiet lan-orangutan; then
+              systemctl restart lan-orangutan
+          else
+              systemctl start lan-orangutan
+          fi
 
           %preun
           systemctl stop lan-orangutan 2>/dev/null || true
