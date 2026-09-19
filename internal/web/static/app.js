@@ -177,212 +177,6 @@ function formatSeconds(total) {
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 }
 
-function showScanProgress(p) {
-    const panel = document.getElementById('scan-progress');
-    if (!panel) return;
-    panel.style.display = 'flex';
-
-    const title = document.getElementById('scan-title');
-    const cancelBtn = document.getElementById('scan-cancel');
-
-    const isFinished = p.status === 'done' || p.status === 'cancelled' || p.status === 'failed';
-
-    if (p.status === 'done') {
-        if (title) title.textContent = 'Scan Complete!';
-        if (cancelBtn) {
-            cancelBtn.textContent = 'Close';
-            cancelBtn.onclick = function() {
-                hideScanProgress();
-                refreshAfterScan();
-            };
-        }
-    } else if (p.status === 'failed') {
-        if (title) title.textContent = 'Scan Failed';
-        if (cancelBtn) {
-            cancelBtn.textContent = 'Close';
-            cancelBtn.onclick = function() {
-                hideScanProgress();
-                refreshAfterScan();
-            };
-        }
-    } else if (p.status === 'cancelled') {
-        if (title) title.textContent = 'Scan Cancelled';
-        if (cancelBtn) {
-            cancelBtn.textContent = 'Close';
-            cancelBtn.onclick = function() {
-                hideScanProgress();
-                refreshAfterScan();
-            };
-        }
-    } else {
-        if (title) {
-            if (p.port_scan_active) {
-                title.textContent = 'Probing Services & Ports...';
-            } else {
-                let currentName = p.current_network_name ? `${p.current_network_name} (${p.current_network})` : p.current_network;
-                title.textContent = p.current_network ? `Scanning ${currentName}` : 'Starting scan...';
-            }
-        }
-        if (cancelBtn) {
-            cancelBtn.textContent = 'Cancel';
-            cancelBtn.onclick = cancelScan;
-        }
-    }
-
-    // percent is -1 when the network has never been scanned and there is no
-    // timing history to estimate from. Show a sweeping bar rather than a
-    // made-up number.
-    const bar = document.getElementById('scan-bar');
-    const fill = document.getElementById('scan-bar-fill');
-    const known = p.percent >= 0 || isFinished || p.port_scan_active;
-    if (bar) bar.classList.toggle('indeterminate', !known);
-    if (fill) {
-        if (isFinished) {
-            fill.style.width = '100%';
-        } else if (p.port_scan_active) {
-            const pct = p.port_scan_total > 0 ? (p.port_scan_complete / p.port_scan_total) * 100 : 0;
-            fill.style.width = `${Math.min(100, Math.round(pct))}%`;
-        } else {
-            fill.style.width = known ? `${Math.min(100, p.percent)}%` : '';
-        }
-    }
-
-    const detail = document.getElementById('scan-detail');
-    if (detail) {
-        if (isFinished) {
-            detail.textContent = `Completed in ${formatSeconds(p.elapsed)}`;
-        } else if (p.port_scan_active) {
-            detail.textContent = `Probed ${p.port_scan_complete} of ${p.port_scan_total} active devices`;
-        } else {
-            const parts = [];
-            if (p.network_count > 1) parts.push(`Network ${p.network_index} of ${p.network_count}`);
-            if (p.current_network) {
-                let currentName = p.current_network_name ? `${p.current_network_name} (${p.current_network})` : p.current_network;
-                parts.push(currentName);
-            }
-            detail.textContent = parts.join(' · ');
-        }
-    }
-
-    // The running total gets its own line. Appended to the line above it wrapped
-    // mid-sentence once more than one network was involved.
-    //
-    // Only claim a count once there is one: nmap reports nothing until its
-    // sweep finishes, so a permanent "0 devices found" reads as a failed scan
-    // rather than an unfinished one.
-    const count = document.getElementById('scan-count');
-    if (count) {
-        let countText = '';
-        if (p.device_count > 0) {
-            countText = `${p.device_count} device${p.device_count === 1 ? '' : 's'} found`;
-            if (p.new_device_count > 0) {
-                countText += ` (${p.new_device_count} new)`;
-            }
-        } else if (isFinished) {
-            countText = 'No devices found';
-        }
-        count.textContent = countText;
-    }
-
-    const eta = document.getElementById('scan-eta');
-    if (eta) {
-        if (isFinished) {
-            eta.textContent = '';
-        } else if (p.port_scan_active) {
-            const pct = p.port_scan_total > 0 ? (p.port_scan_complete / p.port_scan_total) * 100 : 0;
-            eta.textContent = `${formatSeconds(p.elapsed)} elapsed · ${Math.round(pct)}%`;
-        } else {
-            eta.textContent = known && p.remaining != null
-                ? `~${formatSeconds(p.remaining)} left · ${Math.round(p.percent)}%`
-                : `${formatSeconds(p.elapsed)} elapsed`;
-        }
-    }
-
-    // Set expectations explicitly while there is nothing to report yet.
-    const hint = document.getElementById('scan-hint');
-    if (hint) {
-        if (p.error) {
-            hint.textContent = p.error;
-            hint.style.color = '#ef4444';
-        } else {
-            hint.style.color = '';
-            hint.textContent = p.device_count > 0 || isFinished
-                ? ''
-                : 'Checking every address on the network. Devices are listed once the sweep finishes.';
-        }
-    }
-
-    // Dynamic completed subnets list
-    let detailsContainer = document.getElementById('scan-details-container');
-    let detailsList = document.getElementById('scan-details-list');
-
-    // Create container dynamically if it doesn't exist
-    if (!detailsContainer && panel) {
-        detailsContainer = document.createElement('div');
-        detailsContainer.id = 'scan-details-container';
-        detailsContainer.className = 'scan-details-container';
-
-        const header = document.createElement('div');
-        header.className = 'scan-details-header';
-        header.textContent = 'Completed Subnets:';
-        detailsContainer.appendChild(header);
-
-        detailsList = document.createElement('div');
-        detailsList.id = 'scan-details-list';
-        detailsList.className = 'scan-details-list';
-        detailsContainer.appendChild(detailsList);
-
-        panel.appendChild(detailsContainer);
-    }
-
-    if (detailsContainer && detailsList) {
-        if (p.networks && p.networks.length > 0) {
-            detailsContainer.style.display = 'block';
-            let rowsHtml = p.networks.map(n => {
-                const nameLabel = n.network_name ? `${n.network_name} (${n.network})` : n.network;
-                const statusBadge = `<span class="scan-status-badge ${n.status}">${n.status}</span>`;
-                const durationText = n.duration ? `in ${formatSeconds(n.duration)}` : '';
-                return `
-                    <div class="scan-detail-row">
-                        <span class="scan-detail-network">${nameLabel}</span>
-                        <span class="scan-detail-status">${statusBadge}</span>
-                        <span class="scan-detail-summary">${n.device_count} found ${durationText}</span>
-                    </div>
-                `;
-            }).join('');
-
-            if (p.port_scan_active) {
-                const statusBadge = `<span class="scan-status-badge running">scanning</span>`;
-                rowsHtml += `
-                    <div class="scan-detail-row port-scan-row">
-                        <span class="scan-detail-network">🔌 Active Port Prober</span>
-                        <span class="scan-detail-status">${statusBadge}</span>
-                        <span class="scan-detail-summary">${p.port_scan_complete}/${p.port_scan_total} probed</span>
-                    </div>
-                `;
-            } else if (p.port_scan_total > 0) {
-                const statusBadge = `<span class="scan-status-badge scanned">scanned</span>`;
-                rowsHtml += `
-                    <div class="scan-detail-row port-scan-row">
-                        <span class="scan-detail-network">🔌 Active Port Prober</span>
-                        <span class="scan-detail-status">${statusBadge}</span>
-                        <span class="scan-detail-summary">${p.port_scan_total} probed</span>
-                    </div>
-                `;
-            }
-
-            detailsList.innerHTML = rowsHtml;
-        } else {
-            detailsContainer.style.display = 'none';
-        }
-    }
-}
-
-function hideScanProgress() {
-    const panel = document.getElementById('scan-progress');
-    if (panel) panel.style.display = 'none';
-}
-
 async function cancelScan() {
     try {
         await api('scan/cancel', {}, 'POST');
@@ -427,27 +221,24 @@ async function followScan() {
         // Stop when the scan ends, or when the current job is an automatic
         // background scan: the user's scan has finished and the background
         // scanner has taken the single job slot, so there is nothing of the
-        // user's left to follow. Automatic scans never own the overlay.
+        // user's left to follow.
         if (progress.status !== 'running' || progress.automatic) {
-            if (!progress.automatic && (progress.status === 'done' || progress.status === 'cancelled' || progress.status === 'failed')) {
-                showScanProgress(progress);
-            } else {
-                hideScanProgress();
-                if (!progress.automatic) reportScanOutcome(progress);
+            if (!progress.automatic) {
+                reportScanOutcome(progress);
             }
             return;
         }
-        showScanProgress(progress);
+        // Refresh the sidebar and dashboard live while the scan is running!
+        await refreshInPlace();
     }
 }
 
 async function runScan(target) {
     try {
-        const started = await api(`scan/start?network=${encodeURIComponent(target)}`, {}, 'POST');
-        showScanProgress(started.data);
+        await api(`scan/start?network=${encodeURIComponent(target)}`, {}, 'POST');
+        await refreshInPlace();
         await followScan();
     } catch (e) {
-        hideScanProgress();
         const isRateLimit = e.message.toLowerCase().includes('rate limit');
         showToast(isRateLimit ? e.message : 'Scan failed: ' + e.message, isRateLimit ? 'warning' : 'error');
     }
@@ -459,11 +250,8 @@ async function runScan(target) {
 async function resumeScanIfRunning() {
     try {
         const progress = (await api('scan/progress')).data;
-        // Only resume a scan the user started. An automatic background scan
-        // must not pop the progress overlay (with its Cancel button) on its
-        // own; its results simply appear on the next refresh.
+        // Only resume a scan the user started.
         if (progress && progress.status === 'running' && !progress.automatic) {
-            showScanProgress(progress);
             await followScan();
         }
     } catch (e) {
