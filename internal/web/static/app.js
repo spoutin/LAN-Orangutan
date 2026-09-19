@@ -606,18 +606,88 @@ function filterDevices() {
 }
 
 // Device editing
-function editDevice(ip) {
+async function editDevice(ip) {
     const modal = document.getElementById('edit-modal');
     const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
     if (!modal || !row) return;
+
+    // 1. Populate General Read-Only Stats (Left Panel)
+    const ipDisplay = document.getElementById('detail-ip');
+    if (ipDisplay) ipDisplay.textContent = ip;
+
+    const macDisplay = document.getElementById('detail-mac');
+    if (macDisplay) {
+        const macVal = row.dataset.macOriginal || row.dataset.mac || '-';
+        macDisplay.textContent = macVal.toUpperCase();
+    }
+
+    const vendorDisplay = document.getElementById('detail-vendor');
+    if (vendorDisplay) vendorDisplay.textContent = row.dataset.vendorOriginal || 'Unknown';
+
+    const firstSeenDisplay = document.getElementById('detail-firstseen');
+    if (firstSeenDisplay) {
+        const dateVal = new Date(row.dataset.firstseen);
+        firstSeenDisplay.textContent = isNaN(dateVal.getTime()) ? row.dataset.firstseen : dateVal.toLocaleString();
+    }
+
+    const lastSeenDisplay = document.getElementById('detail-lastseen');
+    if (lastSeenDisplay) {
+        const dateVal = new Date(row.dataset.lastseenDisplay);
+        lastSeenDisplay.textContent = isNaN(dateVal.getTime()) ? row.dataset.lastseenDisplay : dateVal.toLocaleString();
+    }
+
+    const responseTimeDisplay = document.getElementById('detail-responsetime');
+    if (responseTimeDisplay) responseTimeDisplay.textContent = row.dataset.responsetime || 'N/A';
+
+    // 2. Populate Edit Form Fields (Right Panel)
     document.getElementById('edit-ip').value = ip;
-    document.getElementById('edit-ip-display').value = ip;
+    const ipDispInput = document.getElementById('edit-ip-display');
+    if (ipDispInput) ipDispInput.value = ip;
     document.getElementById('edit-label').value = row.dataset.labelOriginal || '';
     document.getElementById('edit-custom-hostname').value = row.dataset.customHostnameOriginal || '';
     document.getElementById('edit-custom-web-url').value = row.dataset.customWebUrlOriginal || '';
     document.getElementById('edit-custom-type').value = row.dataset.customTypeOriginal || '';
-    document.getElementById('edit-group').value = row.dataset.group || '';
     document.getElementById('edit-notes').value = row.dataset.notes || '';
+
+    // 3. Fetch and Render Device Presence Events (Left Panel Timeline)
+    const timelineEl = document.getElementById('detail-timeline');
+    if (timelineEl) {
+        timelineEl.innerHTML = '<div class="timeline-loading">Loading activity history...</div>';
+        try {
+            const macVal = row.dataset.macOriginal || row.dataset.mac || '';
+            const res = await fetch(`/api/scans/events?mac=${encodeURIComponent(macVal)}`);
+            const result = await res.json();
+            if (result.success && result.data && result.data.length > 0) {
+                timelineEl.innerHTML = result.data.map(event => {
+                    const dateVal = new Date(event.created_at);
+                    const ago = relativeTime(Math.floor(dateVal.getTime() / 1000));
+                    let detailText = '';
+                    if (event.event === 'leave') {
+                        detailText = `went offline (was connected for ${formatSeconds(event.duration)})`;
+                    } else if (event.event === 'return') {
+                        detailText = `reconnected (was gone for ${formatSeconds(event.duration)})`;
+                    } else if (event.event === 'join') {
+                        detailText = `joined network for the first time`;
+                    }
+                    const badgeClass = event.event === 'join' ? 'join' : (event.event === 'leave' ? 'leave' : 'return');
+                    return `
+                        <div class="timeline-event-item" style="display:flex; flex-direction:column; gap:4px; padding:8px; border-bottom:1px solid var(--border); font-size:0.85rem;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span class="scan-status-badge ${badgeClass}" style="padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.7rem; text-transform: uppercase;">${event.event}</span>
+                                <span style="color:var(--text-muted); font-size:0.75rem;">${ago}</span>
+                            </div>
+                            <div style="color:var(--text); margin-top:2px;">${detailText}</div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                timelineEl.innerHTML = '<div class="timeline-empty" style="padding:16px; color:var(--text-muted); font-size:0.85rem; text-align:center;">No logged activity events for this device.</div>';
+            }
+        } catch (e) {
+            timelineEl.innerHTML = '<div class="timeline-error" style="padding:16px; color:#ef4444; font-size:0.85rem; text-align:center;">Failed to load activity logs.</div>';
+        }
+    }
+
     modal.style.display = 'flex';
 }
 

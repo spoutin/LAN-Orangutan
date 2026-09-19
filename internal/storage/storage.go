@@ -1493,3 +1493,30 @@ func (s *Storage) GetPresenceEvents() ([]types.PresenceEventRecord, error) {
 	}
 	return result, nil
 }
+
+// GetPresenceEventsByMAC returns the chronological presence events for a specific MAC address, newest first
+func (s *Storage) GetPresenceEventsByMAC(mac string) ([]types.PresenceEventRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT id, ip, mac, hostname, event, duration, created_at
+		FROM device_presence_history
+		WHERE mac = ?
+		ORDER BY created_at DESC
+	`, mac)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []types.PresenceEventRecord
+	for rows.Next() {
+		var r types.PresenceEventRecord
+		err := rows.Scan(&r.ID, &r.IP, &r.MAC, &r.Hostname, &r.Event, &r.Duration, &r.CreatedAt)
+		if err == nil {
+			result = append(result, r)
+		}
+	}
+	return result, nil
+}

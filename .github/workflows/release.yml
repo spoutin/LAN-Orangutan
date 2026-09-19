@@ -296,23 +296,23 @@ jobs:
           Homepage: https://github.com/spoutin/LAN-Orangutan
           EOF
 
-             # Create postinst script
-             cat > "${PKG_DIR}/DEBIAN/postinst" << 'POSTINST'
-           #!/bin/bash
-           set -e
-           systemctl daemon-reload
-           systemctl enable lan-orangutan
-           if systemctl is-active --quiet lan-orangutan; then
-               systemctl restart lan-orangutan
-           else
-               systemctl start lan-orangutan
-           fi
-           echo ""
-           echo "LAN Orangutan installed successfully!"
-           echo ""
-           echo "Access the web UI at: http://localhost:291"
-           echo ""
-           POSTINST
+            # Create postinst script
+            cat > "${PKG_DIR}/DEBIAN/postinst" << 'POSTINST'
+          #!/bin/bash
+          set -e
+          systemctl daemon-reload
+          systemctl enable lan-orangutan
+          if systemctl is-active --quiet lan-orangutan; then
+              systemctl restart lan-orangutan
+          else
+              systemctl start lan-orangutan
+          fi
+          echo ""
+          echo "LAN Orangutan installed successfully!"
+          echo ""
+          echo "Access the web UI at: http://localhost:291"
+          echo ""
+POSTINST
             chmod 755 "${PKG_DIR}/DEBIAN/postinst"
 
             # Create prerm script

@@ -208,16 +208,6 @@ orangutan export out.csv</code></pre>
                         <option value="online">Online</option>
                         <option value="offline">Offline</option>
                     </select>
-                    <select id="group-filter" class="select" style="width:auto" onchange="filterDevices()">
-                        <option value="all">All Groups</option>
-                        <option value="Server">Server</option>
-                        <option value="Desktop">Desktop</option>
-                        <option value="Laptop">Laptop</option>
-                        <option value="Mobile">Mobile</option>
-                        <option value="IoT">IoT</option>
-                        <option value="Network">Network</option>
-                        <option value="Pi">Pi</option>
-                    </select>
                     <div class="dropdown">
                         <button class="select" id="network-filter-btn" onclick="toggleDropdown('network-filter-menu'); event.stopPropagation();" style="text-align:left;min-width:135px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">All Networks</button>
                         <div id="network-filter-menu" class="dropdown-menu checkbox-menu" onclick="event.stopPropagation();">
@@ -255,13 +245,11 @@ orangutan export out.csv</code></pre>
                             <th class="col-ip" data-sort="ip" onclick="sortTable('ip')">IP Address <span class="sort-icon">↕</span></th>
                             <th class="col-hostname" data-sort="hostname" onclick="sortTable('hostname')">Hostname <span class="sort-icon">↕</span></th>
                             <th class="col-network" data-sort="network" onclick="sortTable('network')">Network <span class="sort-icon">↕</span></th>
-                            <th class="col-assignment" data-sort="assignment" onclick="sortTable('assignment')">Assignment <span class="sort-icon">↕</span></th>
-                            <th class="col-type" data-sort="type" onclick="sortTable('type')">Type <span class="sort-icon">↕</span></th>
-                            <th class="col-mac" data-sort="mac" onclick="sortTable('mac')">MAC Address <span class="sort-icon">↕</span></th>
-                            <th class="col-vendor" data-sort="vendor" onclick="sortTable('vendor')">Vendor <span class="sort-icon">↕</span></th>
-                            <th class="col-label">Label</th>
-                            <th class="col-group">Group</th>
-                            <th class="col-lastseen" data-sort="lastseen" onclick="sortTable('lastseen')">Last Seen <span class="sort-icon">↕</span></th>
+                             <th class="col-assignment" data-sort="assignment" onclick="sortTable('assignment')">Assignment <span class="sort-icon">↕</span></th>
+                             <th class="col-type" data-sort="type" onclick="sortTable('type')">Type <span class="sort-icon">↕</span></th>
+                             <th class="col-vendor" data-sort="vendor" onclick="sortTable('vendor')">Vendor <span class="sort-icon">↕</span></th>
+                             <th class="col-label">Label</th>
+                             <th class="col-lastseen" data-sort="lastseen" onclick="sortTable('lastseen')">Last Seen <span class="sort-icon">↕</span></th>
                             <th class="col-actions">Actions</th>
                         </tr>
                     </thead>
@@ -271,7 +259,9 @@ orangutan export out.csv</code></pre>
                             data-ip="{{.IP}}"
                             data-hostname="{{lower .Hostname}}"
                             data-mac="{{lower .MAC}}"
+                            data-mac-original="{{.MAC}}"
                             data-vendor="{{lower .Vendor}}"
+                            data-vendor-original="{{if .Vendor}}{{.Vendor}}{{else}}Unknown{{end}}"
                             data-type="{{lower .Type}}"
                             data-network="{{lower .NetworkName}}"
                             data-assignment="{{lower .Assignment}}"
@@ -284,7 +274,9 @@ orangutan export out.csv</code></pre>
                             data-label="{{lower .Label}}"
                             data-label-original="{{.Label}}"
                             data-notes="{{.Notes}}"
-                            data-group="{{.Group}}"
+                            data-firstseen="{{.FirstSeen}}"
+                            data-lastseen-display="{{.LastSeen}}"
+                            data-responsetime="{{if .ResponseTime}}{{.ResponseTime}} ms{{else}}N/A{{end}}"
                             data-status="{{.Status}}"
                             data-moved="{{if .AddressHistory}}1{{end}}"
                             data-flagged="{{if .Risks}}1{{end}}"
@@ -345,26 +337,16 @@ orangutan export out.csv</code></pre>
                                  {{end}}
                                 {{if .Risks}}<span class="risk-indicator" data-tip="Security: {{range $i, $r := .Risks}}{{if $i}}; {{end}}{{$r}}{{end}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>{{end}}
                             </td>
-                            <td class="col-mac mac-cell" data-label="MAC Address" data-copy="{{.MAC}}">
-                                {{if .MAC}}{{.MAC}}{{else}}<span style="color:var(--text-muted)">-</span>{{end}}
-                            </td>
                             <td class="col-vendor vendor-cell" data-label="Vendor" data-copy="{{.Vendor}}">{{if .Vendor}}{{.Vendor}}{{else}}<span style="color:var(--text-muted)">Unknown</span>{{end}}</td>
                             <td class="col-label label-cell" data-label="Label">{{.Label}}{{if .Notes}}<span class="notes-indicator" data-tip="{{.Notes}}"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>{{end}}</td>
-                            <td class="col-group" data-label="Group">
-                                <select class="group-select" data-ip="{{.IP}}" onchange="updateDeviceGroup(this)">
-                                    <option value="">-</option>
-                                    <option value="Server" {{if eq .Group "Server"}}selected{{end}}>Server</option>
-                                    <option value="Desktop" {{if eq .Group "Desktop"}}selected{{end}}>Desktop</option>
-                                    <option value="Laptop" {{if eq .Group "Laptop"}}selected{{end}}>Laptop</option>
-                                    <option value="Mobile" {{if eq .Group "Mobile"}}selected{{end}}>Mobile</option>
-                                    <option value="IoT" {{if eq .Group "IoT"}}selected{{end}}>IoT</option>
-                                    <option value="Network" {{if eq .Group "Network"}}selected{{end}}>Network</option>
-                                    <option value="Pi" {{if eq .Group "Pi"}}selected{{end}}>Pi</option>
-                                </select>
-                            </td>
                             <td class="col-lastseen time-cell" data-label="Last Seen" data-relative-time="{{.LastSeenUnix}}">{{.TimeAgo}}</td>
                             <td class="col-actions actions-cell" data-label="Actions">
-                                <button class="btn-icon" onclick="editDevice('{{.IP}}')" data-tip="Edit" aria-label="Edit"><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+                                <button class="btn-icon" onclick="editDevice('{{.IP}}')" data-tip="View Details" aria-label="View Details">
+                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                </button>
                                 <button class="btn-icon danger" onclick="deleteDevice('{{.IP}}')" data-tip="Delete" aria-label="Delete"><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg></button>
                             </td>
                         </tr>
@@ -402,67 +384,78 @@ orangutan export out.csv</code></pre>
         </div> <!-- Close .dashboard-layout -->
     </main>
 
-    <!-- Edit Modal -->
+    <!-- Device Details & Insights Modal -->
     <div id="edit-modal" class="modal" style="display:none">
-        <div class="modal-content">
+        <div class="modal-content modal-large">
             <div class="modal-header">
-                <h3>Edit Device</h3>
+                <h3>Device Insights & Settings</h3>
                 <button class="modal-close" onclick="closeModal()">×</button>
             </div>
-            <div class="modal-body">
-                <form id="edit-form">
-                    <input type="hidden" id="edit-ip" name="ip">
-                    <div class="form-group">
-                        <label>IP Address</label>
-                        <input type="text" id="edit-ip-display" class="input" disabled>
+            <div class="modal-body split-modal-body">
+                <!-- Left Panel: Specs and Timeline -->
+                <div class="modal-panel-left">
+                    <h4 class="panel-subtitle">Network & Hardware Specs</h4>
+                    <ul class="device-spec-list">
+                        <li><span class="spec-label">IP Address:</span> <span class="spec-val" id="detail-ip"></span></li>
+                        <li><span class="spec-label">MAC Address:</span> <span class="spec-val" id="detail-mac"></span></li>
+                        <li><span class="spec-label">Manufacturer:</span> <span class="spec-val" id="detail-vendor"></span></li>
+                        <li><span class="spec-label">First Seen:</span> <span class="spec-val" id="detail-firstseen"></span></li>
+                        <li><span class="spec-label">Last Seen:</span> <span class="spec-val" id="detail-lastseen"></span></li>
+                        <li><span class="spec-label">Response Time:</span> <span class="spec-val" id="detail-responsetime"></span></li>
+                    </ul>
+
+                    <h4 class="panel-subtitle" style="margin-top:1.25rem;">Activity History Timeline</h4>
+                    <div class="device-timeline-wrapper" id="detail-timeline">
+                        <div class="timeline-loading">Loading activity history...</div>
                     </div>
-                    <div class="form-group">
-                        <label>Label</label>
-                        <input type="text" id="edit-label" name="label" class="input" placeholder="e.g., Living Room TV">
-                    </div>
-                    <div class="form-group">
-                        <label>Custom Hostname (Override)</label>
-                        <input type="text" id="edit-custom-hostname" name="custom_hostname" class="input" placeholder="e.g., My-Smart-TV">
-                    </div>
-                    <div class="form-group">
-                        <label>Custom Web URL (Override)</label>
-                        <input type="text" id="edit-custom-web-url" name="custom_web_url" class="input" placeholder="e.g., https://my-nas:5001">
-                    </div>
-                    <div class="form-group">
-                        <label>Device Type (Override)</label>
-                        <select id="edit-custom-type" name="custom_type" class="select">
-                            <option value="">Auto-Detect</option>
-                            <option value="Phone">Phone</option>
-                            <option value="Computer">Computer</option>
-                            <option value="Printer">Printer</option>
-                            <option value="TV">TV</option>
-                            <option value="Media Player">Media Player</option>
-                            <option value="Router">Router</option>
-                            <option value="Server">Server</option>
-                            <option value="IoT">IoT</option>
-                            <option value="Game Console">Game Console</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Group</label>
-                        <select id="edit-group" name="group" class="select">
-                            <option value="">None</option>
-                            <option value="Server">Server</option>
-                            <option value="Desktop">Desktop</option>
-                            <option value="Laptop">Laptop</option>
-                            <option value="Mobile">Mobile</option>
-                            <option value="IoT">IoT</option>
-                            <option value="Network">Network</option>
-                            <option value="Pi">Pi</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Notes</label>
-                        <textarea id="edit-notes" name="notes" class="input" rows="3" placeholder="Add notes about this device..."></textarea>
-                    </div>
-                </form>
+                </div>
+
+                <!-- Right Panel: Configurations Form -->
+                <div class="modal-panel-right">
+                    <h4 class="panel-subtitle">Device Customizations</h4>
+                    <form id="edit-form">
+                        <input type="hidden" id="edit-ip" name="ip">
+                        <!-- We keep edit-ip-display hidden so we don't break existing JS selectors -->
+                        <input type="hidden" id="edit-ip-display">
+                        <!-- We keep edit-group hidden so we don't break existing JS selectors, but hardcode it to empty -->
+                        <input type="hidden" id="edit-group" name="group" value="">
+                        
+                        <div class="form-group">
+                            <label>Friendly Label</label>
+                            <input type="text" id="edit-label" name="label" class="input" placeholder="e.g., Living Room TV">
+                        </div>
+                        <div class="form-group">
+                            <label>Custom Hostname (Override)</label>
+                            <input type="text" id="edit-custom-hostname" name="custom_hostname" class="input" placeholder="e.g., My-Smart-TV">
+                        </div>
+                        <div class="form-group">
+                            <label>Custom Web URL (Override)</label>
+                            <input type="text" id="edit-custom-web-url" name="custom_web_url" class="input" placeholder="e.g., https://my-nas:5001">
+                        </div>
+                        <div class="form-group">
+                            <label>Device Type (Override)</label>
+                            <select id="edit-custom-type" name="custom_type" class="select">
+                                <option value="">Auto-Detect</option>
+                                <option value="Phone">Phone</option>
+                                <option value="Computer">Computer</option>
+                                <option value="Printer">Printer</option>
+                                <option value="TV">TV</option>
+                                <option value="Media Player">Media Player</option>
+                                <option value="Router">Router</option>
+                                <option value="Server">Server</option>
+                                <option value="IoT">IoT</option>
+                                <option value="Game Console">Game Console</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Device Notes</label>
+                            <textarea id="edit-notes" name="notes" class="input" rows="3" placeholder="Add notes about this device..."></textarea>
+                        </div>
+                    </form>
+                </div>
             </div>
             <div class="modal-footer">
+                <button class="btn btn-danger" id="btn-delete-device" style="margin-right:auto;" onclick="const ip=document.getElementById('edit-ip').value; deleteDevice(ip);">Delete Device</button>
                 <button class="btn" onclick="closeModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="saveDevice()">Save Changes</button>
             </div>

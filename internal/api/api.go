@@ -714,7 +714,16 @@ func (h *Handler) handleScansEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, err := h.store.GetPresenceEvents()
+	var events []types.PresenceEventRecord
+	var err error
+
+	mac := r.URL.Query().Get("mac")
+	if mac != "" {
+		events, err = h.store.GetPresenceEventsByMAC(mac)
+	} else {
+		events, err = h.store.GetPresenceEvents()
+	}
+
 	if err != nil {
 		h.error(w, http.StatusInternalServerError, err.Error())
 		return
