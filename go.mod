@@ -1,6 +1,6 @@
 module github.com/spoutin/LAN-Orangutan
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/pressly/goose/v3 v3.28.0
