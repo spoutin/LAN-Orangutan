@@ -86,6 +86,9 @@ type PageData struct {
 	// the dashboard shows a "live" cue so the last-scan time does not read as
 	// stale data when it is actually being kept current.
 	ContinuousScan bool
+
+	// ScanRunning reports whether a network scan is currently running
+	ScanRunning bool
 }
 
 // DeviceView is a device with computed display properties
@@ -93,6 +96,7 @@ type DeviceView struct {
 	*types.Device
 	Status       string
 	StatusClass  string
+	StatusTip    string
 	TimeAgo      string
 	LastSeenUnix int64
 
@@ -352,15 +356,19 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 			dv.Type = scanner.Classify(resolvedVendor, d.Hostname, nil)
 		}
 
-		if d.IsRecent() {
+		scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
+		if d.IsRecent(scanInterval) {
 			dv.Status = "online"
 			dv.StatusClass = "status-online"
-		} else if d.IsOnline() {
+			dv.StatusTip = fmt.Sprintf("Online (active on network within the last %s)", formatDurationFriendly(scanInterval+getBuffer(scanInterval)))
+		} else if d.IsOnline(scanInterval) {
 			dv.Status = "seen"
 			dv.StatusClass = "status-seen"
+			dv.StatusTip = fmt.Sprintf("Seen recently (active on network within the last %s)", formatDurationFriendly(3*scanInterval))
 		} else {
 			dv.Status = "offline"
 			dv.StatusClass = "status-offline"
+			dv.StatusTip = fmt.Sprintf("Offline (no activity seen for over %s)", formatDurationFriendly(3*scanInterval))
 		}
 
 		deviceViews = append(deviceViews, dv)
@@ -386,9 +394,10 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	networks, _ := network.DetectNetworks()
 	networks = network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
 
+	scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
 	networkCounts := make(map[string]int)
 	for _, d := range devices {
-		if d.IsOnline() && d.NetworkName != "" {
+		if d.IsOnline(scanInterval) && d.NetworkName != "" {
 			networkCounts[strings.ToLower(d.NetworkName)]++
 		}
 	}
@@ -411,6 +420,8 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// Get stats
 	stats := h.store.GetStats()
 
+	scanRunning := h.store.IsScanRunning()
+
 	data := PageData{
 		Title:          "LAN Orangutan",
 		Theme:          h.cfg.UI.Theme,
@@ -424,6 +435,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Moved:          moved,
 		Version:        h.version,
 		ContinuousScan: h.store.ContinuousScanEnabled(h.cfg.Scanning.ContinuousScan),
+		ScanRunning:    scanRunning,
 	}
 
 	data.NetworkWarning = network.IsolationWarning(networks)
@@ -567,4 +579,33 @@ func ipToLong(ip string) int64 {
 		result |= int64(n) << (24 - 8*i)
 	}
 	return result
+}
+
+func formatDurationFriendly(d time.Duration) string {
+	if d == time.Hour {
+		return "hour"
+	}
+	if d == 24*time.Hour {
+		return "day"
+	}
+	if d.Minutes() < 120 {
+		mins := int(d.Minutes())
+		if mins == 1 {
+			return "1 minute"
+		}
+		return fmt.Sprintf("%d minutes", mins)
+	}
+	hours := int(d.Hours())
+	if hours == 1 {
+		return "1 hour"
+	}
+	return fmt.Sprintf("%d hours", hours)
+}
+
+func getBuffer(scanInterval time.Duration) time.Duration {
+	buffer := scanInterval / 5
+	if buffer < 2*time.Minute {
+		buffer = 2 * time.Minute
+	}
+	return buffer
 }

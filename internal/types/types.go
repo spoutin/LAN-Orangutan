@@ -52,14 +52,27 @@ type AddressChange struct {
 	ChangedAt time.Time `json:"changed_at"`
 }
 
-// IsOnline returns true if the device was seen within the last hour
-func (d *Device) IsOnline() bool {
-	return time.Since(d.LastSeen) < time.Hour
+// IsOnline returns true if the device was seen within the last 3 scan intervals (or 1 hour default)
+func (d *Device) IsOnline(scanIntervals ...time.Duration) bool {
+	interval := time.Hour
+	if len(scanIntervals) > 0 && scanIntervals[0] > 0 {
+		interval = 3 * scanIntervals[0]
+	}
+	return time.Since(d.LastSeen) < interval
 }
 
-// IsRecent returns true if the device was seen within the last 5 minutes
-func (d *Device) IsRecent() bool {
-	return time.Since(d.LastSeen) < 5*time.Minute
+// IsRecent returns true if the device was seen within the last scan interval + grace buffer (or 5 min default)
+func (d *Device) IsRecent(scanIntervals ...time.Duration) bool {
+	interval := 5 * time.Minute
+	if len(scanIntervals) > 0 && scanIntervals[0] > 0 {
+		interval = scanIntervals[0]
+	}
+	// Add 20% grace buffer, minimum of 2 minutes, so it waits for the next scan to finish before turning yellow
+	buffer := interval / 5
+	if buffer < 2*time.Minute {
+		buffer = 2 * time.Minute
+	}
+	return time.Since(d.LastSeen) < interval+buffer
 }
 
 // Network represents a detected network interface

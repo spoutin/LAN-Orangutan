@@ -85,10 +85,17 @@ orangutan export out.csv</code></pre>
             <aside class="sidebar-networks">
                 <div class="sidebar-header">
                     <h2>Networks</h2>
+                    {{if .ScanRunning}}
+                    <button class="btn-scan-all scanning" disabled title="Scan in progress...">
+                        <svg class="spinner-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
+                        <span>Scanning...</span>
+                    </button>
+                    {{else}}
                     <button class="btn-scan-all" onclick="scanAllNetworks()" title="Scan all networks">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
                         <span>Scan All</span>
                     </button>
+                    {{end}}
                 </div>
                 
                 <div class="network-list">
@@ -282,13 +289,7 @@ orangutan export out.csv</code></pre>
                             data-flagged="{{if .Risks}}1{{end}}"
                             data-lastseen="{{.LastSeenUnix}}">
                             <td class="col-status" data-label="Status">
-                                {{if eq .Status "online"}}
-                                    <span class="status-indicator {{.StatusClass}}" data-tip="Online (active on network within the last 5 minutes)"></span>
-                                {{else if eq .Status "seen"}}
-                                    <span class="status-indicator {{.StatusClass}}" data-tip="Seen recently (active on network within the last hour)"></span>
-                                {{else}}
-                                    <span class="status-indicator {{.StatusClass}}" data-tip="Offline (no activity seen for over an hour)"></span>
-                                {{end}}
+                                <span class="status-indicator {{.StatusClass}}" data-tip="{{.StatusTip}}"></span>
                             </td>
                             <td class="col-ip ip-cell" data-label="IP Address" data-copy="{{.IP}}">
                                 {{.IP}}{{if .AddressHistory}}<span class="moved-indicator" data-tip="Changed address{{range .AddressHistory}}, was {{.IP}}{{end}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></span>{{end}}

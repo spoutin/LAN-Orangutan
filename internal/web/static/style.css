@@ -2615,6 +2615,22 @@ img.login-logo {
     background: rgba(137, 180, 250, 0.1);
 }
 
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.btn-scan-all.scanning svg {
+    animation: spin 1.5s linear infinite;
+    stroke: var(--success) !important;
+}
+
+.btn-scan-all.scanning {
+    color: var(--success) !important;
+    cursor: not-allowed;
+    opacity: 0.8;
+}
+
 .network-list {
     display: flex;
     flex-direction: column;

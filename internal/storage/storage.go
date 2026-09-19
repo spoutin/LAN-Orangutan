@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/types"
@@ -23,6 +24,7 @@ type Storage struct {
 	db           *sql.DB
 	mu           sync.RWMutex
 	networkNames map[string]string
+	scanRunning  int32
 }
 
 // New creates a new Storage instance
@@ -71,6 +73,20 @@ func New(devicesFile, stateFile string) (*Storage, error) {
 	}
 
 	return s, nil
+}
+
+// SetScanRunning sets the active scan status thread-safely
+func (s *Storage) SetScanRunning(running bool) {
+	if running {
+		atomic.StoreInt32(&s.scanRunning, 1)
+	} else {
+		atomic.StoreInt32(&s.scanRunning, 0)
+	}
+}
+
+// IsScanRunning reports whether a scan is currently running thread-safely
+func (s *Storage) IsScanRunning() bool {
+	return atomic.LoadInt32(&s.scanRunning) != 0
 }
 
 // Close closes the SQLite database connection
@@ -981,7 +997,7 @@ func (s *Storage) MergeIPv6Neighbors(discovered []types.Device) error {
 }
 
 // ProcessMissingDevices checks and flags online devices not seen in the current sweep
-func (s *Storage) ProcessMissingDevices(scannedNetworks []string, activeIPs []string) (int, error) {
+func (s *Storage) ProcessMissingDevices(scannedNetworks []string, activeIPs []string, scanIntervals ...time.Duration) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1048,10 +1064,16 @@ func (s *Storage) ProcessMissingDevices(scannedNetworks []string, activeIPs []st
 	}
 	rows.Close()
 
+	interval := 5 * time.Minute
+	if len(scanIntervals) > 0 && scanIntervals[0] > 0 {
+		interval = scanIntervals[0]
+	}
+	expiryThreshold := 3 * interval
+
 	leftCount := 0
 	for _, md := range candidates {
 		newMissed := md.missedSweeps + 1
-		expired := newMissed >= 3 || now.Sub(md.lastSeen) >= 15*time.Minute
+		expired := newMissed >= 3 || now.Sub(md.lastSeen) >= expiryThreshold
 
 		if expired {
 			sessionDur := md.lastSeen.Sub(md.lastPresenceChange).Seconds()

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -81,10 +82,12 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write header: %w", err)
 	}
 
+	scanInterval := time.Duration(cfg.Scanning.ScanInterval) * time.Second
+
 	// Data rows
 	for _, d := range deviceList {
 		status := "offline"
-		if d.IsOnline() {
+		if d.IsOnline(scanInterval) {
 			status = "online"
 		}
 

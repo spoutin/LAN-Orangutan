@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -47,14 +48,16 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	devices := store.GetDevices()
 
+	scanInterval := time.Duration(cfg.Scanning.ScanInterval) * time.Second
+
 	// Convert to slice and filter
 	var filtered []*types.Device
 	for _, d := range devices {
 		// Apply filters
-		if listOnline && !d.IsOnline() {
+		if listOnline && !d.IsOnline(scanInterval) {
 			continue
 		}
-		if listOffline && d.IsOnline() {
+		if listOffline && d.IsOnline(scanInterval) {
 			continue
 		}
 		if listGroup != "" && !strings.EqualFold(d.Group, listGroup) {
@@ -75,11 +78,11 @@ func runList(cmd *cobra.Command, args []string) error {
 	case "json":
 		return outputJSON(filtered)
 	default:
-		return outputTable(filtered)
+		return outputTable(filtered, scanInterval)
 	}
 }
 
-func outputTable(devices []*types.Device) error {
+func outputTable(devices []*types.Device, scanInterval time.Duration) error {
 	if len(devices) == 0 {
 		fmt.Println("No devices found")
 		return nil
@@ -91,9 +94,9 @@ func outputTable(devices []*types.Device) error {
 
 	for _, d := range devices {
 		status := "offline"
-		if d.IsRecent() {
+		if d.IsRecent(scanInterval) {
 			status = "online"
-		} else if d.IsOnline() {
+		} else if d.IsOnline(scanInterval) {
 			status = "seen"
 		}
 

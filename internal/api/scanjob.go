@@ -175,6 +175,8 @@ func (h *Handler) startScanJob(networks []string, automatic bool) *scanJob {
 		automatic: automatic,
 	}
 
+	h.store.SetScanRunning(true)
+
 	h.scanWG.Add(1)
 	go func() {
 		defer h.scanWG.Done()
@@ -188,6 +190,8 @@ func (h *Handler) startScanJob(networks []string, automatic bool) *scanJob {
 // hide results from the others.
 func (j *scanJob) run(ctx context.Context, h *Handler) {
 	activeIPsMap := make(map[string]bool)
+
+	defer h.store.SetScanRunning(false)
 
 	defer func() {
 		dur := time.Since(j.startedAt).Seconds()
@@ -373,7 +377,8 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		for ip := range activeIPsMap {
 			activeIPs = append(activeIPs, ip)
 		}
-		_, err := h.store.ProcessMissingDevices(j.networks, activeIPs)
+		scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
+		_, err := h.store.ProcessMissingDevices(j.networks, activeIPs, scanInterval)
 		if err != nil {
 			fmt.Printf("[DEBUG] ProcessMissingDevices error: %v\n", err)
 		}

@@ -1067,7 +1067,7 @@ async function refreshInPlace() {
 
     document.getElementById('devices-tbody')?.replaceWith(freshRows);
 
-    for (const selector of ['.stat-strip', '.table-footer', '#device-count', '#scan-time-top']) {
+    for (const selector of ['.stat-strip', '.table-footer', '#device-count', '#scan-time-top', '.sidebar-networks']) {
         const current = document.querySelector(selector);
         const replacement = doc.querySelector(selector);
         if (current && replacement) current.replaceWith(replacement);

@@ -158,9 +158,10 @@ func (h *Handler) writeDevicesCSV(w http.ResponseWriter, devices map[string]*typ
 		"Notes", "Group", "First Seen", "Last Seen", "Status",
 	})
 
+	scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
 	for _, d := range sorted {
 		status := "offline"
-		if d.IsOnline() {
+		if d.IsOnline(scanInterval) {
 			status = "online"
 		}
 		_ = cw.Write([]string{
