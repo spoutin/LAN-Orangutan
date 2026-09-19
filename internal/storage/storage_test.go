@@ -303,3 +303,126 @@ func TestIPv6RealisticDualStackNetwork(t *testing.T) {
 		t.Logf("  %-18s %s", ip, d.Hostname)
 	}
 }
+
+func TestGetPresenceEventsFilteredAndPruning(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Insert dummy devices and events directly to test DB queries
+	now := time.Now()
+	sixMonthsAgo := now.AddDate(0, -6, 0) // 6 months ago (not pruned)
+	twoYearsAgo := now.AddDate(-2, 0, 0)  // 2 years ago (pruned)
+
+	// Add an offline stale device seen 2 years ago using direct SQL to bypass MergeDevices LastSeen override
+	_, err := s.db.Exec(`
+		INSERT INTO devices (
+			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			assignment, network_name, first_seen, last_seen, response_time, address_history,
+			is_online, missed_sweeps, last_presence_change
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+	`, "10.0.0.5", "aa:bb:cc:dd:ee:11", "stale-pc", "Unknown", "Computer", 0, "[]",
+		"", "", "", "", "", "", 0, "", 0, "Discovered", "LAN", twoYearsAgo, twoYearsAgo, nil, "[]", 0, twoYearsAgo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a fresh active device
+	if err := s.MergeDevices([]types.Device{
+		{IP: "10.0.0.6", MAC: "aa:bb:cc:dd:ee:22", Hostname: "fresh-pc"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now insert presence events into device_presence_history table
+	_, err = s.db.Exec(`
+		INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+		VALUES 
+		('10.0.0.1', 'aa:bb:cc:dd:ee:ff', 'router', 'join', 0.0, ?),
+		('10.0.0.2', 'aa:bb:cc:dd:ee:aa', 'switch', 'return', 12.0, ?),
+		('10.0.0.3', 'aa:bb:cc:dd:ee:bb', 'stale-event', 'leave', 45.0, ?)
+	`, now, sixMonthsAgo, twoYearsAgo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert scan history records
+	_, err = s.db.Exec(`
+		INSERT INTO scan_history (network, success, error, devices_online, timestamp)
+		VALUES 
+		('10.0.0.0/24', 1, '', 2, ?),
+		('10.0.0.0/24', 1, '', 1, ?)
+	`, now, twoYearsAgo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test 1: Fetch presence events with no filter
+	events, err := s.GetPresenceEventsFiltered("", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 {
+		t.Errorf("expected 3 events, got %d", len(events))
+	}
+
+	// Test 2: Fetch presence events with query filter (by hostname)
+	events, err = s.GetPresenceEventsFiltered("", "", "router")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].IP != "10.0.0.1" {
+		t.Errorf("expected 1 event matching 'router', got %d", len(events))
+	}
+
+	// Test 3: Fetch presence events with query filter (by MAC)
+	events, err = s.GetPresenceEventsFiltered("", "", "ee:aa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Hostname != "switch" {
+		t.Errorf("expected 1 event matching MAC 'ee:aa', got %d", len(events))
+	}
+
+	// Test 4: Fetch presence events by specific IP
+	events, err = s.GetPresenceEventsFiltered("", "10.0.0.1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Hostname != "router" {
+		t.Errorf("expected 1 event matching IP '10.0.0.1', got %d", len(events))
+	}
+
+	// Test 5: Pruning data older than 1 year
+	oneYearAgoBoundary := now.AddDate(-1, 0, 0)
+	deleted, err := s.PruneOldHistory(oneYearAgoBoundary)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// We expect:
+	// - 1 stale presence event deleted ('stale-event' at 2 years ago).
+	// - 1 stale scan history deleted (at 2 years ago).
+	// - 1 stale offline device deleted (stale-pc at 2 years ago).
+	// Total rows affected should be 3.
+	if deleted != 3 {
+		t.Errorf("expected 3 pruned rows, got %d", deleted)
+	}
+
+	// Verify events are pruned
+	events, err = s.GetPresenceEventsFiltered("", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Errorf("expected 2 presence events remaining, got %d", len(events))
+	}
+
+	// Verify the stale-pc device was deleted
+	devices := s.GetDevices()
+	if _, ok := devices["10.0.0.5"]; ok {
+		t.Error("stale-pc should have been pruned from devices table")
+	}
+	if _, ok := devices["10.0.0.6"]; !ok {
+		t.Error("fresh-pc should still exist in devices table")
+	}
+}

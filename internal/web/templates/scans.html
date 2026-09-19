@@ -40,7 +40,10 @@
             <div style="display: flex; flex-direction: column; gap: 2rem;">
                 <!-- Chronological Presence Timeline -->
                 <section class="section">
-                    <h2 class="section-title">Presence Timeline</h2>
+                    <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+                        <h2 class="section-title" style="margin-bottom: 0;">Presence Timeline</h2>
+                        <input type="text" id="timeline-search" class="input search-input" style="max-width: 260px;" placeholder="Search timeline (IP, MAC, Host)..." oninput="filterTimeline()">
+                    </div>
                     <div class="card" style="padding: 1.5rem; max-height: 600px; overflow-y: auto;">
                         <div id="presence-timeline" style="position: relative;">
                             <div style="text-align: center; color: var(--text-muted); padding: 1.5rem 0;">
@@ -86,6 +89,22 @@
     <footer class="footer">
         <p>LAN Orangutan by <a href="https://291group.com" target="_blank">291 Group</a></p>
     </footer>
+
+    <!-- Dedicated Device History Modal -->
+    <div id="history-modal" class="modal" style="display:none">
+        <div class="modal-content modal-medium" style="max-width: 600px; width: 90%;">
+            <div class="modal-header">
+                <h3 id="history-modal-title">Device Presence History</h3>
+                <button class="modal-close" onclick="closeHistoryModal()">×</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem; max-height: 450px; overflow-y: auto;" id="history-modal-body">
+                <div class="timeline-loading">Loading activity history...</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="closeHistoryModal()">Close</button>
+            </div>
+        </div>
+    </div>
 
     <div id="toast" class="toast"></div>
 

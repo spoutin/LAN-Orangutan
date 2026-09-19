@@ -1655,6 +1655,100 @@ func (s *Storage) GetPresenceEventsByMAC(mac string) ([]types.PresenceEventRecor
 	return result, nil
 }
 
+// GetPresenceEventsFiltered returns chronological presence events, optionally filtered by mac/ip or search keyword
+func (s *Storage) GetPresenceEventsFiltered(mac, ip, q string) ([]types.PresenceEventRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var query string
+	var args []interface{}
+
+	if q != "" {
+		query = `
+			SELECT id, ip, mac, hostname, event, duration, created_at
+			FROM device_presence_history
+			WHERE ip LIKE ? OR mac LIKE ? OR hostname LIKE ?
+			ORDER BY created_at DESC
+		`
+		term := "%" + q + "%"
+		args = append(args, term, term, term)
+	} else if mac != "" || ip != "" {
+		query = `
+			SELECT id, ip, mac, hostname, event, duration, created_at
+			FROM device_presence_history
+			WHERE (mac <> '' AND mac = ?) OR ip = ?
+			ORDER BY created_at DESC
+		`
+		args = append(args, mac, ip)
+	} else {
+		query = `
+			SELECT id, ip, mac, hostname, event, duration, created_at
+			FROM device_presence_history
+			ORDER BY created_at DESC
+		`
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []types.PresenceEventRecord
+	for rows.Next() {
+		var r types.PresenceEventRecord
+		err := rows.Scan(&r.ID, &r.IP, &r.MAC, &r.Hostname, &r.Event, &r.Duration, &r.CreatedAt)
+		if err == nil {
+			result = append(result, r)
+		}
+	}
+	return result, nil
+}
+
+// PruneOldHistory deletes device presence events, scan history, and stale offline devices older than a duration.
+func (s *Storage) PruneOldHistory(olderThan time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var totalDeleted int64
+
+	// 1. Prune old device presence events
+	res, err := tx.Exec("DELETE FROM device_presence_history WHERE created_at < ?", olderThan)
+	if err != nil {
+		return 0, err
+	}
+	rows, _ := res.RowsAffected()
+	totalDeleted += rows
+
+	// 2. Prune old execution summaries
+	res, err = tx.Exec("DELETE FROM scan_history WHERE timestamp < ?", olderThan)
+	if err != nil {
+		return 0, err
+	}
+	rows, _ = res.RowsAffected()
+	totalDeleted += rows
+
+	// 3. Prune stale offline devices (not seen in > 1 year) to keep devices table clean
+	res, err = tx.Exec("DELETE FROM devices WHERE is_online = 0 AND last_seen < ?", olderThan)
+	if err != nil {
+		return 0, err
+	}
+	rows, _ = res.RowsAffected()
+	totalDeleted += rows
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return totalDeleted, nil
+}
+
 // ClearDevices removes all devices, or only those belonging to a specific network name.
 func (s *Storage) ClearDevices(networkName string) (int64, error) {
 	s.mu.Lock()

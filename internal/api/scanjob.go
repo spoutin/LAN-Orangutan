@@ -569,3 +569,40 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 
 	wg.Wait()
 }
+
+// StartBackgroundCleanup runs a daily task to delete history older than a year.
+func (h *Handler) StartBackgroundCleanup(ctx context.Context) {
+	go func() {
+		// Run cleanup shortly after startup
+		startup := time.NewTimer(30 * time.Second)
+		defer startup.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-startup.C:
+		}
+		h.runCleanup()
+
+		// Run every 24 hours
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				h.runCleanup()
+			}
+		}
+	}()
+}
+
+func (h *Handler) runCleanup() {
+	oneYearAgo := time.Now().AddDate(-1, 0, 0)
+	deleted, err := h.store.PruneOldHistory(oneYearAgo)
+	if err != nil {
+		fmt.Printf("[CLEANUP] Failed to prune old history: %v\n", err)
+	} else if deleted > 0 {
+		fmt.Printf("[CLEANUP] Pruned %d records older than a year\n", deleted)
+	}
+}

@@ -368,6 +368,12 @@ orangutan export out.csv</code></pre>
                                     <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                                 </a>
                                 {{end}}
+                                <button class="btn-icon" onclick="viewHistory('{{.IP}}', '{{.MAC}}')" data-tip="View History" aria-label="View History">
+                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <circle cx="12" cy="12" r="10"/>
+                                        <polyline points="12 6 12 12 16 14"/>
+                                    </svg>
+                                </button>
                                 <button class="btn-icon" onclick="editDevice('{{.IP}}')" data-tip="View Details" aria-label="View Details">
                                     <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -485,6 +491,22 @@ orangutan export out.csv</code></pre>
                 <button class="btn btn-danger" id="btn-delete-device" style="margin-right:auto;" onclick="const ip=document.getElementById('edit-ip').value; deleteDevice(ip);">Delete Device</button>
                 <button class="btn" onclick="closeModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="saveDevice()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dedicated Device History Modal -->
+    <div id="history-modal" class="modal" style="display:none">
+        <div class="modal-content modal-medium" style="max-width: 600px; width: 90%;">
+            <div class="modal-header">
+                <h3 id="history-modal-title">Device Presence History</h3>
+                <button class="modal-close" onclick="closeHistoryModal()">×</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem; max-height: 450px; overflow-y: auto;" id="history-modal-body">
+                <div class="timeline-loading">Loading activity history...</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="closeHistoryModal()">Close</button>
             </div>
         </div>
     </div>

@@ -1443,7 +1443,9 @@ async function refreshScansData() {
             renderScanHistory(historyData.data);
         }
 
-        const eventsRes = await fetch('/api/scans/events');
+        const q = (document.getElementById('timeline-search')?.value || '').trim();
+        const url = q ? `/api/scans/events?q=${encodeURIComponent(q)}` : '/api/scans/events';
+        const eventsRes = await fetch(url);
         const eventsData = await eventsRes.json();
         if (eventsData.success) {
             renderPresenceTimeline(eventsData.data);
@@ -1587,7 +1589,7 @@ function renderPresenceTimeline(events) {
                 </div>
                 <div class="timeline-content" style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; flex-grow: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                     <div class="timeline-header" style="font-size: 0.95rem; margin-bottom: 0.25rem;">
-                        <strong>${name}</strong> <span style="color: var(--text-muted); font-size: 0.85rem;">(${evt.ip})</span> ${description}
+                        <strong><a href="#" onclick="viewHistory('${evt.ip}', '${evt.mac}'); return false;" style="color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent);">${name}</a></strong> <span style="color: var(--text-muted); font-size: 0.85rem;">(${evt.ip})</span> ${description}
                     </div>
                     <div class="timeline-time" style="font-size: 0.8rem; color: var(--text-muted);">${dateStr} at ${timeStr}</div>
                 </div>
@@ -1604,4 +1606,89 @@ function formatEventDuration(seconds) {
     if (hours < 24) return `${hours.toFixed(1)}h`;
     const days = hours / 24;
     return `${days.toFixed(1)}d`;
+}
+
+// Device Presence History Modal Actions
+async function viewHistory(ip, mac) {
+    const modal = document.getElementById('history-modal');
+    const body = document.getElementById('history-modal-body');
+    const title = document.getElementById('history-modal-title');
+    if (!modal || !body) return;
+
+    // Use IP/MAC details to name the title nicely
+    title.textContent = `Presence History - ${ip || mac || 'Device'}`;
+    body.innerHTML = '<div class="timeline-loading" style="padding: 2rem 0; text-align: center; color: var(--text-muted);">Loading activity history...</div>';
+    modal.style.display = 'flex';
+
+    try {
+        const queryParams = [];
+        if (ip) queryParams.push(`ip=${encodeURIComponent(ip)}`);
+        if (mac) queryParams.push(`mac=${encodeURIComponent(mac)}`);
+        const url = `/api/scans/events?${queryParams.join('&')}`;
+
+        const res = await fetch(url);
+        const result = await res.json();
+
+        if (result.success && result.data && result.data.length > 0) {
+            body.innerHTML = result.data.map(event => {
+                const dateVal = new Date(event.created_at);
+                const ago = relativeTime(Math.floor(dateVal.getTime() / 1000));
+                let detailText = '';
+                if (event.event === 'leave') {
+                    detailText = `went offline (was connected for ${formatSeconds(event.duration)})`;
+                } else if (event.event === 'return') {
+                    detailText = `reconnected (was gone for ${formatSeconds(event.duration)})`;
+                } else if (event.event === 'join') {
+                    detailText = `joined network for the first time`;
+                }
+                const badgeClass = event.event === 'join' ? 'join' : (event.event === 'leave' ? 'leave' : 'return');
+                return `
+                    <div class="timeline-event-item" style="display:flex; flex-direction:column; gap:4px; padding:12px 8px; border-bottom:1px solid var(--border); font-size:0.9rem;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span class="scan-status-badge ${badgeClass}" style="padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; text-transform: uppercase;">${event.event}</span>
+                            <span style="color:var(--text-muted); font-size:0.8rem;">${ago}</span>
+                        </div>
+                        <div style="color:var(--text); margin-top:4px;">${detailText}</div>
+                        <div style="color:var(--text-muted); font-size:0.75rem; margin-top:2px;">
+                            Logged on ${dateVal.toLocaleString()} (IP: ${event.ip}${event.mac ? `, MAC: ` + event.mac.toUpperCase() : ''})
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            body.innerHTML = '<div class="timeline-empty" style="padding: 2rem 0; color: var(--text-muted); font-size: 0.9rem; text-align: center;">No logged presence history for this device.</div>';
+        }
+    } catch (e) {
+        body.innerHTML = '<div class="timeline-error" style="padding: 2rem 0; color: #ef4444; font-size: 0.9rem; text-align: center;">Failed to load activity logs.</div>';
+    }
+}
+
+function closeHistoryModal() {
+    const modal = document.getElementById('history-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+// Scans Page Timeline Live Searching
+let timelineSearchTimeout = null;
+function filterTimeline() {
+    clearTimeout(timelineSearchTimeout);
+    timelineSearchTimeout = setTimeout(async () => {
+        const q = (document.getElementById('timeline-search')?.value || '').trim();
+        const container = document.getElementById('presence-timeline');
+        if (!container) return;
+
+        container.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 2rem 0;">Searching...</div>`;
+
+        try {
+            const url = q ? `/api/scans/events?q=${encodeURIComponent(q)}` : '/api/scans/events';
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data.success) {
+                renderPresenceTimeline(data.data);
+            }
+        } catch (e) {
+            console.error('Failed to search timeline', e);
+            container.innerHTML = `<div style="text-align: center; color: #ef4444; padding: 2rem 0;">Error loading timeline events</div>`;
+        }
+    }, 250);
 }
