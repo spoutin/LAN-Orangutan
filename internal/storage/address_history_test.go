@@ -138,3 +138,45 @@ func TestVirtualIPCoexistenceSameMAC(t *testing.T) {
 		t.Error("neither device should trigger an address move history record")
 	}
 }
+
+// TestVirtualIPCoexistenceSweepAndPortScan confirms that coexisting virtual IPs
+// on the same MAC are not deleted or recorded as moved, even when Stage 2
+// individual port scan saves are performed.
+func TestVirtualIPCoexistenceSweepAndPortScan(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Step 1: Simulate Stage 1 Sweep (both discovered simultaneously)
+	if err := s.MergeDevices([]types.Device{
+		{IP: "192.168.1.10", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server1", Type: "Server"},
+		{IP: "192.168.1.20", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server2", Type: "Server"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify both exist with clean address history
+	devices := s.GetDevices()
+	if len(devices) != 2 {
+		t.Fatalf("expected 2 coexisting devices, got %d", len(devices))
+	}
+
+	// Step 2: Simulate Stage 2 individual port scan save on .20
+	// This is where the old code used to delete .10 and record a false relocation!
+	d20 := *devices["192.168.1.20"]
+	d20.WebUI = true
+	if err := s.MergeDevices([]types.Device{d20}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 3: Verify coexistence persists completely
+	devices = s.GetDevices()
+	if len(devices) != 2 {
+		t.Fatalf("expected 2 devices after port scan, got %d. Coexisting IP was deleted!", len(devices))
+	}
+
+	dev10 := devices["192.168.1.10"]
+	dev20 := devices["192.168.1.20"]
+
+	if len(dev10.AddressHistory) != 0 || len(dev20.AddressHistory) != 0 {
+		t.Errorf("expected 0 address history records, got dev10=%v, dev20=%v", dev10.AddressHistory, dev20.AddressHistory)
+	}
+}
