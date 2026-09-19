@@ -107,3 +107,34 @@ func TestSupplementalMergeDoesNotClobber(t *testing.T) {
 		t.Errorf("supplemental hostname not filled in: %q", d.Hostname)
 	}
 }
+
+// TestVirtualIPCoexistenceSameMAC confirms that when two virtual IPs share the
+// same MAC address and are discovered simultaneously in the same scan, they both
+// coexist cleanly in the database without deleting each other or triggering the moved state.
+func TestVirtualIPCoexistenceSameMAC(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Simultaneously discover .10 and .20 sharing the same MAC.
+	if err := s.MergeDevices([]types.Device{
+		{IP: "192.168.1.10", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server1", Type: "Server"},
+		{IP: "192.168.1.20", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server2", Type: "Server"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	devices := s.GetDevices()
+	if len(devices) != 2 {
+		t.Fatalf("expected two coexisting devices, got %d", len(devices))
+	}
+
+	dev10 := devices["192.168.1.10"]
+	dev20 := devices["192.168.1.20"]
+
+	if dev10 == nil || dev20 == nil {
+		t.Fatal("both IPs should exist in the database simultaneously")
+	}
+
+	if len(dev10.AddressHistory) != 0 || len(dev20.AddressHistory) != 0 {
+		t.Error("neither device should trigger an address move history record")
+	}
+}

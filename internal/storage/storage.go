@@ -562,13 +562,16 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 	return d, nil
 }
 
-func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time) error {
+func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time, activeIPs map[string]bool) error {
 	if d.MAC != "" {
 		oldIP, old, err := s.findByMACLocked(tx, d.MAC, d.IP)
 		if err != nil {
 			return err
 		}
 		if old != nil {
+			// Check if the old IP is also active in the current scan run (coexistence)
+			oldIPActive := activeIPs != nil && activeIPs[oldIP]
+
 			d.Label = old.Label
 			d.Notes = old.Notes
 			d.Group = old.Group
@@ -582,10 +585,14 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time)
 			if d.Type == "" {
 				d.Type = old.Type
 			}
-			d.AddressHistory = appendAddressChange(old.AddressHistory, oldIP, now)
-			_, err = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP)
-			if err != nil {
-				return err
+
+			if !oldIPActive {
+				// Relocation: Old IP is not active anymore, so migrate completely and delete
+				d.AddressHistory = appendAddressChange(old.AddressHistory, oldIP, now)
+				_, err = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -717,6 +724,13 @@ func (s *Storage) MergeDevices(discovered []types.Device) error {
 	}
 	defer tx.Rollback()
 
+	activeIPs := make(map[string]bool)
+	for _, d := range discovered {
+		if d.IP != "" {
+			activeIPs[d.IP] = true
+		}
+	}
+
 	now := time.Now()
 	for _, d := range discovered {
 		row := tx.QueryRow(`
@@ -814,7 +828,7 @@ func (s *Storage) MergeDevices(discovered []types.Device) error {
 		} else {
 			dev := d
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			if err := s.addNewDeviceLocked(tx, &dev, now); err != nil {
+			if err := s.addNewDeviceLocked(tx, &dev, now, activeIPs); err != nil {
 				return err
 			}
 		}
@@ -925,7 +939,7 @@ func (s *Storage) MergeSupplemental(discovered []types.Device) error {
 		} else {
 			dev := d
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			if err := s.addNewDeviceLocked(tx, &dev, now); err != nil {
+			if err := s.addNewDeviceLocked(tx, &dev, now, nil); err != nil {
 				return err
 			}
 		}
@@ -1030,7 +1044,7 @@ func (s *Storage) MergeIPv6Neighbors(discovered []types.Device) error {
 		if !isRandomizedMAC(d.MAC) {
 			dev := d
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			if err := s.addNewDeviceLocked(tx, &dev, now); err != nil {
+			if err := s.addNewDeviceLocked(tx, &dev, now, nil); err != nil {
 				return err
 			}
 			changed = true
@@ -1471,7 +1485,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 			dev := d
 			dev.Assignment = assignments[d.IP]
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			if err := s.addNewDeviceLocked(tx, &dev, now.Add(-65*time.Minute)); err != nil {
+			if err := s.addNewDeviceLocked(tx, &dev, now.Add(-65*time.Minute), nil); err != nil {
 				return err
 			}
 		}
