@@ -454,12 +454,27 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	// Get stats
 	stats := h.store.GetStats()
 
+	// Get networks
+	networks, _ := network.DetectNetworks()
+	networks = network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
+
+	var networkViews []NetworkView
+	for _, n := range networks {
+		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
+			n.FriendlyName = name
+		}
+		networkViews = append(networkViews, NetworkView{
+			Network: n,
+		})
+	}
+
 	data := PageData{
 		Title:       "Settings - LAN Orangutan",
 		Theme:       h.cfg.UI.Theme,
 		Version:     h.version,
 		Tailscale:   tailscale,
 		Stats:       stats,
+		Networks:    networkViews,
 		AuthEnabled: h.auth.Enabled(),
 	}
 

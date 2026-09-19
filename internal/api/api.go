@@ -81,6 +81,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "devices":
 		h.handleDevices(w, r)
+	case path == "devices/clear":
+		h.handleDevicesClear(w, r)
 	case path == "device":
 		h.handleDevice(w, r)
 	case path == "networks":
@@ -730,4 +732,31 @@ func (h *Handler) handleScansEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.success(w, events)
+}
+
+// handleDevicesClear handles POST /api/devices/clear
+func (h *Handler) handleDevicesClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req struct {
+		Network string `json:"network"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.error(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	affected, err := h.store.ClearDevices(req.Network)
+	if err != nil {
+		h.error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.success(w, map[string]interface{}{
+		"success":  true,
+		"affected": affected,
+	})
 }

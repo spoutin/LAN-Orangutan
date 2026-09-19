@@ -898,6 +898,37 @@ function exportDevices(format) {
     showToast(`Exported ${devices.length} devices`, 'success');
 }
 
+// Clear discovered devices
+async function clearDiscoveredDevices() {
+    const select = document.getElementById('clear-network-select');
+    if (!select) return;
+
+    const network = select.value;
+    const networkName = select.options[select.selectedIndex].text;
+
+    const confirmMsg = network === 'all'
+        ? 'Are you absolutely sure you want to permanently delete ALL discovered device records?'
+        : `Are you absolutely sure you want to permanently delete discovered device records for the "${networkName}"?`;
+
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+
+    try {
+        const result = await api('devices/clear', { network }, 'POST');
+        if (result.success) {
+            showToast(`Cleared ${result.affected} devices`, 'success');
+            setTimeout(() => {
+                location.reload();
+            }, 1000);
+        } else {
+            showToast(result.error || 'Failed to clear devices', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
 // Dropdown toggle
 function toggleDropdown(id) {
     const menu = document.getElementById(id);

@@ -199,6 +199,19 @@ orangutan export out.csv</code></pre>
                     <button class="btn btn-primary" onclick="exportDevices()">Export Devices (CSV)</button>
                     <p class="form-help">Download all device data as a CSV file.</p>
                 </div>
+                <div class="form-group" style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
+                    <label style="font-weight: 600; margin-bottom: 0.5rem; display: block;">Clear Discovered Devices</label>
+                    <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                        <select id="clear-network-select" class="select" style="width: auto; min-width: 200px;">
+                            <option value="all">All Discovered Devices</option>
+                            {{range .Networks}}{{if not .IsTailscale}}
+                                <option value="{{.FriendlyName}}">{{.FriendlyName}} ({{.CIDR}})</option>
+                            {{end}}{{end}}
+                        </select>
+                        <button class="btn btn-danger" onclick="clearDiscoveredDevices()">Clear Devices</button>
+                    </div>
+                    <p class="form-help">Permanently delete discovered device records from the selected network (custom labels, overrides, and history logs are cleared for deleted devices).</p>
+                </div>
             </div>
         </section>
 

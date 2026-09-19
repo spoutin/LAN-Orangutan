@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -1519,4 +1520,30 @@ func (s *Storage) GetPresenceEventsByMAC(mac string) ([]types.PresenceEventRecor
 		}
 	}
 	return result, nil
+}
+
+// ClearDevices removes all devices, or only those belonging to a specific network name.
+func (s *Storage) ClearDevices(networkName string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var res sql.Result
+	var err error
+
+	if networkName == "" || strings.ToLower(networkName) == "all" {
+		res, err = s.db.Exec("DELETE FROM devices")
+	} else {
+		res, err = s.db.Exec("DELETE FROM devices WHERE LOWER(network_name) = LOWER(?)", networkName)
+	}
+
+	if err != nil {
+		return 0, err
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	return affected, nil
 }
