@@ -2781,7 +2781,7 @@ img.login-logo {
     position: absolute;
     height: 100%;
     background: var(--success);
-    opacity: 0.85;
+    opacity: 0.55; /* Translucent green by default so user can see through */
     transition: opacity 0.2s, background-color 0.2s;
     cursor: pointer;
     min-width: 6px; /* Ensure brief sessions remain hoverable */
@@ -2789,7 +2789,7 @@ img.login-logo {
 }
 
 .presence-session-bar:hover {
-    opacity: 0.9 !important;
+    opacity: 1.0 !important; /* Glow to full opacity on hover */
     background-color: var(--success) !important;
 }
 
@@ -2797,7 +2797,7 @@ img.login-logo {
 .presence-session-bar .presence-tooltip {
     visibility: hidden;
     position: absolute;
-    bottom: 135%;
+    top: 135%; /* Pop downwards so it is never covered by the modal title/header! */
     left: 50%;
     transform: translateX(-50%);
     background: rgba(15, 23, 42, 0.98);
@@ -2819,16 +2819,16 @@ img.login-logo {
     white-space: nowrap;
 }
 
-/* Arrow for the tooltip */
+/* Arrow for the tooltip pointing UP */
 .presence-session-bar .presence-tooltip::after {
     content: "";
     position: absolute;
-    top: 100%;
+    bottom: 100%; /* Arrow at the top of tooltip */
     left: 50%;
     transform: translateX(-50%);
     border-width: 6px;
     border-style: solid;
-    border-color: rgba(15, 23, 42, 0.98) transparent transparent transparent;
+    border-color: transparent transparent rgba(15, 23, 42, 0.98) transparent; /* Pointing up! */
 }
 
 /* Hover show tooltip */
