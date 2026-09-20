@@ -46,6 +46,9 @@ type Device struct {
 
 	// LinkedMAC specifies the parent MAC address this device is linked (aliased) to.
 	LinkedMAC string `json:"linked_mac,omitempty"`
+
+	// LinkedChildren lists the display labels of child devices linked to this device.
+	LinkedChildren []string `json:"linked_children,omitempty"`
 }
 
 // AddressChange records an IP a device was previously seen at, and when it moved
@@ -180,13 +183,14 @@ type ScanHistoryRecord struct {
 
 // PresenceEventRecord represents a device presence history log
 type PresenceEventRecord struct {
-	ID        int       `json:"id"`
-	IP        string    `json:"ip"`
-	MAC       string    `json:"mac"`
-	Hostname  string    `json:"hostname"`
-	Event     string    `json:"event"`
-	Duration  float64   `json:"duration"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          int       `json:"id"`
+	IP          string    `json:"ip"`
+	MAC         string    `json:"mac"`
+	Hostname    string    `json:"hostname"`
+	Event       string    `json:"event"`
+	Duration    float64   `json:"duration"`
+	CreatedAt   time.Time `json:"created_at"`
+	NetworkName string    `json:"network_name,omitempty"`
 }
 
 // DeviceStats holds device statistics for the dashboard

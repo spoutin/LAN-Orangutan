@@ -360,7 +360,65 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			result[d.IP] = d
 		}
 	}
+
+	// Build child mappings to populate LinkedChildren list on parents dynamically
+	childrenMap := make(map[string][]string)
+	for _, d := range result {
+		if d.LinkedMAC != "" {
+			name := d.Label
+			if name == "" {
+				name = d.CustomHostname
+			}
+			if name == "" {
+				name = d.Hostname
+			}
+			if name == "" {
+				name = "Unknown"
+			}
+			childrenMap[d.LinkedMAC] = append(childrenMap[d.LinkedMAC], fmt.Sprintf("%s (%s)", name, d.IP))
+		}
+	}
+
+	// Map child arrays back to their respective parent device
+	for _, d := range result {
+		if d.MAC != "" {
+			if children, ok := childrenMap[d.MAC]; ok {
+				d.LinkedChildren = children
+			}
+		}
+	}
+
 	return result
+}
+
+func (s *Storage) populateDeviceChildrenLocked(d *types.Device) {
+	if d == nil || d.MAC == "" {
+		return
+	}
+	rows, err := s.db.Query("SELECT label, custom_hostname, hostname, ip FROM devices WHERE linked_mac = ?", d.MAC)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	var children []string
+	for rows.Next() {
+		var label, cHost, host, ip string
+		if err := rows.Scan(&label, &cHost, &host, &ip); err == nil {
+			name := label
+			if name == "" {
+				name = cHost
+			}
+			if name == "" {
+				name = host
+			}
+			if name == "" {
+				name = "Unknown"
+			}
+			children = append(children, fmt.Sprintf("%s (%s)", name, ip))
+		}
+	}
+	d.LinkedChildren = children
 }
 
 // GetDevice returns a single device by IP, or nil if there is none
@@ -387,6 +445,7 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 	if err != nil {
 		return nil
 	}
+	s.populateDeviceChildrenLocked(d)
 	return d
 }
 
@@ -411,6 +470,7 @@ func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 	if err != nil {
 		return nil
 	}
+	s.populateDeviceChildrenLocked(d)
 	return d
 }
 
@@ -1821,6 +1881,7 @@ func (s *Storage) GetPresenceEventsFiltered(mac, ip, q string) ([]types.Presence
 		var r types.PresenceEventRecord
 		err := rows.Scan(&r.ID, &r.IP, &r.MAC, &r.Hostname, &r.Event, &r.Duration, &r.CreatedAt)
 		if err == nil {
+			r.NetworkName = resolveNetworkName(r.IP, s.networkNames)
 			result = append(result, r)
 		}
 	}
@@ -1855,13 +1916,14 @@ func (s *Storage) GetPresenceEventsFiltered(mac, ip, q string) ([]types.Presence
 			if isOnlineVal == 1 {
 				// 1. Synthesize a 'join' event at firstSeen
 				result = append(result, types.PresenceEventRecord{
-					ID:        -1, // synthetic ID
-					IP:        devIP,
-					MAC:       devMAC,
-					Hostname:  devHostname,
-					Event:     "join",
-					Duration:  0.0,
-					CreatedAt: firstSeen,
+					ID:          -1, // synthetic ID
+					IP:          devIP,
+					MAC:         devMAC,
+					Hostname:    devHostname,
+					Event:       "join",
+					Duration:    0.0,
+					CreatedAt:   firstSeen,
+					NetworkName: resolveNetworkName(devIP, s.networkNames),
 				})
 			} else {
 				// 2. Synthesize 'leave' event (newest, at lastSeen) and 'join' event (oldest, at firstSeen)
@@ -1870,21 +1932,23 @@ func (s *Storage) GetPresenceEventsFiltered(mac, ip, q string) ([]types.Presence
 					duration = 0
 				}
 				result = append(result, types.PresenceEventRecord{
-					ID:        -2, // synthetic ID
-					IP:        devIP,
-					MAC:       devMAC,
-					Hostname:  devHostname,
-					Event:     "leave",
-					Duration:  duration,
-					CreatedAt: lastSeen,
+					ID:          -2, // synthetic ID
+					IP:          devIP,
+					MAC:         devMAC,
+					Hostname:    devHostname,
+					Event:       "leave",
+					Duration:    duration,
+					CreatedAt:   lastSeen,
+					NetworkName: resolveNetworkName(devIP, s.networkNames),
 				}, types.PresenceEventRecord{
-					ID:        -1, // synthetic ID
-					IP:        devIP,
-					MAC:       devMAC,
-					Hostname:  devHostname,
-					Event:     "join",
-					Duration:  0.0,
-					CreatedAt: firstSeen,
+					ID:          -1, // synthetic ID
+					IP:          devIP,
+					MAC:         devMAC,
+					Hostname:    devHostname,
+					Event:       "join",
+					Duration:    0.0,
+					CreatedAt:   firstSeen,
+					NetworkName: resolveNetworkName(devIP, s.networkNames),
 				})
 			}
 		}

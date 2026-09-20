@@ -415,7 +415,8 @@ async function editDevice(ip) {
             customWebURL: row.dataset.customWebUrlOriginal || '',
             customType: row.dataset.customTypeOriginal || '',
             notes: row.dataset.notes || '',
-            linkedMAC: row.dataset.linkedMac || ''
+            linkedMAC: row.dataset.linkedMac || '',
+            linkedChildren: row.dataset.linkedChildren ? row.dataset.linkedChildren.split(', ') : []
         };
     } else {
         // Fetch from API
@@ -436,7 +437,8 @@ async function editDevice(ip) {
                     customWebURL: '',
                     customType: '',
                     notes: '',
-                    linkedMAC: ''
+                    linkedMAC: '',
+                    linkedChildren: []
                 };
             } else {
                 const result = await res.json();
@@ -454,7 +456,8 @@ async function editDevice(ip) {
                         customWebURL: dev.custom_web_url || '',
                         customType: dev.custom_type || '',
                         notes: dev.notes || '',
-                        linkedMAC: dev.linked_mac || ''
+                        linkedMAC: dev.linked_mac || '',
+                        linkedChildren: dev.linked_children || []
                     };
                 }
             }
@@ -550,6 +553,24 @@ async function editDevice(ip) {
         }
     }
 
+    // Populate read-only linked children list if present
+    const childrenGroup = document.getElementById('detail-linked-children-group');
+    const childrenList = document.getElementById('detail-linked-children-list');
+    if (childrenGroup && childrenList) {
+        if (deviceData.linkedChildren && deviceData.linkedChildren.length > 0) {
+            childrenList.innerHTML = deviceData.linkedChildren.map(child => {
+                return `<div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="color: var(--success); font-weight: bold;">🔗</span>
+                    <span>${child}</span>
+                </div>`;
+            }).join('');
+            childrenGroup.style.display = 'block';
+        } else {
+            childrenGroup.style.display = 'none';
+            childrenList.innerHTML = '';
+        }
+    }
+
     // 3. Fetch and Render Device Presence Events (Left Panel Timeline and Graph)
     const timelineEl = document.getElementById('detail-timeline');
     const chartEl = document.getElementById('detail-chart');
@@ -579,7 +600,8 @@ async function editDevice(ip) {
                                 end: endTime,
                                 duration: durationMs,
                                 isCurrent: false,
-                                ip: evt.ip
+                                ip: evt.ip,
+                                networkName: evt.network_name || ''
                             });
                         }
                     });
@@ -592,7 +614,8 @@ async function editDevice(ip) {
                             end: now,
                             duration: now.getTime() - startTime.getTime(),
                             isCurrent: true,
-                            ip: activeEvent ? activeEvent.ip : deviceData.ip
+                            ip: activeEvent ? activeEvent.ip : deviceData.ip,
+                            networkName: (activeEvent && activeEvent.network_name) ? activeEvent.network_name : ''
                         });
                     }
 
@@ -626,6 +649,7 @@ async function editDevice(ip) {
                                         <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>Start:</strong> ${session.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                         <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>End:</strong> ${session.isCurrent ? 'Present' : session.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                         <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>Duration:</strong> ${durText}</span>
+                                        ${session.networkName ? `<span style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 4px;">Network: ${session.networkName}</span>` : ''}
                                     </div>
                                 </div>
                             `;
@@ -658,11 +682,14 @@ async function editDevice(ip) {
                     const ago = relativeTime(Math.floor(dateVal.getTime() / 1000));
                     let detailText = '';
                     if (event.event === 'leave') {
-                        detailText = `went offline (was connected for ${formatSeconds(event.duration)})`;
+                        const netText = event.network_name ? ` on <strong>${event.network_name}</strong>` : '';
+                        detailText = `went offline${netText} (was connected for ${formatSeconds(event.duration)})`;
                     } else if (event.event === 'return') {
-                        detailText = `reconnected (was gone for ${formatSeconds(event.duration)})`;
+                        const netText = event.network_name ? ` on <strong>${event.network_name}</strong>` : '';
+                        detailText = `reconnected${netText} (was gone for ${formatSeconds(event.duration)})`;
                     } else if (event.event === 'join') {
-                        detailText = `joined network for the first time`;
+                        const netText = event.network_name ? ` <strong>${event.network_name}</strong>` : '';
+                        detailText = `joined${netText} network for the first time`;
                     }
                     const badgeClass = event.event === 'join' ? 'join' : (event.event === 'leave' ? 'leave' : 'return');
                     return `
@@ -1875,7 +1902,8 @@ async function viewHistory(ip, mac) {
                         end: endTime,
                         duration: durationMs,
                         isCurrent: false,
-                        ip: evt.ip
+                        ip: evt.ip,
+                        networkName: evt.network_name || ''
                     });
                 }
             });
@@ -1888,7 +1916,8 @@ async function viewHistory(ip, mac) {
                     end: now,
                     duration: now.getTime() - startTime.getTime(),
                     isCurrent: true,
-                    ip: activeEvent ? activeEvent.ip : ip
+                    ip: activeEvent ? activeEvent.ip : ip,
+                    networkName: (activeEvent && activeEvent.network_name) ? activeEvent.network_name : ''
                 });
             }
 
@@ -1925,7 +1954,8 @@ async function viewHistory(ip, mac) {
                                 <span style="display: block; margin-bottom: 2px;"><strong>Start:</strong> ${session.start.toLocaleString()}</span>
                                 <span style="display: block; margin-bottom: 2px;"><strong>End:</strong> ${session.isCurrent ? 'Present (Active Now)' : session.end.toLocaleString()}</span>
                                 <span style="display: block; margin-bottom: 2px;"><strong>Duration:</strong> ${durText}</span>
-                                ${session.ip ? `<span style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 4px;">IP Address: ${session.ip}</span>` : ''}
+                                ${session.ip ? `<span style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 4px;">IP Address: ${session.ip}</span>` : ''}
+                                ${session.networkName ? `<span style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 2px;">Network: ${session.networkName}</span>` : ''}
                             </div>
                         </div>
                     `;
@@ -1963,11 +1993,14 @@ async function viewHistory(ip, mac) {
                         const ago = relativeTime(Math.floor(dateVal.getTime() / 1000));
                         let detailText = '';
                         if (event.event === 'leave') {
-                            detailText = `went offline (was connected for ${formatSeconds(event.duration)})`;
+                            const netText = event.network_name ? ` on <strong>${event.network_name}</strong>` : '';
+                            detailText = `went offline${netText} (was connected for ${formatSeconds(event.duration)})`;
                         } else if (event.event === 'return') {
-                            detailText = `reconnected (was gone for ${formatSeconds(event.duration)})`;
+                            const netText = event.network_name ? ` on <strong>${event.network_name}</strong>` : '';
+                            detailText = `reconnected${netText} (was gone for ${formatSeconds(event.duration)})`;
                         } else if (event.event === 'join') {
-                            detailText = `joined network for the first time`;
+                            const netText = event.network_name ? ` <strong>${event.network_name}</strong>` : '';
+                            detailText = `joined${netText} network for the first time`;
                         }
                         const badgeClass = event.event === 'join' ? 'join' : (event.event === 'leave' ? 'leave' : 'return');
                         return `
