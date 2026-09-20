@@ -500,14 +500,109 @@ async function editDevice(ip) {
     document.getElementById('edit-custom-type').value = deviceData.customType;
     document.getElementById('edit-notes').value = deviceData.notes;
 
-    // 3. Fetch and Render Device Presence Events (Left Panel Timeline)
+    // 3. Fetch and Render Device Presence Events (Left Panel Timeline and Graph)
     const timelineEl = document.getElementById('detail-timeline');
+    const chartEl = document.getElementById('detail-chart');
+    if (chartEl) chartEl.innerHTML = '';
+
     if (timelineEl) {
         timelineEl.innerHTML = '<div class="timeline-loading">Loading activity history...</div>';
         try {
             const res = await fetch(`/api/scans/events?ip=${encodeURIComponent(deviceData.ip)}&mac=${encodeURIComponent(deviceData.mac)}`);
             const result = await res.json();
             if (result.success && result.data && result.data.length > 0) {
+                const events = result.data;
+
+                // A. Render the compact sessions graph inside `#detail-chart` if element is present
+                if (chartEl) {
+                    const isOnlineNow = events[0].event === 'return' || events[0].event === 'join';
+                    const sessions = [];
+                    const now = new Date();
+
+                    events.forEach(evt => {
+                        if (evt.event === 'leave') {
+                            const endTime = new Date(evt.created_at);
+                            const durationMs = evt.duration * 1000;
+                            const startTime = new Date(endTime.getTime() - durationMs);
+                            sessions.push({
+                                start: startTime,
+                                end: endTime,
+                                duration: durationMs,
+                                isCurrent: false,
+                                ip: evt.ip
+                            });
+                        }
+                    });
+
+                    if (isOnlineNow) {
+                        const activeEvent = events.find(evt => evt.event === 'return' || evt.event === 'join');
+                        const startTime = activeEvent ? new Date(activeEvent.created_at) : new Date(now.getTime() - (5 * 60 * 1000));
+                        sessions.push({
+                            start: startTime,
+                            end: now,
+                            duration: now.getTime() - startTime.getTime(),
+                            isCurrent: true,
+                            ip: activeEvent ? activeEvent.ip : deviceData.ip
+                        });
+                    }
+
+                    sessions.sort((a, b) => a.start - b.start);
+
+                    let timelineEnd = now.getTime();
+                    let timelineStart = now.getTime() - (24 * 60 * 60 * 1000); // 24h default
+
+                    if (sessions.length > 0) {
+                        const oldestStart = sessions[0].start.getTime();
+                        const thirtyDaysAgo = now.getTime() - (30 * 24 * 60 * 60 * 1000);
+                        if (oldestStart < timelineStart) {
+                            timelineStart = Math.max(oldestStart, thirtyDaysAgo);
+                        }
+                    }
+                    const totalDuration = timelineEnd - timelineStart;
+
+                    let sessionBarsHTML = '';
+                    sessions.forEach(session => {
+                        let sStart = Math.max(session.start.getTime(), timelineStart);
+                        let sEnd = Math.min(session.end.getTime(), timelineEnd);
+                        if (sEnd > sStart) {
+                            const left = ((sStart - timelineStart) / totalDuration) * 100;
+                            const width = ((sEnd - sStart) / totalDuration) * 100;
+                            const durText = formatEventDuration((sEnd - sStart) / 1000);
+                            
+                            sessionBarsHTML += `
+                                <div class="presence-session-bar" style="left: ${left}%; width: ${width}%;">
+                                    <div class="presence-tooltip" style="bottom: 140%;">
+                                        <strong style="color: var(--success); font-size: 0.8rem; display: block; margin-bottom: 4px;">🟩 ${session.isCurrent ? 'Active Online Session' : 'Completed Session'}</strong>
+                                        <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>Start:</strong> ${session.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                        <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>End:</strong> ${session.isCurrent ? 'Present' : session.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                        <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>Duration:</strong> ${durText}</span>
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    });
+
+                    const startLabel = new Date(timelineStart).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + new Date(timelineStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const timespanDays = (totalDuration / (1000 * 60 * 60 * 24)).toFixed(1);
+
+                    chartEl.innerHTML = `
+                        <div class="presence-chart-container" style="padding: 0.75rem; margin-top: 1.25rem; margin-bottom: 0; border-radius: 6px;">
+                            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+                                <span>Activity Timeline Graph</span>
+                                <span>Span: ${timespanDays}d</span>
+                            </div>
+                            <div class="presence-chart-track" style="height: 24px; border-radius: 12px; margin-bottom: 0.4rem;">
+                                ${sessionBarsHTML}
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-muted);">
+                                <span>${startLabel}</span>
+                                <span>Present</span>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // B. Render text logs in `#detail-timeline`
                 timelineEl.innerHTML = result.data.map(event => {
                     const dateVal = new Date(event.created_at);
                     const ago = relativeTime(Math.floor(dateVal.getTime() / 1000));
@@ -532,9 +627,11 @@ async function editDevice(ip) {
                 }).join('');
             } else {
                 timelineEl.innerHTML = '<div class="timeline-empty" style="padding:16px; color:var(--text-muted); font-size:0.85rem; text-align:center;">No logged activity events for this device.</div>';
+                if (chartEl) chartEl.innerHTML = '';
             }
         } catch (e) {
             timelineEl.innerHTML = '<div class="timeline-error" style="padding:16px; color:#ef4444; font-size:0.85rem; text-align:center;">Failed to load activity logs.</div>';
+            if (chartEl) chartEl.innerHTML = '';
         }
     }
 
