@@ -655,7 +655,7 @@ async function editDevice(ip) {
                             
                             sessionBarsHTML += `
                                 <div class="presence-session-bar" style="left: ${left}%; width: ${width}%;">
-                                    <div class="presence-tooltip" style="bottom: 140%;">
+                                    <div class="presence-tooltip">
                                         <strong style="color: var(--success); font-size: 0.8rem; display: block; margin-bottom: 4px;">🟩 ${session.isCurrent ? 'Active Online Session' : 'Completed Session'}</strong>
                                         <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>Start:</strong> ${session.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                         <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>End:</strong> ${session.isCurrent ? 'Present' : session.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
