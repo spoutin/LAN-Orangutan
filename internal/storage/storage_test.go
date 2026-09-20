@@ -361,8 +361,9 @@ func TestGetPresenceEventsFilteredAndPruning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 3 {
-		t.Errorf("expected 3 events, got %d", len(events))
+	// We expect 4 events: 3 inserted directly + 1 automatic 'join' event for the fresh-pc MergeDevices
+	if len(events) != 4 {
+		t.Errorf("expected 4 events, got %d", len(events))
 	}
 
 	// Test 2: Fetch presence events with query filter (by hostname)
@@ -413,8 +414,9 @@ func TestGetPresenceEventsFilteredAndPruning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 {
-		t.Errorf("expected 2 presence events remaining, got %d", len(events))
+	// We expect 3 presence events remaining (one stale-event at 2 years ago was pruned)
+	if len(events) != 3 {
+		t.Errorf("expected 3 presence events remaining, got %d", len(events))
 	}
 
 	// Verify the stale-pc device was deleted

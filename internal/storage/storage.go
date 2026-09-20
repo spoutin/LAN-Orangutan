@@ -672,6 +672,15 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		d.Label, d.Notes, d.Group, d.CustomHostname, d.CustomWebURL, d.CustomType,
 		d.WebPort, d.WebScheme, boolToInt(d.Probed), d.Assignment, d.NetworkName,
 		d.FirstSeen, d.LastSeen, d.ResponseTime, string(historyJSON), isOnline, d.LastSeen)
+	if err != nil {
+		return err
+	}
+
+	// Log an initial 'join' presence event for first-time discovery!
+	_, err = tx.Exec(`
+		INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+		VALUES (?, ?, ?, 'join', 0.0, ?)
+	`, d.IP, d.MAC, d.Hostname, now)
 	return err
 }
 
