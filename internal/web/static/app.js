@@ -563,10 +563,17 @@ async function editDevice(ip) {
     if (childrenGroup && childrenList) {
         if (deviceData.linkedChildren && deviceData.linkedChildren.length > 0) {
             childrenList.innerHTML = deviceData.linkedChildren.map(child => {
-                return `<div style="display: flex; align-items: center; gap: 6px;">
-                    <span style="color: var(--success); font-weight: bold;">🔗</span>
-                    <span>${child}</span>
-                </div>`;
+                const ipMatch = child.match(/\(([^)]+)\)/);
+                const childIP = ipMatch ? ipMatch[1] : '';
+                return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="color: var(--success); font-weight: bold;">🔗</span>
+                            <span>${child}</span>
+                        </div>
+                        ${childIP ? `<button type="button" class="btn-text danger" onclick="unlinkChildFromParent('${childIP}', '${deviceData.ip}')" style="font-size: 0.75rem; background: none; border: none; color: #ef4444; cursor: pointer; padding: 2px 6px;">Unlink Alias</button>` : ''}
+                    </div>
+                `;
             }).join('');
             childrenGroup.style.display = 'block';
         } else {
@@ -2119,4 +2126,21 @@ function unlinkDeviceAlias() {
     }
 
     showToast('Link cleared. Click "Save Changes" to apply.', 'success');
+}
+
+// Sever alias relationship directly from parent's view
+async function unlinkChildFromParent(childIP, parentIP) {
+    if (!confirm(`Unlink this child device (${childIP}) from this parent?`)) return;
+    try {
+        const result = await api('device', { ip: childIP, linked_mac: "" }, 'POST');
+        if (result.success) {
+            showToast('Alias unlinked successfully', 'success');
+            // Dynamically refresh the parent's details modal to reflect change instantly!
+            await editDevice(parentIP);
+        } else {
+            showToast(result.error || 'Failed to unlink alias', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
 }
