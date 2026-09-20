@@ -90,6 +90,92 @@
         <p>LAN Orangutan by <a href="https://291group.com" target="_blank">291 Group</a></p>
     </footer>
 
+    <!-- Device Details & Insights Modal -->
+    <div id="edit-modal" class="modal" style="display:none">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Device Insights & Settings</h3>
+                <button class="modal-close" onclick="closeModal()">×</button>
+            </div>
+            <div class="modal-body split-modal-body">
+                <!-- Left Panel: Specs and Timeline -->
+                <div class="modal-panel-left">
+                    <h4 class="panel-subtitle">Network & Hardware Specs</h4>
+                    <ul class="device-spec-list">
+                        <li><span class="spec-label">IP Address:</span> <span class="spec-val" id="detail-ip"></span></li>
+                        <li><span class="spec-label">MAC Address:</span> <span class="spec-val" id="detail-mac"></span></li>
+                        <li><span class="spec-label">Manufacturer:</span> <span class="spec-val" id="detail-vendor"></span></li>
+                        <li><span class="spec-label">First Seen:</span> <span class="spec-val" id="detail-firstseen"></span></li>
+                        <li><span class="spec-label">Last Seen:</span> <span class="spec-val" id="detail-lastseen"></span></li>
+                        <li><span class="spec-label">Response Time:</span> <span class="spec-val" id="detail-responsetime"></span></li>
+                    </ul>
+
+                    <button type="button" class="btn" style="width: 100%; margin-top: 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: var(--bg-card-hover); border: 1px solid var(--border);" onclick="const ip=document.getElementById('edit-ip').value; const mac=document.getElementById('detail-mac').textContent; closeModal(); viewHistory(ip, mac);">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12 6 12 12 16 14"/>
+                        </svg>
+                        <span>View Presence History</span>
+                    </button>
+
+                    <h4 class="panel-subtitle" style="margin-top:1.25rem;">Activity History Timeline</h4>
+                    <div class="device-timeline-wrapper" id="detail-timeline">
+                        <div class="timeline-loading">Loading activity history...</div>
+                    </div>
+                </div>
+
+                <!-- Right Panel: Configurations Form -->
+                <div class="modal-panel-right">
+                    <h4 class="panel-subtitle">Device Customizations</h4>
+                    <form id="edit-form">
+                        <input type="hidden" id="edit-ip" name="ip">
+                        <!-- We keep edit-ip-display hidden so we don't break existing JS selectors -->
+                        <input type="hidden" id="edit-ip-display">
+                        <!-- We keep edit-group hidden so we don't break existing JS selectors, but hardcode it to empty -->
+                        <input type="hidden" id="edit-group" name="group" value="">
+                        
+                        <div class="form-group">
+                            <label>Friendly Label</label>
+                            <input type="text" id="edit-label" name="label" class="input" placeholder="e.g., Living Room TV">
+                        </div>
+                        <div class="form-group">
+                            <label>Custom Hostname (Override)</label>
+                            <input type="text" id="edit-custom-hostname" name="custom_hostname" class="input" placeholder="e.g., My-Smart-TV">
+                        </div>
+                        <div class="form-group">
+                            <label>Custom Web URL (Override)</label>
+                            <input type="text" id="edit-custom-web-url" name="custom_web_url" class="input" placeholder="e.g., https://my-nas:5001">
+                        </div>
+                        <div class="form-group">
+                            <label>Device Type (Override)</label>
+                            <select id="edit-custom-type" name="custom_type" class="select">
+                                <option value="">Auto-Detect</option>
+                                <option value="Phone">Phone</option>
+                                <option value="Computer">Computer</option>
+                                <option value="Printer">Printer</option>
+                                <option value="TV">TV</option>
+                                <option value="Media Player">Media Player</option>
+                                <option value="Router">Router</option>
+                                <option value="Server">Server</option>
+                                <option value="IoT">IoT</option>
+                                <option value="Game Console">Game Console</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Device Notes</label>
+                            <textarea id="edit-notes" name="notes" class="input" rows="3" placeholder="Add notes about this device..."></textarea>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="btn-delete-device" style="margin-right:auto;" onclick="const ip=document.getElementById('edit-ip').value; deleteDevice(ip);">Delete Device</button>
+                <button class="btn" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveDevice()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Dedicated Device History Modal -->
     <div id="history-modal" class="modal" style="display:none">
         <div class="modal-content modal-medium" style="max-width: 600px; width: 90%;">

@@ -396,54 +396,116 @@ function filterDevices() {
 // Device editing
 async function editDevice(ip) {
     const modal = document.getElementById('edit-modal');
+    if (!modal) return;
+
+    let deviceData = null;
     const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
-    if (!modal || !row) return;
+
+    if (row) {
+        // Use preloaded row attributes to avoid API roundtrip
+        deviceData = {
+            ip: ip,
+            mac: row.dataset.macOriginal || row.dataset.mac || '',
+            vendor: row.dataset.vendorOriginal || 'Unknown',
+            firstSeen: row.dataset.firstseen,
+            lastSeen: row.dataset.lastseenDisplay,
+            responseTime: row.dataset.responsetime || 'N/A',
+            label: row.dataset.labelOriginal || '',
+            customHostname: row.dataset.customHostnameOriginal || '',
+            customWebURL: row.dataset.customWebUrlOriginal || '',
+            customType: row.dataset.customTypeOriginal || '',
+            notes: row.dataset.notes || ''
+        };
+    } else {
+        // Fetch from API
+        try {
+            const res = await fetch(`/api/device?ip=${encodeURIComponent(ip)}`);
+            if (!res.ok) {
+                // If device not found in database (e.g. deleted but has presence logs),
+                // construct a stub from the event context or show an empty customization form.
+                deviceData = {
+                    ip: ip,
+                    mac: '',
+                    vendor: 'Unknown',
+                    firstSeen: 'N/A',
+                    lastSeen: 'N/A',
+                    responseTime: 'N/A',
+                    label: '',
+                    customHostname: '',
+                    customWebURL: '',
+                    customType: '',
+                    notes: ''
+                };
+            } else {
+                const result = await res.json();
+                if (result.success && result.data) {
+                    const dev = result.data;
+                    deviceData = {
+                        ip: dev.ip,
+                        mac: dev.mac,
+                        vendor: dev.vendor || 'Unknown',
+                        firstSeen: dev.first_seen,
+                        lastSeen: dev.last_seen,
+                        responseTime: dev.response_time ? `${dev.response_time} ms` : 'N/A',
+                        label: dev.label || '',
+                        customHostname: dev.custom_hostname || '',
+                        customWebURL: dev.custom_web_url || '',
+                        customType: dev.custom_type || '',
+                        notes: dev.notes || ''
+                    };
+                }
+            }
+        } catch (e) {
+            console.error('Failed to fetch device details', e);
+            return;
+        }
+    }
+
+    if (!deviceData) return;
 
     // 1. Populate General Read-Only Stats (Left Panel)
     const ipDisplay = document.getElementById('detail-ip');
-    if (ipDisplay) ipDisplay.textContent = ip;
+    if (ipDisplay) ipDisplay.textContent = deviceData.ip;
 
     const macDisplay = document.getElementById('detail-mac');
     if (macDisplay) {
-        const macVal = row.dataset.macOriginal || row.dataset.mac || '-';
-        macDisplay.textContent = macVal.toUpperCase();
+        macDisplay.textContent = (deviceData.mac || '-').toUpperCase();
     }
 
     const vendorDisplay = document.getElementById('detail-vendor');
-    if (vendorDisplay) vendorDisplay.textContent = row.dataset.vendorOriginal || 'Unknown';
+    if (vendorDisplay) vendorDisplay.textContent = deviceData.vendor;
 
     const firstSeenDisplay = document.getElementById('detail-firstseen');
     if (firstSeenDisplay) {
-        const dateVal = new Date(row.dataset.firstseen);
-        firstSeenDisplay.textContent = isNaN(dateVal.getTime()) ? row.dataset.firstseen : dateVal.toLocaleString();
+        const dateVal = new Date(deviceData.firstSeen);
+        firstSeenDisplay.textContent = isNaN(dateVal.getTime()) ? deviceData.firstSeen : dateVal.toLocaleString();
     }
 
     const lastSeenDisplay = document.getElementById('detail-lastseen');
     if (lastSeenDisplay) {
-        const dateVal = new Date(row.dataset.lastseenDisplay);
-        lastSeenDisplay.textContent = isNaN(dateVal.getTime()) ? row.dataset.lastseenDisplay : dateVal.toLocaleString();
+        const dateVal = new Date(deviceData.lastSeen);
+        lastSeenDisplay.textContent = isNaN(dateVal.getTime()) ? deviceData.lastSeen : dateVal.toLocaleString();
     }
 
     const responseTimeDisplay = document.getElementById('detail-responsetime');
-    if (responseTimeDisplay) responseTimeDisplay.textContent = row.dataset.responsetime || 'N/A';
+    if (responseTimeDisplay) responseTimeDisplay.textContent = deviceData.responseTime;
 
     // 2. Populate Edit Form Fields (Right Panel)
-    document.getElementById('edit-ip').value = ip;
+    document.getElementById('edit-ip').value = deviceData.ip;
     const ipDispInput = document.getElementById('edit-ip-display');
-    if (ipDispInput) ipDispInput.value = ip;
-    document.getElementById('edit-label').value = row.dataset.labelOriginal || '';
-    document.getElementById('edit-custom-hostname').value = row.dataset.customHostnameOriginal || '';
-    document.getElementById('edit-custom-web-url').value = row.dataset.customWebUrlOriginal || '';
-    document.getElementById('edit-custom-type').value = row.dataset.customTypeOriginal || '';
-    document.getElementById('edit-notes').value = row.dataset.notes || '';
+    if (ipDispInput) ipDispInput.value = deviceData.ip;
+    document.getElementById('edit-label').value = deviceData.label;
+    document.getElementById('edit-custom-hostname').value = deviceData.customHostname;
+    document.getElementById('edit-custom-web-url').value = deviceData.customWebURL;
+    document.getElementById('edit-custom-type').value = deviceData.customType;
+    document.getElementById('edit-notes').value = deviceData.notes;
 
     // 3. Fetch and Render Device Presence Events (Left Panel Timeline)
     const timelineEl = document.getElementById('detail-timeline');
     if (timelineEl) {
         timelineEl.innerHTML = '<div class="timeline-loading">Loading activity history...</div>';
         try {
-            const macVal = row.dataset.macOriginal || row.dataset.mac || '';
-            const res = await fetch(`/api/scans/events?mac=${encodeURIComponent(macVal)}`);
+            const res = await fetch(`/api/scans/events?ip=${encodeURIComponent(deviceData.ip)}&mac=${encodeURIComponent(deviceData.mac)}`);
             const result = await res.json();
             if (result.success && result.data && result.data.length > 0) {
                 timelineEl.innerHTML = result.data.map(event => {
@@ -1587,9 +1649,13 @@ function renderPresenceTimeline(events) {
                 <div class="timeline-badge" style="width: 32px; height: 32px; border-radius: 50%; background: ${bg}; color: ${color}; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; border: 1px solid ${color};">
                     ${icon}
                 </div>
-                <div class="timeline-content" style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; flex-grow: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <div class="timeline-content" 
+                     onclick="editDevice('${evt.ip}')"
+                     style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; flex-grow: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.05); cursor: pointer; transition: transform 0.2s, border-color 0.2s, background-color 0.2s;"
+                     onmouseover="this.style.borderColor='var(--accent)'; this.style.transform='translateY(-1px)'; this.style.backgroundColor='var(--bg-card-hover)';"
+                     onmouseout="this.style.borderColor='var(--border)'; this.style.transform='none'; this.style.backgroundColor='var(--bg-card)';">
                     <div class="timeline-header" style="font-size: 0.95rem; margin-bottom: 0.25rem;">
-                        <strong><a href="#" onclick="viewHistory('${evt.ip}', '${evt.mac}'); return false;" style="color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent);">${name}</a></strong> <span style="color: var(--text-muted); font-size: 0.85rem;">(${evt.ip})</span> ${description}
+                        <strong style="color: var(--accent);">${name}</strong> <span style="color: var(--text-muted); font-size: 0.85rem;">(${evt.ip})</span> ${description}
                     </div>
                     <div class="timeline-time" style="font-size: 0.8rem; color: var(--text-muted);">${dateStr} at ${timeStr}</div>
                 </div>

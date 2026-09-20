@@ -368,12 +368,6 @@ orangutan export out.csv</code></pre>
                                     <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                                 </a>
                                 {{end}}
-                                <button class="btn-icon" onclick="viewHistory('{{.IP}}', '{{.MAC}}')" data-tip="View History" aria-label="View History">
-                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <circle cx="12" cy="12" r="10"/>
-                                        <polyline points="12 6 12 12 16 14"/>
-                                    </svg>
-                                </button>
                                 <button class="btn-icon" onclick="editDevice('{{.IP}}')" data-tip="View Details" aria-label="View Details">
                                     <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -436,6 +430,14 @@ orangutan export out.csv</code></pre>
                         <li><span class="spec-label">Last Seen:</span> <span class="spec-val" id="detail-lastseen"></span></li>
                         <li><span class="spec-label">Response Time:</span> <span class="spec-val" id="detail-responsetime"></span></li>
                     </ul>
+
+                    <button type="button" class="btn" style="width: 100%; margin-top: 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: var(--bg-card-hover); border: 1px solid var(--border);" onclick="const ip=document.getElementById('edit-ip').value; const mac=document.getElementById('detail-mac').textContent; closeModal(); viewHistory(ip, mac);">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12 6 12 12 16 14"/>
+                        </svg>
+                        <span>View Presence History</span>
+                    </button>
 
                     <h4 class="panel-subtitle" style="margin-top:1.25rem;">Activity History Timeline</h4>
                     <div class="device-timeline-wrapper" id="detail-timeline">
