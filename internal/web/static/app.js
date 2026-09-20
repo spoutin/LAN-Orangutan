@@ -523,7 +523,8 @@ async function editDevice(ip) {
             const devicesDataResult = await devicesRes.json();
             if (devicesDataResult.success && devicesDataResult.data) {
                 // Populate options
-                const otherDevices = devicesDataResult.data.filter(dev => dev.ip !== ip && dev.mac && dev.mac.toLowerCase() !== deviceData.mac.toLowerCase());
+                const devicesArray = Object.values(devicesDataResult.data);
+                const otherDevices = devicesArray.filter(dev => dev.ip !== ip && dev.mac && dev.mac.toLowerCase() !== deviceData.mac.toLowerCase());
                 datalist.innerHTML = otherDevices.map(dev => {
                     const name = dev.label || dev.custom_hostname || dev.hostname || dev.mac;
                     return `<option value="${name} [${dev.mac.toUpperCase()}]" data-mac="${dev.mac}"></option>`;
@@ -1476,6 +1477,11 @@ async function disconnectTailscale() {
     table.addEventListener('click', function (e) {
         // Prevent trigger if they click an action button, a link, or custom form control inside the table
         if (e.target.closest('.actions-cell') || e.target.closest('a') || e.target.closest('button') || e.target.closest('input')) {
+            return;
+        }
+
+        // If the user has highlighted/selected text (for copy-pasting), abort opening the modal!
+        if (window.getSelection() && window.getSelection().toString().trim()) {
             return;
         }
 
