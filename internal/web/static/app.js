@@ -1416,19 +1416,26 @@ async function disconnectTailscale() {
     window.addEventListener('scroll', hide, { passive: true });
 })();
 
-// Click-to-copy for value cells (IP, MAC, hostname, vendor). Driven by a
-// data-copy attribute and event delegation rather than an inline onclick, so a
-// value that contains quotes (a vendor name, say) can never break out of the
-// handler, and rows added by an auto-refresh are covered automatically. Empty
-// values (a placeholder like "Unknown") carry data-copy="" and are skipped.
-(function initCopyCells() {
+// Click-to-view for value cells (IP, MAC, hostname, vendor). Driven by a
+// data-copy attribute and event delegation rather than an inline onclick, so rows
+// added by an auto-refresh are covered automatically. Intercepts clicks on key cells
+// and instantly pops open the Device Insights Modal.
+(function initCellClick() {
     const table = document.getElementById('devices-table');
     if (!table) return;
     table.addEventListener('click', function (e) {
+        // Prevent trigger if they click an action button, a link, or custom form control inside the table
+        if (e.target.closest('.actions-cell') || e.target.closest('a') || e.target.closest('button') || e.target.closest('input')) {
+            return;
+        }
+
         const cell = e.target.closest('td[data-copy]');
         if (!cell) return;
-        const value = cell.getAttribute('data-copy');
-        if (value) copyToClipboard(value, e);
+
+        const row = cell.closest('tr');
+        if (row && row.dataset.ip) {
+            editDevice(row.dataset.ip);
+        }
     });
 })();
 
