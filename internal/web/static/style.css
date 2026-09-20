@@ -2789,8 +2789,8 @@ img.login-logo {
 }
 
 .presence-session-bar:hover {
-    opacity: 1 !important;
-    background-color: var(--accent) !important;
+    opacity: 0.9 !important;
+    background-color: var(--success) !important;
 }
 
 /* Tooltip container nested inside the bar */
