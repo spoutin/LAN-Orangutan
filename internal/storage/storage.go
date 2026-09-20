@@ -523,7 +523,7 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 		// Try to find the parent device IP
 		var parentIP string
 		_ = s.db.QueryRow("SELECT ip FROM devices WHERE mac = ? AND mac <> '' LIMIT 1", parentMAC).Scan(&parentIP)
-		
+
 		if parentIP != "" {
 			// Forward customizations directly to the parent device!
 			parentQuery := `UPDATE devices SET `
