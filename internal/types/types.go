@@ -49,6 +49,18 @@ type Device struct {
 
 	// LinkedChildren lists the display labels of child devices linked to this device.
 	LinkedChildren []string `json:"linked_children,omitempty"`
+
+	// LinkedChildrenDetails stores structured details about each linked child device.
+	LinkedChildrenDetails []LinkedChild `json:"linked_children_details,omitempty"`
+}
+
+// LinkedChild represents brief state details of a linked child device
+type LinkedChild struct {
+	IP          string `json:"ip"`
+	MAC         string `json:"mac"`
+	Hostname    string `json:"hostname"`
+	NetworkName string `json:"network_name"`
+	IsOnline    bool   `json:"is_online"`
 }
 
 // AddressChange records an IP a device was previously seen at, and when it moved

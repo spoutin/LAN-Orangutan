@@ -336,6 +336,9 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	var flagged, moved int
 
 	for _, d := range devices {
+		if d.LinkedMAC != "" {
+			continue // Skip linked children, keeping the main dashboard clean!
+		}
 		if len(d.Risks) > 0 {
 			flagged++
 		}

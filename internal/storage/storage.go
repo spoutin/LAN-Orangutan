@@ -363,6 +363,9 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 
 	// Build child mappings to populate LinkedChildren list on parents dynamically
 	childrenMap := make(map[string][]string)
+	childrenDetailsMap := make(map[string][]types.LinkedChild)
+	scanInterval := s.GetScanInterval()
+
 	for _, d := range result {
 		if d.LinkedMAC != "" {
 			name := d.Label
@@ -376,6 +379,14 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 				name = "Unknown"
 			}
 			childrenMap[d.LinkedMAC] = append(childrenMap[d.LinkedMAC], fmt.Sprintf("%s (%s)", name, d.IP))
+
+			childrenDetailsMap[d.LinkedMAC] = append(childrenDetailsMap[d.LinkedMAC], types.LinkedChild{
+				IP:          d.IP,
+				MAC:         d.MAC,
+				Hostname:    name,
+				NetworkName: d.NetworkName,
+				IsOnline:    d.IsOnline(scanInterval),
+			})
 		}
 	}
 
@@ -384,6 +395,9 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 		if d.MAC != "" {
 			if children, ok := childrenMap[d.MAC]; ok {
 				d.LinkedChildren = children
+			}
+			if details, ok := childrenDetailsMap[d.MAC]; ok {
+				d.LinkedChildrenDetails = details
 			}
 		}
 	}
@@ -395,16 +409,20 @@ func (s *Storage) populateDeviceChildrenLocked(d *types.Device) {
 	if d == nil || d.MAC == "" {
 		return
 	}
-	rows, err := s.db.Query("SELECT label, custom_hostname, hostname, ip FROM devices WHERE linked_mac = ?", d.MAC)
+	rows, err := s.db.Query("SELECT label, custom_hostname, hostname, ip, mac, network_name, last_seen FROM devices WHERE linked_mac = ?", d.MAC)
 	if err != nil {
 		return
 	}
 	defer rows.Close()
 
 	var children []string
+	var childrenDetails []types.LinkedChild
+	scanInterval := s.GetScanInterval()
+
 	for rows.Next() {
-		var label, cHost, host, ip string
-		if err := rows.Scan(&label, &cHost, &host, &ip); err == nil {
+		var label, cHost, host, ip, mac, netName string
+		var lastSeen time.Time
+		if err := rows.Scan(&label, &cHost, &host, &ip, &mac, &netName, &lastSeen); err == nil {
 			name := label
 			if name == "" {
 				name = cHost
@@ -416,9 +434,20 @@ func (s *Storage) populateDeviceChildrenLocked(d *types.Device) {
 				name = "Unknown"
 			}
 			children = append(children, fmt.Sprintf("%s (%s)", name, ip))
+
+			// Create temporary Device viewmodel to check IsOnline cleanly
+			tempDev := types.Device{LastSeen: lastSeen}
+			childrenDetails = append(childrenDetails, types.LinkedChild{
+				IP:          ip,
+				MAC:         mac,
+				Hostname:    name,
+				NetworkName: netName,
+				IsOnline:    tempDev.IsOnline(scanInterval),
+			})
 		}
 	}
 	d.LinkedChildren = children
+	d.LinkedChildrenDetails = childrenDetails
 }
 
 // GetDevice returns a single device by IP, or nil if there is none

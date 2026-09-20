@@ -545,6 +545,10 @@ async function editDevice(ip) {
                             badge.textContent = `🔗 Linked to parent MAC: ${parentDev.mac.toUpperCase()}`;
                             badge.style.display = 'block';
                         }
+                        const unlinkBtn = document.getElementById('btn-unlink-device');
+                        if (unlinkBtn) {
+                            unlinkBtn.style.display = 'block';
+                        }
                     }
                 }
             }
@@ -2066,6 +2070,7 @@ function syncLinkedMacValue() {
     const hiddenInput = document.getElementById('edit-linked-mac');
     const datalist = document.getElementById('parent-devices-list');
     const badge = document.getElementById('linked-parent-badge');
+    const unlinkBtn = document.getElementById('btn-unlink-device');
     if (!searchInput || !hiddenInput || !datalist) return;
 
     const val = searchInput.value;
@@ -2078,6 +2083,9 @@ function syncLinkedMacValue() {
             badge.textContent = `🔗 Linked to parent MAC: ${mac.toUpperCase()}`;
             badge.style.display = 'block';
         }
+        if (unlinkBtn) {
+            unlinkBtn.style.display = 'block';
+        }
     } else {
         // If blank, clear hidden linked mac
         if (!val) {
@@ -2086,6 +2094,29 @@ function syncLinkedMacValue() {
                 badge.style.display = 'none';
                 badge.textContent = '';
             }
+            if (unlinkBtn) {
+                unlinkBtn.style.display = 'none';
+            }
         }
     }
+}
+
+// Dissolve parent-child alias link on child device
+function unlinkDeviceAlias() {
+    const searchInput = document.getElementById('edit-linked-mac-search');
+    const hiddenInput = document.getElementById('edit-linked-mac');
+    const badge = document.getElementById('linked-parent-badge');
+    const unlinkBtn = document.getElementById('btn-unlink-device');
+
+    if (searchInput) searchInput.value = '';
+    if (hiddenInput) hiddenInput.value = '';
+    if (badge) {
+        badge.style.display = 'none';
+        badge.textContent = '';
+    }
+    if (unlinkBtn) {
+        unlinkBtn.style.display = 'none';
+    }
+
+    showToast('Link cleared. Click "Save Changes" to apply.', 'success');
 }

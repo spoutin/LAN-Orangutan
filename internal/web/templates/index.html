@@ -341,7 +341,27 @@ orangutan export out.csv</code></pre>
                                 {{end}}
                             </td>
                             <td class="col-network network-cell" data-label="Network">
-                                {{if .NetworkName}}<span class="network-badge">{{.NetworkName}}</span>{{else}}<span style="color:var(--text-muted)">-</span>{{end}}
+                                <div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
+                                    <!-- Parent Network Badge -->
+                                    {{if .NetworkName}}
+                                        <span class="network-badge {{if eq .StatusClass "status-offline"}}translucent-network-badge{{end}}"
+                                              {{if eq .StatusClass "status-offline"}}style="opacity: 0.5; border: 1px dashed var(--border); background: transparent;"{{end}}
+                                              data-tip="{{if eq .StatusClass "status-offline"}}Parent Offline on {{.NetworkName}} (not detected){{else}}Parent Active on {{.NetworkName}}{{end}}">
+                                            {{.NetworkName}}
+                                        </span>
+                                    {{end}}
+                                    
+                                    <!-- Children Network Badges -->
+                                    {{range .LinkedChildrenDetails}}
+                                        {{if .NetworkName}}
+                                            <span class="network-badge child-network-badge"
+                                                  style="{{if not .IsOnline}}opacity: 0.5; border: 1px dashed var(--border); background: transparent;{{end}}"
+                                                  data-tip="{{if .IsOnline}}Alias '{{.Hostname}}' Active on {{.NetworkName}}{{else}}Alias '{{.Hostname}}' Offline on {{.NetworkName}} (not detected){{end}}">
+                                                {{.NetworkName}}
+                                            </span>
+                                        {{end}}
+                                    {{end}}
+                                </div>
                             </td>
                             <td class="col-assignment assignment-cell" data-label="Assignment">
                                 {{if eq .Assignment "Static"}}
@@ -498,7 +518,10 @@ orangutan export out.csv</code></pre>
                         </div>
                         <div class="form-group">
                             <label>Linked Parent Device (Alias)</label>
-                            <input type="text" id="edit-linked-mac-search" class="input" placeholder="Search other devices to link (SSID alias)..." list="parent-devices-list" oninput="syncLinkedMacValue()">
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <input type="text" id="edit-linked-mac-search" class="input" style="flex-grow: 1;" placeholder="Search other devices to link (SSID alias)..." list="parent-devices-list" oninput="syncLinkedMacValue()">
+                                <button type="button" id="btn-unlink-device" class="btn btn-danger" style="display: none; padding: 0.5rem 1rem;" onclick="unlinkDeviceAlias()">Unlink</button>
+                            </div>
                             <input type="hidden" id="edit-linked-mac" name="linked_mac">
                             <datalist id="parent-devices-list"></datalist>
                             <span id="linked-parent-badge" style="display: none; font-size: 0.75rem; color: var(--success); font-weight: bold; margin-top: 4px;"></span>
