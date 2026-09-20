@@ -414,7 +414,8 @@ async function editDevice(ip) {
             customHostname: row.dataset.customHostnameOriginal || '',
             customWebURL: row.dataset.customWebUrlOriginal || '',
             customType: row.dataset.customTypeOriginal || '',
-            notes: row.dataset.notes || ''
+            notes: row.dataset.notes || '',
+            linkedMAC: row.dataset.linkedMac || ''
         };
     } else {
         // Fetch from API
@@ -434,7 +435,8 @@ async function editDevice(ip) {
                     customHostname: '',
                     customWebURL: '',
                     customType: '',
-                    notes: ''
+                    notes: '',
+                    linkedMAC: ''
                 };
             } else {
                 const result = await res.json();
@@ -451,7 +453,8 @@ async function editDevice(ip) {
                         customHostname: dev.custom_hostname || '',
                         customWebURL: dev.custom_web_url || '',
                         customType: dev.custom_type || '',
-                        notes: dev.notes || ''
+                        notes: dev.notes || '',
+                        linkedMAC: dev.linked_mac || ''
                     };
                 }
             }
@@ -499,6 +502,52 @@ async function editDevice(ip) {
     document.getElementById('edit-custom-web-url').value = deviceData.customWebURL;
     document.getElementById('edit-custom-type').value = deviceData.customType;
     document.getElementById('edit-notes').value = deviceData.notes;
+
+    // Populate searchable parent device options
+    const datalist = document.getElementById('parent-devices-list');
+    const searchInput = document.getElementById('edit-linked-mac-search');
+    const hiddenInput = document.getElementById('edit-linked-mac');
+    const badge = document.getElementById('linked-parent-badge');
+
+    if (datalist && searchInput) {
+        datalist.innerHTML = '';
+        searchInput.value = '';
+        if (hiddenInput) hiddenInput.value = '';
+        if (badge) {
+            badge.style.display = 'none';
+            badge.textContent = '';
+        }
+
+        try {
+            const devicesRes = await fetch('/api/devices');
+            const devicesDataResult = await devicesRes.json();
+            if (devicesDataResult.success && devicesDataResult.data) {
+                // Populate options
+                const otherDevices = devicesDataResult.data.filter(dev => dev.ip !== ip && dev.mac && dev.mac.toLowerCase() !== deviceData.mac.toLowerCase());
+                datalist.innerHTML = otherDevices.map(dev => {
+                    const name = dev.label || dev.custom_hostname || dev.hostname || dev.mac;
+                    return `<option value="${name} [${dev.mac.toUpperCase()}]" data-mac="${dev.mac}"></option>`;
+                }).join('');
+
+                // If currently linked, resolve search text value
+                if (deviceData.linkedMAC) {
+                    const linkedMacLower = deviceData.linkedMAC.toLowerCase();
+                    const parentDev = otherDevices.find(dev => dev.mac.toLowerCase() === linkedMacLower);
+                    if (parentDev) {
+                        const name = parentDev.label || parentDev.custom_hostname || parentDev.hostname || parentDev.mac;
+                        searchInput.value = `${name} [${parentDev.mac.toUpperCase()}]`;
+                        if (hiddenInput) hiddenInput.value = parentDev.mac;
+                        if (badge) {
+                            badge.textContent = `🔗 Linked to parent MAC: ${parentDev.mac.toUpperCase()}`;
+                            badge.style.display = 'block';
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('Failed to populate parent devices list', e);
+        }
+    }
 
     // 3. Fetch and Render Device Presence Events (Left Panel Timeline and Graph)
     const timelineEl = document.getElementById('detail-timeline');
@@ -651,8 +700,9 @@ async function saveDevice() {
     const custom_type = document.getElementById('edit-custom-type').value;
     const group = document.getElementById('edit-group').value;
     const notes = document.getElementById('edit-notes').value;
+    const linked_mac = document.getElementById('edit-linked-mac')?.value || '';
     try {
-        const result = await api('device', { ip, label, custom_hostname, custom_web_url, custom_type, group, notes }, 'POST');
+        const result = await api('device', { ip, label, custom_hostname, custom_web_url, custom_type, group, notes, linked_mac }, 'POST');
         if (result.success) {
             showToast('Device updated', 'success');
             closeModal();
@@ -1969,4 +2019,34 @@ function filterTimeline() {
             container.innerHTML = `<div style="text-align: center; color: #ef4444; padding: 2rem 0;">Error loading timeline events</div>`;
         }
     }, 250);
+}
+
+// Sync searchable datalist value back to hidden input linked_mac
+function syncLinkedMacValue() {
+    const searchInput = document.getElementById('edit-linked-mac-search');
+    const hiddenInput = document.getElementById('edit-linked-mac');
+    const datalist = document.getElementById('parent-devices-list');
+    const badge = document.getElementById('linked-parent-badge');
+    if (!searchInput || !hiddenInput || !datalist) return;
+
+    const val = searchInput.value;
+    const option = Array.from(datalist.options).find(opt => opt.value === val);
+
+    if (option) {
+        const mac = option.getAttribute('data-mac');
+        hiddenInput.value = mac;
+        if (badge) {
+            badge.textContent = `🔗 Linked to parent MAC: ${mac.toUpperCase()}`;
+            badge.style.display = 'block';
+        }
+    } else {
+        // If blank, clear hidden linked mac
+        if (!val) {
+            hiddenInput.value = '';
+            if (badge) {
+                badge.style.display = 'none';
+                badge.textContent = '';
+            }
+        }
+    }
 }

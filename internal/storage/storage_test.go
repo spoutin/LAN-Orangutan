@@ -453,3 +453,82 @@ func TestGetPresenceEventsFilteredAndPruning(t *testing.T) {
 		t.Errorf("expected synthesized 'join' event, got: %+v", synthEvents[0])
 	}
 }
+
+func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Step 1: Create Parent Device (galaxy-parent on OpenWrt)
+	parentIP := "10.5.5.50"
+	parentMAC := "aa:bb:cc:11:11:11"
+	if err := s.MergeDevices([]types.Device{
+		{IP: parentIP, MAC: parentMAC, Hostname: "Galaxy-S10"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Customize parent device settings
+	labelVal := "My Parent S10"
+	notesVal := "Owner: John Doe"
+	if err := s.UpdateDeviceFields(parentIP, &labelVal, &notesVal, nil, nil, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 2: Create Child Device (galaxy-child on OPNsense)
+	childIP := "10.0.4.80"
+	childMAC := "aa:bb:cc:22:22:22"
+	if err := s.MergeDevices([]types.Device{
+		{IP: childIP, MAC: childMAC, Hostname: "galaxy-s10"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Link Child Device to Parent Device using parentMAC
+	if err := s.UpdateDeviceFields(childIP, nil, nil, nil, nil, nil, nil, &parentMAC); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 3: Verify child inherits customizations from the parent via SQL LEFT JOIN!
+	childDev := s.GetDevice(childIP)
+	if childDev == nil {
+		t.Fatal("expected child device to exist")
+	}
+	if childDev.Label != "My Parent S10" {
+		t.Errorf("expected child to inherit label 'My Parent S10', got: %q", childDev.Label)
+	}
+	if childDev.Notes != "Owner: John Doe" {
+		t.Errorf("expected child to inherit notes 'Owner: John Doe', got: %q", childDev.Notes)
+	}
+
+	// Step 4: Verify combined presence timeline logs
+	now := time.Now()
+	// Insert separate presence events for both devices
+	_, err := s.db.Exec(`
+		INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+		VALUES 
+		(?, ?, 'Galaxy-S10', 'return', 60.0, ?),
+		(?, ?, 'galaxy-s10', 'leave', 30.0, ?)
+	`, parentIP, parentMAC, now.Add(-10*time.Minute), childIP, childMAC, now.Add(-5*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Querying timeline for either child or parent should return the unified family history!
+	parentEvents, err := s.GetPresenceEventsFiltered(parentMAC, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// We expect 3 events: parent's auto-join on MergeDevices, parent's return event, child's auto-join, and child's leave event!
+	// Wait, parent got auto-join on MergeDevices. Child got auto-join on MergeDevices.
+	// So 4 events in total!
+	if len(parentEvents) < 3 {
+		t.Errorf("expected combined timeline containing multiple entries, got %d: %+v", len(parentEvents), parentEvents)
+	}
+
+	childEvents, err := s.GetPresenceEventsFiltered("", childIP, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(childEvents) != len(parentEvents) {
+		t.Errorf("child timeline length (%d) should equal parent timeline length (%d)", len(childEvents), len(parentEvents))
+	}
+}

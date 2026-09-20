@@ -198,6 +198,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			CustomHostname *string `json:"custom_hostname"`
 			CustomWebURL   *string `json:"custom_web_url"`
 			CustomType     *string `json:"custom_type"`
+			LinkedMAC      *string `json:"linked_mac"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			h.error(w, http.StatusBadRequest, "invalid JSON")
@@ -214,7 +215,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType); err != nil {
+		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC); err != nil {
 			h.error(w, http.StatusNotFound, err.Error())
 			return
 		}

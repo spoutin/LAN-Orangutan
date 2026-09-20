@@ -317,7 +317,7 @@ func (s *Storage) scanDevice(scanner interface {
 	err := scanner.Scan(
 		&d.IP, &d.MAC, &d.Hostname, &d.Vendor, &d.Type, &webUIVal, &risksStr, &d.Label, &d.Notes, &d.Group,
 		&d.CustomHostname, &d.CustomWebURL, &d.CustomType, &d.WebPort, &d.WebScheme, &probedVal, &d.Assignment,
-		&d.NetworkName, &d.FirstSeen, &d.LastSeen, &d.ResponseTime, &addressHistoryStr,
+		&d.NetworkName, &d.FirstSeen, &d.LastSeen, &d.ResponseTime, &addressHistoryStr, &d.LinkedMAC,
 	)
 	if err != nil {
 		return nil, err
@@ -335,10 +335,18 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
-		       assignment, network_name, first_seen, last_seen, response_time, address_history
-		FROM devices
+		SELECT 
+			d.ip, d.mac, d.hostname, d.vendor, d.type, d.web_ui, d.risks,
+			COALESCE(NULLIF(p.label, ''), d.label) AS label,
+			COALESCE(NULLIF(p.notes, ''), d.notes) AS notes,
+			d."group",
+			COALESCE(NULLIF(p.custom_hostname, ''), d.custom_hostname) AS custom_hostname,
+			COALESCE(NULLIF(p.custom_web_url, ''), d.custom_web_url) AS custom_web_url,
+			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
+			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
+			d.linked_mac
+		FROM devices d
+		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 	`)
 	if err != nil {
 		return make(map[string]*types.Device)
@@ -361,11 +369,19 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRow(`
-		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
-		       assignment, network_name, first_seen, last_seen, response_time, address_history
-		FROM devices
-		WHERE ip = ?
+		SELECT 
+			d.ip, d.mac, d.hostname, d.vendor, d.type, d.web_ui, d.risks,
+			COALESCE(NULLIF(p.label, ''), d.label) AS label,
+			COALESCE(NULLIF(p.notes, ''), d.notes) AS notes,
+			d."group",
+			COALESCE(NULLIF(p.custom_hostname, ''), d.custom_hostname) AS custom_hostname,
+			COALESCE(NULLIF(p.custom_web_url, ''), d.custom_web_url) AS custom_web_url,
+			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
+			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
+			d.linked_mac
+		FROM devices d
+		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
+		WHERE d.ip = ?
 	`, ip)
 	d, err := s.scanDevice(row)
 	if err != nil {
@@ -377,11 +393,19 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 // GetDeviceLocked returns a device while holding a lock
 func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 	row := s.db.QueryRow(`
-		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
-		       assignment, network_name, first_seen, last_seen, response_time, address_history
-		FROM devices
-		WHERE ip = ?
+		SELECT 
+			d.ip, d.mac, d.hostname, d.vendor, d.type, d.web_ui, d.risks,
+			COALESCE(NULLIF(p.label, ''), d.label) AS label,
+			COALESCE(NULLIF(p.notes, ''), d.notes) AS notes,
+			d."group",
+			COALESCE(NULLIF(p.custom_hostname, ''), d.custom_hostname) AS custom_hostname,
+			COALESCE(NULLIF(p.custom_web_url, ''), d.custom_web_url) AS custom_web_url,
+			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
+			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
+			d.linked_mac
+		FROM devices d
+		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
+		WHERE d.ip = ?
 	`, ip)
 	d, err := s.scanDevice(row)
 	if err != nil {
@@ -479,7 +503,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 }
 
 // UpdateDeviceFields updates specific fields of a device
-func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType *string) error {
+func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac *string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -488,6 +512,70 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 		return fmt.Errorf("device not found: %s", ip)
 	}
 
+	// 1. Determine active parent MAC address
+	parentMAC := existing.LinkedMAC
+	if linkedMac != nil {
+		parentMAC = *linkedMac
+	}
+
+	// 2. If parentMAC is set and valid, update parent's customizations!
+	if parentMAC != "" {
+		// Try to find the parent device IP
+		var parentIP string
+		_ = s.db.QueryRow("SELECT ip FROM devices WHERE mac = ? AND mac <> '' LIMIT 1", parentMAC).Scan(&parentIP)
+		
+		if parentIP != "" {
+			// Forward customizations directly to the parent device!
+			parentQuery := `UPDATE devices SET `
+			var parentArgs []interface{}
+			var parentFields []string
+
+			if label != nil {
+				parentFields = append(parentFields, `label = ?`)
+				parentArgs = append(parentArgs, *label)
+			}
+			if notes != nil {
+				parentFields = append(parentFields, `notes = ?`)
+				parentArgs = append(parentArgs, *notes)
+			}
+			if group != nil {
+				parentFields = append(parentFields, `"group" = ?`)
+				parentArgs = append(parentArgs, *group)
+			}
+			if customHostname != nil {
+				parentFields = append(parentFields, `custom_hostname = ?`)
+				parentArgs = append(parentArgs, *customHostname)
+			}
+			if customWebURL != nil {
+				parentFields = append(parentFields, `custom_web_url = ?`)
+				parentArgs = append(parentArgs, *customWebURL)
+			}
+			if customType != nil {
+				parentFields = append(parentFields, `custom_type = ?`)
+				parentArgs = append(parentArgs, *customType)
+			}
+
+			if len(parentFields) > 0 {
+				parentQuery += joinStrings(parentFields, ", ") + ` WHERE ip = ?`
+				parentArgs = append(parentArgs, parentIP)
+				_, _ = s.db.Exec(parentQuery, parentArgs...)
+			}
+
+			// Clear customizations on the child so it cleanly inherits them from the parent
+			childQuery := `UPDATE devices SET label = '', notes = '', "group" = '', custom_hostname = '', custom_web_url = '', custom_type = ''`
+			var childArgs []interface{}
+			if linkedMac != nil {
+				childQuery += `, linked_mac = ?`
+				childArgs = append(childArgs, *linkedMac)
+			}
+			childQuery += ` WHERE ip = ?`
+			childArgs = append(childArgs, ip)
+			_, err := s.db.Exec(childQuery, childArgs...)
+			return err
+		}
+	}
+
+	// 3. Otherwise, if not linked, update the child directly as normal
 	query := `UPDATE devices SET `
 	var args []interface{}
 	var fields []string
@@ -515,6 +603,10 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 	if customType != nil {
 		fields = append(fields, `custom_type = ?`)
 		args = append(args, *customType)
+	}
+	if linkedMac != nil {
+		fields = append(fields, `linked_mac = ?`)
+		args = append(args, *linkedMac)
 	}
 
 	if len(fields) == 0 {
@@ -566,7 +658,8 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 	rows, err := tx.Query(`
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
-		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		       assignment, network_name, first_seen, last_seen, response_time, address_history,
+		       linked_mac
 		FROM devices
 		WHERE mac = ? AND ip != ?
 	`, mac, excludeIP)
@@ -593,7 +686,8 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 	row := tx.QueryRow(`
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
-		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		       assignment, network_name, first_seen, last_seen, response_time, address_history,
+		       linked_mac
 		FROM devices
 		WHERE mac = ?
 		LIMIT 1
@@ -704,7 +798,8 @@ func (s *Storage) pruneEphemeralIPv6() error {
 	rows, err := s.db.Query(`
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
-		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		       assignment, network_name, first_seen, last_seen, response_time, address_history,
+		       linked_mac
 		FROM devices
 	`)
 	if err != nil {
@@ -1682,13 +1777,31 @@ func (s *Storage) GetPresenceEventsFiltered(mac, ip, q string) ([]types.Presence
 		term := "%" + q + "%"
 		args = append(args, term, term, term)
 	} else if mac != "" || ip != "" {
-		query = `
-			SELECT id, ip, mac, hostname, event, duration, created_at
-			FROM device_presence_history
-			WHERE (mac <> '' AND mac = ?) OR ip = ?
-			ORDER BY created_at DESC
-		`
-		args = append(args, mac, ip)
+		// Resolve parent MAC to unify logs for linked family
+		var parentMAC string
+		if mac != "" {
+			_ = s.db.QueryRow("SELECT COALESCE(NULLIF(linked_mac, ''), mac) FROM devices WHERE mac = ? AND mac <> '' LIMIT 1", mac).Scan(&parentMAC)
+		} else {
+			_ = s.db.QueryRow("SELECT COALESCE(NULLIF(linked_mac, ''), mac) FROM devices WHERE ip = ? LIMIT 1", ip).Scan(&parentMAC)
+		}
+
+		if parentMAC != "" {
+			query = `
+				SELECT id, ip, mac, hostname, event, duration, created_at
+				FROM device_presence_history
+				WHERE (mac <> '' AND (mac = ? OR mac IN (SELECT mac FROM devices WHERE linked_mac = ?))) OR ip = ?
+				ORDER BY created_at DESC
+			`
+			args = append(args, parentMAC, parentMAC, ip)
+		} else {
+			query = `
+				SELECT id, ip, mac, hostname, event, duration, created_at
+				FROM device_presence_history
+				WHERE (mac <> '' AND mac = ?) OR ip = ?
+				ORDER BY created_at DESC
+			`
+			args = append(args, mac, ip)
+		}
 	} else {
 		query = `
 			SELECT id, ip, mac, hostname, event, duration, created_at

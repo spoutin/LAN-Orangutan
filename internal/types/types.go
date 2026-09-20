@@ -43,6 +43,9 @@ type Device struct {
 	// AddressHistory lists earlier IPs this device (matched by its MAC) was seen
 	// at, oldest first. Empty for a device that has never changed address.
 	AddressHistory []AddressChange `json:"address_history,omitempty"`
+
+	// LinkedMAC specifies the parent MAC address this device is linked (aliased) to.
+	LinkedMAC string `json:"linked_mac,omitempty"`
 }
 
 // AddressChange records an IP a device was previously seen at, and when it moved
