@@ -2757,3 +2757,82 @@ img.login-logo {
     color: var(--text-muted);
     opacity: 0.75;
 }
+
+/* Presence Chart and Timeline Styling */
+.presence-chart-container {
+    margin-bottom: 1.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+}
+
+.presence-chart-track {
+    height: 36px;
+    background: var(--bg-card-hover);
+    border-radius: 18px;
+    position: relative;
+    border: 1px solid var(--border);
+    overflow: visible !important; /* Allow tooltips to pop out! */
+    margin-bottom: 0.5rem;
+}
+
+.presence-session-bar {
+    position: absolute;
+    height: 100%;
+    background: var(--success);
+    opacity: 0.85;
+    transition: opacity 0.2s, background-color 0.2s;
+    cursor: pointer;
+    min-width: 6px; /* Ensure brief sessions remain hoverable */
+    border-radius: 2px;
+}
+
+.presence-session-bar:hover {
+    opacity: 1 !important;
+    background-color: var(--accent) !important;
+}
+
+/* Tooltip container nested inside the bar */
+.presence-session-bar .presence-tooltip {
+    visibility: hidden;
+    position: absolute;
+    bottom: 135%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.98);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #f8fafc;
+    text-align: left;
+    padding: 10px 14px;
+    border-radius: 8px;
+    z-index: 1050;
+    width: max-content;
+    max-width: 260px;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+/* Arrow for the tooltip */
+.presence-session-bar .presence-tooltip::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 6px;
+    border-style: solid;
+    border-color: rgba(15, 23, 42, 0.98) transparent transparent transparent;
+}
+
+/* Hover show tooltip */
+.presence-session-bar:hover .presence-tooltip {
+    visibility: visible;
+    opacity: 1;
+}

@@ -1630,35 +1630,143 @@ async function viewHistory(ip, mac) {
         const result = await res.json();
 
         if (result.success && result.data && result.data.length > 0) {
-            body.innerHTML = result.data.map(event => {
-                const dateVal = new Date(event.created_at);
-                const ago = relativeTime(Math.floor(dateVal.getTime() / 1000));
-                let detailText = '';
-                if (event.event === 'leave') {
-                    detailText = `went offline (was connected for ${formatSeconds(event.duration)})`;
-                } else if (event.event === 'return') {
-                    detailText = `reconnected (was gone for ${formatSeconds(event.duration)})`;
-                } else if (event.event === 'join') {
-                    detailText = `joined network for the first time`;
+            const events = result.data;
+
+            // 1. Determine current online status from the newest event
+            const isOnlineNow = events[0].event === 'return' || events[0].event === 'join';
+
+            // 2. Reconstruct Sessions
+            const sessions = [];
+            const now = new Date();
+
+            events.forEach(evt => {
+                if (evt.event === 'leave') {
+                    const endTime = new Date(evt.created_at);
+                    const durationMs = evt.duration * 1000;
+                    const startTime = new Date(endTime.getTime() - durationMs);
+                    sessions.push({
+                        start: startTime,
+                        end: endTime,
+                        duration: durationMs,
+                        isCurrent: false,
+                        ip: evt.ip
+                    });
                 }
-                const badgeClass = event.event === 'join' ? 'join' : (event.event === 'leave' ? 'leave' : 'return');
-                return `
-                    <div class="timeline-event-item" style="display:flex; flex-direction:column; gap:4px; padding:12px 8px; border-bottom:1px solid var(--border); font-size:0.9rem;">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span class="scan-status-badge ${badgeClass}" style="padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; text-transform: uppercase;">${event.event}</span>
-                            <span style="color:var(--text-muted); font-size:0.8rem;">${ago}</span>
+            });
+
+            if (isOnlineNow) {
+                const activeEvent = events.find(evt => evt.event === 'return' || evt.event === 'join');
+                const startTime = activeEvent ? new Date(activeEvent.created_at) : new Date(now.getTime() - (5 * 60 * 1000));
+                sessions.push({
+                    start: startTime,
+                    end: now,
+                    duration: now.getTime() - startTime.getTime(),
+                    isCurrent: true,
+                    ip: activeEvent ? activeEvent.ip : ip
+                });
+            }
+
+            // Sort chronologically
+            sessions.sort((a, b) => a.start - b.start);
+
+            // 3. Define timeline range (min 24 hours, max 30 days)
+            let timelineEnd = now.getTime();
+            let timelineStart = now.getTime() - (24 * 60 * 60 * 1000); // 24h default
+
+            if (sessions.length > 0) {
+                const oldestStart = sessions[0].start.getTime();
+                const thirtyDaysAgo = now.getTime() - (30 * 24 * 60 * 60 * 1000);
+                if (oldestStart < timelineStart) {
+                    timelineStart = Math.max(oldestStart, thirtyDaysAgo);
+                }
+            }
+            const totalDuration = timelineEnd - timelineStart;
+
+            // 4. Generate Session Bars HTML
+            let sessionBarsHTML = '';
+            sessions.forEach(session => {
+                let sStart = Math.max(session.start.getTime(), timelineStart);
+                let sEnd = Math.min(session.end.getTime(), timelineEnd);
+                if (sEnd > sStart) {
+                    const left = ((sStart - timelineStart) / totalDuration) * 100;
+                    const width = ((sEnd - sStart) / totalDuration) * 100;
+                    const durText = formatEventDuration((sEnd - sStart) / 1000);
+                    
+                    sessionBarsHTML += `
+                        <div class="presence-session-bar" style="left: ${left}%; width: ${width}%;">
+                            <div class="presence-tooltip">
+                                <strong style="color: var(--success); font-size: 0.85rem; display: block; margin-bottom: 4px;">🟩 ${session.isCurrent ? 'Active Online Session' : 'Completed Session'}</strong>
+                                <span style="display: block; margin-bottom: 2px;"><strong>Start:</strong> ${session.start.toLocaleString()}</span>
+                                <span style="display: block; margin-bottom: 2px;"><strong>End:</strong> ${session.isCurrent ? 'Present (Active Now)' : session.end.toLocaleString()}</span>
+                                <span style="display: block; margin-bottom: 2px;"><strong>Duration:</strong> ${durText}</span>
+                                ${session.ip ? `<span style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 4px;">IP Address: ${session.ip}</span>` : ''}
+                            </div>
                         </div>
-                        <div style="color:var(--text); margin-top:4px;">${detailText}</div>
-                        <div style="color:var(--text-muted); font-size:0.75rem; margin-top:2px;">
-                            Logged on ${dateVal.toLocaleString()} (IP: ${event.ip}${event.mac ? `, MAC: ` + event.mac.toUpperCase() : ''})
-                        </div>
+                    `;
+                }
+            });
+
+            // 5. Build full chart element
+            const startLabel = new Date(timelineStart).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + new Date(timelineStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const midLabel = new Date(timelineStart + totalDuration / 2).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const timespanDays = (totalDuration / (1000 * 60 * 60 * 24)).toFixed(1);
+
+            const chartHTML = `
+                <div class="presence-chart-container">
+                    <h4 style="margin-top: 0; margin-bottom: 0.75rem; font-size: 0.9rem; color: var(--text-muted); display: flex; justify-content: space-between;">
+                        <span>Interactive Timeline (Hover for session details)</span>
+                        <span style="font-size: 0.8rem; font-weight: normal;">Timespan: ${timespanDays} day${timespanDays === '1.0' ? '' : 's'}</span>
+                    </h4>
+                    <div class="presence-chart-track">
+                        ${sessionBarsHTML}
                     </div>
-                `;
-            }).join('');
+                    <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); padding: 0 4px; position: relative;">
+                        <span>${startLabel}</span>
+                        <span style="position: absolute; left: 50%; transform: translateX(-50%);">${midLabel}</span>
+                        <span>Present</span>
+                    </div>
+                </div>
+            `;
+
+            // 6. Build chronological log list
+            const logHTML = `
+                <h4 style="margin-top: 1.5rem; margin-bottom: 0.75rem; font-size: 0.9rem; color: var(--text-muted);">Chronological Log</h4>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    ${events.map(event => {
+                        const dateVal = new Date(event.created_at);
+                        const ago = relativeTime(Math.floor(dateVal.getTime() / 1000));
+                        let detailText = '';
+                        if (event.event === 'leave') {
+                            detailText = `went offline (was connected for ${formatSeconds(event.duration)})`;
+                        } else if (event.event === 'return') {
+                            detailText = `reconnected (was gone for ${formatSeconds(event.duration)})`;
+                        } else if (event.event === 'join') {
+                            detailText = `joined network for the first time`;
+                        }
+                        const badgeClass = event.event === 'join' ? 'join' : (event.event === 'leave' ? 'leave' : 'return');
+                        return `
+                            <div class="timeline-event-item" style="display:flex; flex-direction:column; gap:4px; padding:12px 8px; border-bottom:1px solid var(--border); font-size:0.9rem;">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <span class="scan-status-badge ${badgeClass}" style="padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; text-transform: uppercase;">${event.event}</span>
+                                    <span style="color:var(--text-muted); font-size:0.8rem;">${ago}</span>
+                                </div>
+                                <div style="color:var(--text); margin-top:4px;">${detailText}</div>
+                                <div style="color:var(--text-muted); font-size:0.75rem; margin-top:2px;">
+                                    Logged on ${dateVal.toLocaleString()} (IP: ${event.ip}${event.mac ? `, MAC: ` + event.mac.toUpperCase() : ''})
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+
+            // Render both chart and logs inside the modal body
+            body.innerHTML = chartHTML + logHTML;
         } else {
             body.innerHTML = '<div class="timeline-empty" style="padding: 2rem 0; color: var(--text-muted); font-size: 0.9rem; text-align: center;">No logged presence history for this device.</div>';
         }
     } catch (e) {
+        console.error('Failed to view device history', e);
         body.innerHTML = '<div class="timeline-error" style="padding: 2rem 0; color: #ef4444; font-size: 0.9rem; text-align: center;">Failed to load activity logs.</div>';
     }
 }
