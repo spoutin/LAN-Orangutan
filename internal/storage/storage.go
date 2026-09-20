@@ -1711,6 +1711,72 @@ func (s *Storage) GetPresenceEventsFiltered(mac, ip, q string) ([]types.Presence
 			result = append(result, r)
 		}
 	}
+
+	if len(result) == 0 && q == "" && (mac != "" || ip != "") {
+		// Attempt to locate device in the devices table to auto-heal blank legacy logs
+		var devIP, devMAC, devHostname string
+		var isOnlineVal int
+		var firstSeen, lastSeen time.Time
+
+		var row *sql.Row
+		if mac != "" {
+			row = s.db.QueryRow(`
+				SELECT ip, mac, hostname, is_online, first_seen, last_seen
+				FROM devices
+				WHERE mac <> '' AND mac = ?
+				LIMIT 1
+			`, mac)
+		} else {
+			row = s.db.QueryRow(`
+				SELECT ip, mac, hostname, is_online, first_seen, last_seen
+				FROM devices
+				WHERE ip = ?
+				LIMIT 1
+			`, ip)
+		}
+
+		err := row.Scan(&devIP, &devMAC, &devHostname, &isOnlineVal, &firstSeen, &lastSeen)
+		if err == nil {
+			// Found device with no explicit transition history!
+			// Synthesize automatic history based on is_online status:
+			if isOnlineVal == 1 {
+				// 1. Synthesize a 'join' event at firstSeen
+				result = append(result, types.PresenceEventRecord{
+					ID:        -1, // synthetic ID
+					IP:        devIP,
+					MAC:       devMAC,
+					Hostname:  devHostname,
+					Event:     "join",
+					Duration:  0.0,
+					CreatedAt: firstSeen,
+				})
+			} else {
+				// 2. Synthesize 'leave' event (newest, at lastSeen) and 'join' event (oldest, at firstSeen)
+				duration := lastSeen.Sub(firstSeen).Seconds()
+				if duration < 0 {
+					duration = 0
+				}
+				result = append(result, types.PresenceEventRecord{
+					ID:        -2, // synthetic ID
+					IP:        devIP,
+					MAC:       devMAC,
+					Hostname:  devHostname,
+					Event:     "leave",
+					Duration:  duration,
+					CreatedAt: lastSeen,
+				}, types.PresenceEventRecord{
+					ID:        -1, // synthetic ID
+					IP:        devIP,
+					MAC:       devMAC,
+					Hostname:  devHostname,
+					Event:     "join",
+					Duration:  0.0,
+					CreatedAt: firstSeen,
+				})
+			}
+		}
+	}
+
 	return result, nil
 }
 

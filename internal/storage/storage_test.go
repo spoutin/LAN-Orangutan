@@ -427,4 +427,29 @@ func TestGetPresenceEventsFilteredAndPruning(t *testing.T) {
 	if _, ok := devices["10.0.0.6"]; !ok {
 		t.Error("fresh-pc should still exist in devices table")
 	}
+
+	// Test 6: Verify auto-healing synthesis for a legacy device with absolutely 0 logged history records
+	_, err = s.db.Exec(`
+		INSERT INTO devices (
+			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			assignment, network_name, first_seen, last_seen, response_time, address_history,
+			is_online, missed_sweeps, last_presence_change
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+	`, "10.0.0.100", "aa:bb:cc:dd:ee:99", "legacy-online-pc", "Unknown", "Computer", 0, "[]",
+		"", "", "", "", "", "", 0, "", 0, "Discovered", "LAN", now.Add(-5*time.Hour), now, nil, "[]", 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	synthEvents, err := s.GetPresenceEventsFiltered("", "10.0.0.100", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(synthEvents) != 1 {
+		t.Fatalf("expected 1 synthesized event, got %d", len(synthEvents))
+	}
+	if synthEvents[0].Event != "join" || synthEvents[0].ID != -1 {
+		t.Errorf("expected synthesized 'join' event, got: %+v", synthEvents[0])
+	}
 }
