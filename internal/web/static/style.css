@@ -1103,7 +1103,7 @@ td[data-copy]:not([data-copy=""]) {
 .col-label      { width: 12%; }
 .col-group      { display: none; }
 .col-lastseen   { width: 9%; }
-.col-actions    { width: 8%; min-width: 110px; }
+.col-actions    { width: 8%; min-width: 85px; }
 
 /* Resizable Table Columns */
 .table th {
@@ -1284,6 +1284,10 @@ td[data-copy]:not([data-copy=""]) {
 /* Action Buttons */
 .actions-cell {
     white-space: nowrap;
+}
+
+.actions-cell .btn-icon {
+    padding: 0.35rem 0.25rem;
 }
 
 .btn-icon {
