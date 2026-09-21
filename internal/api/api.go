@@ -858,5 +858,3 @@ func (h *Handler) dispatchNotifications(cidr string, newDevices []types.Device, 
 		_ = notification.SendSlackNotification(n.SlackWebhook, text)
 	}()
 }
-
-

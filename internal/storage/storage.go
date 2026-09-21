@@ -2157,4 +2157,3 @@ func (s *Storage) SaveNetworkNotification(cidr string, webhook string, enabled b
 	`, cidr, webhook, boolToInt(enabled))
 	return err
 }
-

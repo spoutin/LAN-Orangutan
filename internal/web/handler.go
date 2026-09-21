@@ -509,7 +509,7 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
 			n.FriendlyName = name
 		}
-		
+
 		slackWebhook := ""
 		notifyEnabled := false
 		if conf, exists := notifMap[n.CIDR]; exists {

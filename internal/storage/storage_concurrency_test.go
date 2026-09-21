@@ -17,7 +17,7 @@ func TestConcurrentReadDuringMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := mergeDevicesForTest(s, 	[]types.Device{{IP: "10.0.0.1", Hostname: "a"}}); err != nil {
+	if err := mergeDevicesForTest(s, []types.Device{{IP: "10.0.0.1", Hostname: "a"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -40,7 +40,7 @@ func TestConcurrentReadDuringMerge(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < iterations; i++ {
-			_ = mergeDevicesForTest(s, 	[]types.Device{{IP: "10.0.0.1", Hostname: "bbbbbbbb", MAC: "cc", Vendor: "dd"}})
+			_ = mergeDevicesForTest(s, []types.Device{{IP: "10.0.0.1", Hostname: "bbbbbbbb", MAC: "cc", Vendor: "dd"}})
 		}
 	}()
 

@@ -251,4 +251,3 @@ type NetworkNotification struct {
 	SlackWebhook string `json:"slack_webhook"`
 	Enabled      bool   `json:"enabled"`
 }
-
