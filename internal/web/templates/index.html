@@ -396,6 +396,10 @@ orangutan export out.csv</code></pre>
                                 <a href="{{.WebURL}}" target="_blank" class="btn-icon" data-tip="Open Web UI: {{.WebURL}}" aria-label="Open Web UI">
                                     <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                                 </a>
+                                {{else}}
+                                <button class="btn-icon placeholder" style="visibility: hidden; pointer-events: none;" disabled>
+                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                </button>
                                 {{end}}
                                 <button class="btn-icon" onclick="toggleNotifyOnSeenMain('{{.IP}}')" data-tip="{{if .NotifyOnSeen}}Disable presence notifications{{else}}Enable presence notifications{{end}}" aria-label="Toggle presence notifications">
                                     {{if .NotifyOnSeen}}

@@ -1079,7 +1079,7 @@ td[data-copy]:not([data-copy=""]) {
 }
 
 .table th, .table td {
-    padding: 0.7rem 0.65rem;
+    padding: 0.5rem 0.45rem;
     text-align: left;
     border-bottom: 1px solid var(--border-color);
     /* With fixed layout, keep every cell's content inside its column: nothing
@@ -1091,18 +1091,18 @@ td[data-copy]:not([data-copy=""]) {
 /* Column widths for the fixed layout (they sum to 100%). When the responsive
    rules further down hide a column, its share is redistributed across the
    rest, so the table always fills its panel exactly. */
-.col-status     { width: 6.5%; min-width: 60px; }
-.col-ip         { width: 9%; }
-.col-hostname   { width: 10%; }
-.col-network    { width: 7%; }
-.col-assignment { width: 7%; }
-.col-type       { width: 7%; }
-.col-mac        { width: 9%; }
-.col-vendor     { width: 7.5%; }
-.col-label      { width: 7%; }
-.col-group      { width: 9%; }
+.col-status     { width: 4%; min-width: 50px; }
+.col-ip         { width: 12%; }
+.col-hostname   { width: 15%; }
+.col-network    { width: 10%; }
+.col-assignment { width: 9%; }
+.col-type       { width: 10%; }
+.col-mac        { display: none; }
+.col-vendor     { width: 11%; }
+.col-label      { width: 12%; }
+.col-group      { display: none; }
 .col-lastseen   { width: 9%; }
-.col-actions    { width: 8%; min-width: 80px; }
+.col-actions    { width: 8%; min-width: 110px; }
 
 /* Resizable Table Columns */
 .table th {
@@ -1733,6 +1733,13 @@ textarea.input {
    their own full-width row under the title and let the search field flex to
    absorb the slack, so the controls stay on one tidy line down to phone widths.
    The desktop layout above this width is left untouched. */
+/* Below 1200px, hide Type and Assignment columns to fit on narrower desktop/laptop viewports */
+@media (min-width: 769px) and (max-width: 1200px) {
+    .col-assignment, .col-type {
+        display: none;
+    }
+}
+
 @media (max-width: 1150px) {
     .section-header {
         flex-direction: column;
@@ -2451,7 +2458,7 @@ img.login-logo {
 }
 
 .sidebar-networks {
-    flex: 0 0 280px;
+    flex: 0 0 230px;
     background: var(--bg-card);
     border-radius: var(--radius);
     border: 1px solid var(--border);
