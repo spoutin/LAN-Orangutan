@@ -14,6 +14,7 @@ import (
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
 	"github.com/spoutin/LAN-Orangutan/internal/network"
+	"github.com/spoutin/LAN-Orangutan/internal/notification"
 	"github.com/spoutin/LAN-Orangutan/internal/scanner"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
@@ -109,6 +110,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleStatus(w, r)
 	case path == "settings":
 		h.handleSettings(w, r)
+	case path == "settings/notifications":
+		h.handleSettingsNotifications(w, r)
+	case path == "settings/notifications/test":
+		h.handleSettingsNotificationsTest(w, r)
 	case path == "scans/history":
 		h.handleScansHistory(w, r)
 	case path == "scans/events":
@@ -199,6 +204,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			CustomWebURL   *string `json:"custom_web_url"`
 			CustomType     *string `json:"custom_type"`
 			LinkedMAC      *string `json:"linked_mac"`
+			NotifyOnSeen   *bool   `json:"notify_on_seen"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			h.error(w, http.StatusBadRequest, "invalid JSON")
@@ -215,7 +221,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC); err != nil {
+		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC, req.NotifyOnSeen); err != nil {
 			h.error(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -313,10 +319,12 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Merge devices into storage
-	if err := h.store.MergeDevices(result.Devices); err != nil {
+	newDevs, seenDevs, err := h.store.MergeDevices(result.Devices)
+	if err != nil {
 		h.error(w, http.StatusInternalServerError, "failed to save devices")
 		return
 	}
+	h.dispatchNotifications(cidr, newDevs, seenDevs)
 
 	// Update last scan time
 	h.store.SetLastScan(cidr, time.Now())
@@ -570,9 +578,11 @@ func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResu
 		return nil, errors.New(result.Error)
 	}
 
-	if err := h.store.MergeDevices(result.Devices); err != nil {
+	newDevs, seenDevs, err := h.store.MergeDevices(result.Devices)
+	if err != nil {
 		return nil, errors.New("failed to save devices")
 	}
+	h.dispatchNotifications(cidr, newDevs, seenDevs)
 	h.store.SetLastScan(cidr, time.Now())
 	// Remember how long this took so the next scan of the same network can show
 	// a progress estimate based on real measured time.
@@ -757,3 +767,96 @@ func (h *Handler) handleDevicesClear(w http.ResponseWriter, r *http.Request) {
 		"affected": affected,
 	})
 }
+
+// handleSettingsNotifications handles GET and POST for /api/settings/notifications
+func (h *Handler) handleSettingsNotifications(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		list, err := h.store.GetNetworkNotifications()
+		if err != nil {
+			h.error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		h.success(w, list)
+
+	case http.MethodPost:
+		var req struct {
+			NetworkCIDR  string `json:"network_cidr"`
+			SlackWebhook string `json:"slack_webhook"`
+			Enabled      bool   `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.error(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.NetworkCIDR == "" {
+			h.error(w, http.StatusBadRequest, "network_cidr required")
+			return
+		}
+
+		if err := h.store.SaveNetworkNotification(req.NetworkCIDR, req.SlackWebhook, req.Enabled); err != nil {
+			h.error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		h.success(w, map[string]string{"message": "notification setting saved"})
+
+	default:
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleSettingsNotificationsTest handles POST for /api/settings/notifications/test
+func (h *Handler) handleSettingsNotificationsTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req struct {
+		SlackWebhook string `json:"slack_webhook"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.error(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.SlackWebhook == "" {
+		h.error(w, http.StatusBadRequest, "slack_webhook required")
+		return
+	}
+
+	err := notification.SendSlackNotification(req.SlackWebhook, "🔔 *LAN-Orangutan Webhook Test!* Webhook verified successfully.")
+	if err != nil {
+		h.error(w, http.StatusInternalServerError, "failed to send test notification: "+err.Error())
+		return
+	}
+
+	h.success(w, map[string]string{"message": "test notification sent successfully"})
+}
+
+// dispatchNotifications posts a consolidated network sweep report to Slack
+func (h *Handler) dispatchNotifications(cidr string, newDevices []types.Device, seenDevices []types.Device) {
+	if len(newDevices) == 0 && len(seenDevices) == 0 {
+		return
+	}
+
+	// Fetch notification config for this CIDR
+	n, err := h.store.GetNetworkNotification(cidr)
+	if err != nil || n == nil || n.SlackWebhook == "" || !n.Enabled {
+		return
+	}
+
+	// Format beautiful message
+	networkName := cidr
+	if name, ok := h.cfg.Scanning.NetworkNames[cidr]; ok && name != "" {
+		networkName = name
+	}
+
+	text := notification.FormatConsolidatedSlackMessage(networkName, cidr, newDevices, seenDevices)
+
+	// Post to Slack asynchronously
+	go func() {
+		_ = notification.SendSlackNotification(n.SlackWebhook, text)
+	}()
+}
+
+

@@ -13,17 +13,17 @@ func TestDeviceMovingIPIsTrackedByMAC(t *testing.T) {
 	s := newTestStorage(t)
 
 	// First seen at .10, with user data and a type.
-	if err := s.MergeDevices([]types.Device{
+	if err := mergeDevicesForTest(s, []types.Device{
 		{IP: "192.168.1.10", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "nas", Type: "Server"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateDeviceFields("192.168.1.10", strptr("File Server"), strptr("rack 1"), strptr("Infra"), nil, nil, nil, nil); err != nil {
+	if err := s.UpdateDeviceFields("192.168.1.10", strptr("File Server"), strptr("rack 1"), strptr("Infra"), nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// Same MAC reappears at .25.
-	if err := s.MergeDevices([]types.Device{
+	if err := mergeDevicesForTest(s, []types.Device{
 		{IP: "192.168.1.25", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "nas"},
 	}); err != nil {
 		t.Fatal(err)
@@ -55,8 +55,8 @@ func TestDeviceMovingIPIsTrackedByMAC(t *testing.T) {
 // at different IPs are not confused for a move.
 func TestDifferentMACsAreDistinctDevices(t *testing.T) {
 	s := newTestStorage(t)
-	_ = s.MergeDevices([]types.Device{{IP: "192.168.1.10", MAC: "aa:aa:aa:aa:aa:aa"}})
-	_ = s.MergeDevices([]types.Device{{IP: "192.168.1.11", MAC: "bb:bb:bb:bb:bb:bb"}})
+	_ = mergeDevicesForTest(s, []types.Device{{IP: "192.168.1.10", MAC: "aa:aa:aa:aa:aa:aa"}})
+	_ = mergeDevicesForTest(s, []types.Device{{IP: "192.168.1.11", MAC: "bb:bb:bb:bb:bb:bb"}})
 
 	devices := s.GetDevices()
 	if len(devices) != 2 {
@@ -76,7 +76,7 @@ func TestSupplementalMergeDoesNotClobber(t *testing.T) {
 	s := newTestStorage(t)
 
 	// Primary scan: full device with MAC, vendor, web flag and a risk.
-	if err := s.MergeDevices([]types.Device{{
+	if err := mergeDevicesForTest(s, []types.Device{{
 		IP: "192.168.1.5", MAC: "aa:bb:cc:dd:ee:ff", Vendor: "Acme",
 		Type: "Server", WebUI: true, Risks: []string{"Telnet is open"},
 	}}); err != nil {
@@ -115,7 +115,7 @@ func TestVirtualIPCoexistenceSameMAC(t *testing.T) {
 	s := newTestStorage(t)
 
 	// Simultaneously discover .10 and .20 sharing the same MAC.
-	if err := s.MergeDevices([]types.Device{
+	if err := mergeDevicesForTest(s, []types.Device{
 		{IP: "192.168.1.10", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server1", Type: "Server"},
 		{IP: "192.168.1.20", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server2", Type: "Server"},
 	}); err != nil {
@@ -146,7 +146,7 @@ func TestVirtualIPCoexistenceSweepAndPortScan(t *testing.T) {
 	s := newTestStorage(t)
 
 	// Step 1: Simulate Stage 1 Sweep (both discovered simultaneously)
-	if err := s.MergeDevices([]types.Device{
+	if err := mergeDevicesForTest(s, []types.Device{
 		{IP: "192.168.1.10", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server1", Type: "Server"},
 		{IP: "192.168.1.20", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server2", Type: "Server"},
 	}); err != nil {
@@ -163,7 +163,7 @@ func TestVirtualIPCoexistenceSweepAndPortScan(t *testing.T) {
 	// This is where the old code used to delete .10 and record a false relocation!
 	d20 := *devices["192.168.1.20"]
 	d20.WebUI = true
-	if err := s.MergeDevices([]types.Device{d20}); err != nil {
+	if err := mergeDevicesForTest(s, []types.Device{d20}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -194,7 +194,7 @@ func TestVirtualIPCoexistenceCrossSubnet(t *testing.T) {
 	})
 
 	// Step 2: Scan Subnet A (discovers only .10)
-	if err := s.MergeDevices([]types.Device{
+	if err := mergeDevicesForTest(s, []types.Device{
 		{IP: "10.0.0.10", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server-lan", Type: "Server"},
 	}); err != nil {
 		t.Fatal(err)
@@ -202,7 +202,7 @@ func TestVirtualIPCoexistenceCrossSubnet(t *testing.T) {
 
 	// Step 3: Scan Subnet B (discovers only .20 on the same MAC)
 	// This is the sequential cross-subnet sweep!
-	if err := s.MergeDevices([]types.Device{
+	if err := mergeDevicesForTest(s, []types.Device{
 		{IP: "192.168.1.20", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server-vpn", Type: "Server"},
 	}); err != nil {
 		t.Fatal(err)

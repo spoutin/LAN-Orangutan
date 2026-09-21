@@ -416,6 +416,7 @@ async function editDevice(ip) {
             customType: row.dataset.customTypeOriginal || '',
             notes: row.dataset.notes || '',
             linkedMAC: row.dataset.linkedMac || '',
+            notifyOnSeen: row.dataset.notifyOnSeen === '1',
             linkedChildren: row.dataset.linkedChildren ? row.dataset.linkedChildren.split(', ') : []
         };
     } else {
@@ -425,42 +426,44 @@ async function editDevice(ip) {
             if (!res.ok) {
                 // If device not found in database (e.g. deleted but has presence logs),
                 // construct a stub from the event context or show an empty customization form.
-                deviceData = {
-                    ip: ip,
-                    mac: '',
-                    vendor: 'Unknown',
-                    firstSeen: 'N/A',
-                    lastSeen: 'N/A',
-                    responseTime: 'N/A',
-                    label: '',
-                    customHostname: '',
-                    customWebURL: '',
-                    customType: '',
-                    notes: '',
-                    linkedMAC: '',
-                    linkedChildren: []
-                };
-            } else {
-                const result = await res.json();
-                if (result.success && result.data) {
-                    const dev = result.data;
                     deviceData = {
-                        ip: dev.ip,
-                        mac: dev.mac,
-                        vendor: dev.vendor || 'Unknown',
-                        firstSeen: dev.first_seen,
-                        lastSeen: dev.last_seen,
-                        responseTime: dev.response_time ? `${dev.response_time} ms` : 'N/A',
-                        label: dev.label || '',
-                        customHostname: dev.custom_hostname || '',
-                        customWebURL: dev.custom_web_url || '',
-                        customType: dev.custom_type || '',
-                        notes: dev.notes || '',
-                        linkedMAC: dev.linked_mac || '',
-                        linkedChildren: dev.linked_children || []
+                        ip: ip,
+                        mac: '',
+                        vendor: 'Unknown',
+                        firstSeen: 'N/A',
+                        lastSeen: 'N/A',
+                        responseTime: 'N/A',
+                        label: '',
+                        customHostname: '',
+                        customWebURL: '',
+                        customType: '',
+                        notes: '',
+                        linkedMAC: '',
+                        notifyOnSeen: false,
+                        linkedChildren: []
                     };
+                } else {
+                    const result = await res.json();
+                    if (result.success && result.data) {
+                        const dev = result.data;
+                        deviceData = {
+                            ip: dev.ip,
+                            mac: dev.mac,
+                            vendor: dev.vendor || 'Unknown',
+                            firstSeen: dev.first_seen,
+                            lastSeen: dev.last_seen,
+                            responseTime: dev.response_time ? `${dev.response_time} ms` : 'N/A',
+                            label: dev.label || '',
+                            customHostname: dev.custom_hostname || '',
+                            customWebURL: dev.custom_web_url || '',
+                            customType: dev.custom_type || '',
+                            notes: dev.notes || '',
+                            linkedMAC: dev.linked_mac || '',
+                            notifyOnSeen: !!dev.notify_on_seen,
+                            linkedChildren: dev.linked_children || []
+                        };
+                    }
                 }
-            }
         } catch (e) {
             console.error('Failed to fetch device details', e);
             return;
@@ -505,6 +508,10 @@ async function editDevice(ip) {
     document.getElementById('edit-custom-web-url').value = deviceData.customWebURL;
     document.getElementById('edit-custom-type').value = deviceData.customType;
     document.getElementById('edit-notes').value = deviceData.notes;
+    const notifyOnSeenBox = document.getElementById('edit-notify-on-seen');
+    if (notifyOnSeenBox) {
+        notifyOnSeenBox.checked = !!deviceData.notifyOnSeen;
+    }
 
     // Populate searchable parent device options
     const datalist = document.getElementById('parent-devices-list');
@@ -740,8 +747,9 @@ async function saveDevice() {
     const group = document.getElementById('edit-group').value;
     const notes = document.getElementById('edit-notes').value;
     const linked_mac = document.getElementById('edit-linked-mac')?.value || '';
+    const notify_on_seen = document.getElementById('edit-notify-on-seen')?.checked || false;
     try {
-        const result = await api('device', { ip, label, custom_hostname, custom_web_url, custom_type, group, notes, linked_mac }, 'POST');
+        const result = await api('device', { ip, label, custom_hostname, custom_web_url, custom_type, group, notes, linked_mac, notify_on_seen }, 'POST');
         if (result.success) {
             showToast('Device updated', 'success');
             closeModal();
@@ -750,6 +758,26 @@ async function saveDevice() {
             if (!(await refreshInPlace())) location.reload();
         } else {
             showToast(result.error || 'Failed to update device', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+async function toggleNotifyOnSeenMain(ip) {
+    const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
+    if (!row) return;
+
+    const currentVal = row.dataset.notifyOnSeen === '1';
+    const newVal = !currentVal;
+
+    try {
+        const result = await api('device', { ip, notify_on_seen: newVal }, 'POST');
+        if (result.success) {
+            showToast(newVal ? 'Presence notifications enabled' : 'Presence notifications disabled', 'success');
+            if (!(await refreshInPlace())) location.reload();
+        } else {
+            showToast(result.error || 'Failed to toggle notifications', 'error');
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');

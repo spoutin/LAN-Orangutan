@@ -313,8 +313,9 @@ orangutan export out.csv</code></pre>
                             data-status="{{.Status}}"
                             data-moved="{{if .AddressHistory}}1{{end}}"
                             data-flagged="{{if .Risks}}1{{end}}"
-                            data-linked-mac="{{.LinkedMAC}}"
-                            data-linked-children="{{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}"
+                             data-linked-mac="{{.LinkedMAC}}"
+                             data-notify-on-seen="{{if .NotifyOnSeen}}1{{else}}0{{end}}"
+                             data-linked-children="{{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}"
                             data-lastseen="{{.LastSeenUnix}}">
                             <td class="col-status" data-label="Status">
                                 <span class="status-indicator {{.StatusClass}}" data-tip="{{.StatusTip}}"></span>
@@ -396,6 +397,18 @@ orangutan export out.csv</code></pre>
                                     <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                                 </a>
                                 {{end}}
+                                <button class="btn-icon" onclick="toggleNotifyOnSeenMain('{{.IP}}')" data-tip="{{if .NotifyOnSeen}}Disable presence notifications{{else}}Enable presence notifications{{end}}" aria-label="Toggle presence notifications">
+                                    {{if .NotifyOnSeen}}
+                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--success);">
+                                        <polyline points="9 11 12 14 22 4"></polyline>
+                                        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                                    </svg>
+                                    {{else}}
+                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                    </svg>
+                                    {{end}}
+                                </button>
                                 <button class="btn-icon" onclick="editDevice('{{.IP}}')" data-tip="View Details" aria-label="View Details">
                                     <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -515,6 +528,13 @@ orangutan export out.csv</code></pre>
                         <div class="form-group">
                             <label>Device Notes</label>
                             <textarea id="edit-notes" name="notes" class="input" rows="3" placeholder="Add notes about this device..."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; user-select: none;">
+                                <input type="checkbox" id="edit-notify-on-seen" name="notify_on_seen" style="width: auto; margin: 0; cursor: pointer;">
+                                <span>Notify when seen online</span>
+                            </label>
+                            <p class="form-help" style="margin-top: 0.25rem;">Sends a Slack notification each time this device joins or returns to the network.</p>
                         </div>
                         <div class="form-group">
                             <label>Linked Parent Device (Alias)</label>

@@ -133,7 +133,7 @@ func TestContinuousScanOverrideSurvivesReload(t *testing.T) {
 func TestMergeIPv6NeighborsEnrichesByMAC(t *testing.T) {
 	s := newTestStorage(t)
 	// A device found by the reliable IPv4 scan.
-	if err := s.MergeDevices([]types.Device{{IP: "192.168.1.5", MAC: "00:1A:2B:3C:4D:5E"}}); err != nil {
+	if err := mergeDevicesForTest(s, []types.Device{{IP: "192.168.1.5", MAC: "00:1A:2B:3C:4D:5E"}}); err != nil {
 		t.Fatal(err)
 	}
 	// The same physical device sighted over IPv6 (same MAC, routable address).
@@ -249,7 +249,7 @@ func TestIPv6RealisticDualStackNetwork(t *testing.T) {
 	s := newTestStorage(t)
 
 	// The IPv4/ARP scan finds the routable dual-stack devices first.
-	if err := s.MergeDevices([]types.Device{
+	if err := mergeDevicesForTest(s, []types.Device{
 		{IP: "192.168.1.1", MAC: "3C:37:86:11:22:33", Hostname: "router"},
 		{IP: "192.168.1.20", MAC: "A4:83:E7:44:55:66", Hostname: "macbook"},
 	}); err != nil {
@@ -327,7 +327,7 @@ func TestGetPresenceEventsFilteredAndPruning(t *testing.T) {
 	}
 
 	// Add a fresh active device
-	if err := s.MergeDevices([]types.Device{
+	if err := mergeDevicesForTest(s, []types.Device{
 		{IP: "10.0.0.6", MAC: "aa:bb:cc:dd:ee:22", Hostname: "fresh-pc"},
 	}); err != nil {
 		t.Fatal(err)
@@ -460,7 +460,7 @@ func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
 	// Step 1: Create Parent Device (galaxy-parent on OpenWrt)
 	parentIP := "10.5.5.50"
 	parentMAC := "aa:bb:cc:11:11:11"
-	if err := s.MergeDevices([]types.Device{
+	if err := mergeDevicesForTest(s, []types.Device{
 		{IP: parentIP, MAC: parentMAC, Hostname: "Galaxy-S10"},
 	}); err != nil {
 		t.Fatal(err)
@@ -469,21 +469,21 @@ func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
 	// Customize parent device settings
 	labelVal := "My Parent S10"
 	notesVal := "Owner: John Doe"
-	if err := s.UpdateDeviceFields(parentIP, &labelVal, &notesVal, nil, nil, nil, nil, nil); err != nil {
+	if err := s.UpdateDeviceFields(parentIP, &labelVal, &notesVal, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// Step 2: Create Child Device (galaxy-child on OPNsense)
 	childIP := "10.0.4.80"
 	childMAC := "aa:bb:cc:22:22:22"
-	if err := s.MergeDevices([]types.Device{
+	if err := mergeDevicesForTest(s, []types.Device{
 		{IP: childIP, MAC: childMAC, Hostname: "galaxy-s10"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Link Child Device to Parent Device using parentMAC
-	if err := s.UpdateDeviceFields(childIP, nil, nil, nil, nil, nil, nil, &parentMAC); err != nil {
+	if err := s.UpdateDeviceFields(childIP, nil, nil, nil, nil, nil, nil, &parentMAC, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -531,4 +531,9 @@ func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
 	if len(childEvents) != len(parentEvents) {
 		t.Errorf("child timeline length (%d) should equal parent timeline length (%d)", len(childEvents), len(parentEvents))
 	}
+}
+
+func mergeDevicesForTest(s *Storage, discovered []types.Device) error {
+	_, _, err := s.MergeDevices(discovered)
+	return err
 }

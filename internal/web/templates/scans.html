@@ -168,6 +168,13 @@
                             <textarea id="edit-notes" name="notes" class="input" rows="3" placeholder="Add notes about this device..."></textarea>
                         </div>
                         <div class="form-group">
+                            <label class="checkbox-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; user-select: none;">
+                                <input type="checkbox" id="edit-notify-on-seen" name="notify_on_seen" style="width: auto; margin: 0; cursor: pointer;">
+                                <span>Notify when seen online</span>
+                            </label>
+                            <p class="form-help" style="margin-top: 0.25rem;">Sends a Slack notification each time this device joins or returns to the network.</p>
+                        </div>
+                        <div class="form-group">
                             <label>Linked Parent Device (Alias)</label>
                             <div style="display: flex; gap: 8px; align-items: center;">
                                 <input type="text" id="edit-linked-mac-search" class="input" style="flex-grow: 1;" placeholder="Search other devices to link (SSID alias)..." list="parent-devices-list" oninput="syncLinkedMacValue()">

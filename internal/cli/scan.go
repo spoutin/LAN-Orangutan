@@ -108,7 +108,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 
 		// Merge devices
-		if err := store.MergeDevices(result.Devices); err != nil {
+		if _, _, err := store.MergeDevices(result.Devices); err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving devices: %v\n", err)
 			continue
 		}

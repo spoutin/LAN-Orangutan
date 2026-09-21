@@ -312,18 +312,20 @@ func (s *Storage) scanDevice(scanner interface {
 	Scan(dest ...interface{}) error
 }) (*types.Device, error) {
 	var d types.Device
-	var webUIVal, probedVal int
+	var webUIVal, probedVal, notifyOnSeenVal int
 	var risksStr, addressHistoryStr string
 	err := scanner.Scan(
 		&d.IP, &d.MAC, &d.Hostname, &d.Vendor, &d.Type, &webUIVal, &risksStr, &d.Label, &d.Notes, &d.Group,
 		&d.CustomHostname, &d.CustomWebURL, &d.CustomType, &d.WebPort, &d.WebScheme, &probedVal, &d.Assignment,
 		&d.NetworkName, &d.FirstSeen, &d.LastSeen, &d.ResponseTime, &addressHistoryStr, &d.LinkedMAC,
+		&notifyOnSeenVal,
 	)
 	if err != nil {
 		return nil, err
 	}
 	d.WebUI = webUIVal != 0
 	d.Probed = probedVal != 0
+	d.NotifyOnSeen = notifyOnSeenVal != 0
 	_ = json.Unmarshal([]byte(risksStr), &d.Risks)
 	_ = json.Unmarshal([]byte(addressHistoryStr), &d.AddressHistory)
 	return &d, nil
@@ -344,7 +346,8 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			COALESCE(NULLIF(p.custom_web_url, ''), d.custom_web_url) AS custom_web_url,
 			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
 			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
-			d.linked_mac
+			d.linked_mac,
+			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 	`)
@@ -465,7 +468,8 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 			COALESCE(NULLIF(p.custom_web_url, ''), d.custom_web_url) AS custom_web_url,
 			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
 			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
-			d.linked_mac
+			d.linked_mac,
+			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 		WHERE d.ip = ?
@@ -490,7 +494,8 @@ func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 			COALESCE(NULLIF(p.custom_web_url, ''), d.custom_web_url) AS custom_web_url,
 			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
 			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
-			d.linked_mac
+			d.linked_mac,
+			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 		WHERE d.ip = ?
@@ -541,6 +546,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		if device.FirstSeen.IsZero() {
 			device.FirstSeen = existing.FirstSeen
 		}
+		device.NotifyOnSeen = existing.NotifyOnSeen
 	}
 
 	if device.FirstSeen.IsZero() {
@@ -559,8 +565,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 			assignment, network_name, first_seen, last_seen, response_time, address_history,
-			is_online, missed_sweeps, last_presence_change
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
 		ON CONFLICT(ip) DO UPDATE SET
 			mac = excluded.mac,
 			hostname = excluded.hostname,
@@ -587,12 +593,13 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 	`, device.IP, device.MAC, device.Hostname, device.Vendor, device.Type, boolToInt(device.WebUI), string(risksJSON),
 		device.Label, device.Notes, device.Group, device.CustomHostname, device.CustomWebURL, device.CustomType,
 		device.WebPort, device.WebScheme, boolToInt(device.Probed), device.Assignment, device.NetworkName,
-		device.FirstSeen, device.LastSeen, device.ResponseTime, string(historyJSON), isOnline, device.LastSeen)
+		device.FirstSeen, device.LastSeen, device.ResponseTime, string(historyJSON), isOnline, device.LastSeen,
+		device.LinkedMAC, boolToInt(device.NotifyOnSeen))
 	return err
 }
 
 // UpdateDeviceFields updates specific fields of a device
-func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac *string) error {
+func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac *string, notifyOnSeen *bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -643,6 +650,10 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 				parentFields = append(parentFields, `custom_type = ?`)
 				parentArgs = append(parentArgs, *customType)
 			}
+			if notifyOnSeen != nil {
+				parentFields = append(parentFields, `notify_on_seen = ?`)
+				parentArgs = append(parentArgs, boolToInt(*notifyOnSeen))
+			}
 
 			if len(parentFields) > 0 {
 				parentQuery += joinStrings(parentFields, ", ") + ` WHERE ip = ?`
@@ -651,7 +662,7 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 			}
 
 			// Clear customizations on the child so it cleanly inherits them from the parent
-			childQuery := `UPDATE devices SET label = '', notes = '', "group" = '', custom_hostname = '', custom_web_url = '', custom_type = ''`
+			childQuery := `UPDATE devices SET label = '', notes = '', "group" = '', custom_hostname = '', custom_web_url = '', custom_type = '', notify_on_seen = 0`
 			var childArgs []interface{}
 			if linkedMac != nil {
 				childQuery += `, linked_mac = ?`
@@ -696,6 +707,10 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 	if linkedMac != nil {
 		fields = append(fields, `linked_mac = ?`)
 		args = append(args, *linkedMac)
+	}
+	if notifyOnSeen != nil {
+		fields = append(fields, `notify_on_seen = ?`)
+		args = append(args, boolToInt(*notifyOnSeen))
 	}
 
 	if len(fields) == 0 {
@@ -748,7 +763,7 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
-		       linked_mac
+		       linked_mac, notify_on_seen
 		FROM devices
 		WHERE mac = ? AND ip != ?
 	`, mac, excludeIP)
@@ -776,7 +791,7 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
-		       linked_mac
+		       linked_mac, notify_on_seen
 		FROM devices
 		WHERE mac = ?
 		LIMIT 1
@@ -791,13 +806,15 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 	return d, nil
 }
 
-func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time, activeIPs map[string]bool) error {
+func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time, activeIPs map[string]bool) (bool, error) {
+	isNew := true
 	if d.MAC != "" {
 		oldIP, old, err := s.findByMACLocked(tx, d.MAC, d.IP)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if old != nil {
+			isNew = false
 			// Check if the old IP is also active (using either sweep active list, or DB online state depending on subnet boundary)
 			var oldIPActive bool
 			if s.inSameSubnetLocked(d.IP, oldIP) {
@@ -818,6 +835,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			d.WebScheme = old.WebScheme
 			d.Probed = old.Probed
 			d.FirstSeen = old.FirstSeen
+			d.NotifyOnSeen = old.NotifyOnSeen
 			if d.Type == "" {
 				d.Type = old.Type
 			}
@@ -827,7 +845,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 				d.AddressHistory = appendAddressChange(old.AddressHistory, oldIP, now)
 				_, err = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP)
 				if err != nil {
-					return err
+					return false, err
 				}
 			}
 		}
@@ -849,14 +867,15 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 			assignment, network_name, first_seen, last_seen, response_time, address_history,
-			is_online, missed_sweeps, last_presence_change
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
 	`, d.IP, d.MAC, d.Hostname, d.Vendor, d.Type, boolToInt(d.WebUI), string(risksJSON),
 		d.Label, d.Notes, d.Group, d.CustomHostname, d.CustomWebURL, d.CustomType,
 		d.WebPort, d.WebScheme, boolToInt(d.Probed), d.Assignment, d.NetworkName,
-		d.FirstSeen, d.LastSeen, d.ResponseTime, string(historyJSON), isOnline, d.LastSeen)
+		d.FirstSeen, d.LastSeen, d.ResponseTime, string(historyJSON), isOnline, d.LastSeen,
+		d.LinkedMAC, boolToInt(d.NotifyOnSeen))
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// Log an initial 'join' presence event for first-time discovery!
@@ -864,7 +883,10 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
 		VALUES (?, ?, ?, 'join', 0.0, ?)
 	`, d.IP, d.MAC, d.Hostname, now)
-	return err
+	if err != nil {
+		return false, err
+	}
+	return isNew, nil
 }
 
 func isIPv4(ip string) bool {
@@ -888,7 +910,7 @@ func (s *Storage) pruneEphemeralIPv6() error {
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
-		       linked_mac
+		       linked_mac, notify_on_seen
 		FROM devices
 	`)
 	if err != nil {
@@ -960,13 +982,13 @@ func (s *Storage) SetSetting(key, value string) error {
 }
 
 // MergeDevices merges discovered devices with existing data
-func (s *Storage) MergeDevices(discovered []types.Device) error {
+func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []types.Device, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer tx.Rollback()
 
@@ -977,32 +999,36 @@ func (s *Storage) MergeDevices(discovered []types.Device) error {
 		}
 	}
 
+	var newDevices []types.Device
+	var seenDevices []types.Device
+
 	now := time.Now()
 	for _, d := range discovered {
 		row := tx.QueryRow(`
 			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 			       assignment, network_name, first_seen, last_seen, response_time, address_history,
-			       is_online, last_presence_change
+			       is_online, last_presence_change, notify_on_seen
 			FROM devices WHERE ip = ?
 		`, d.IP)
 
 		var existing types.Device
 		var webUIVal, probedVal int
 		var risksStr, addressHistoryStr string
-		var isOnlineVal int
+		var isOnlineVal, notifyOnSeenVal int
 		var lastPresenceChange time.Time
 
 		err := row.Scan(
 			&existing.IP, &existing.MAC, &existing.Hostname, &existing.Vendor, &existing.Type, &webUIVal, &risksStr, &existing.Label, &existing.Notes, &existing.Group,
 			&existing.CustomHostname, &existing.CustomWebURL, &existing.CustomType, &existing.WebPort, &existing.WebScheme, &probedVal, &existing.Assignment,
 			&existing.NetworkName, &existing.FirstSeen, &existing.LastSeen, &existing.ResponseTime, &addressHistoryStr,
-			&isOnlineVal, &lastPresenceChange,
+			&isOnlineVal, &lastPresenceChange, &notifyOnSeenVal,
 		)
 
 		if err == nil {
 			existing.WebUI = webUIVal != 0
 			existing.Probed = probedVal != 0
+			existing.NotifyOnSeen = notifyOnSeenVal != 0
 			_ = json.Unmarshal([]byte(risksStr), &existing.Risks)
 			_ = json.Unmarshal([]byte(addressHistoryStr), &existing.AddressHistory)
 
@@ -1041,14 +1067,18 @@ func (s *Storage) MergeDevices(discovered []types.Device) error {
 					VALUES (?, ?, ?, 'return', ?, ?)
 				`, existing.IP, existing.MAC, existing.Hostname, offlineDur, now)
 				if err != nil {
-					return err
+					return nil, nil, err
 				}
 				isOnlineVal = 1
 				lastPresenceChange = now
+
+				if existing.NotifyOnSeen {
+					seenDevices = append(seenDevices, existing)
+				}
 			} else {
 				_, err = tx.Exec("UPDATE devices SET missed_sweeps = 0 WHERE ip = ?", existing.IP)
 				if err != nil {
-					return err
+					return nil, nil, err
 				}
 			}
 
@@ -1069,18 +1099,25 @@ func (s *Storage) MergeDevices(discovered []types.Device) error {
 				existing.NetworkName, existing.FirstSeen, existing.LastSeen, existing.ResponseTime,
 				string(historyJSON), isOnlineVal, lastPresenceChange, existing.IP)
 			if err != nil {
-				return err
+				return nil, nil, err
 			}
 		} else {
 			dev := d
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			if err := s.addNewDeviceLocked(tx, &dev, now, activeIPs); err != nil {
-				return err
+			isCompletelyNew, err := s.addNewDeviceLocked(tx, &dev, now, activeIPs)
+			if err != nil {
+				return nil, nil, err
+			}
+			if isCompletelyNew {
+				newDevices = append(newDevices, dev)
 			}
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	return newDevices, seenDevices, nil
 }
 
 // MergeSupplemental folds in devices from secondary sources
@@ -1185,7 +1222,7 @@ func (s *Storage) MergeSupplemental(discovered []types.Device) error {
 		} else {
 			dev := d
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			if err := s.addNewDeviceLocked(tx, &dev, now, nil); err != nil {
+			if _, err := s.addNewDeviceLocked(tx, &dev, now, nil); err != nil {
 				return err
 			}
 		}
@@ -1290,7 +1327,7 @@ func (s *Storage) MergeIPv6Neighbors(discovered []types.Device) error {
 		if !isRandomizedMAC(d.MAC) {
 			dev := d
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			if err := s.addNewDeviceLocked(tx, &dev, now, nil); err != nil {
+			if _, err := s.addNewDeviceLocked(tx, &dev, now, nil); err != nil {
 				return err
 			}
 			changed = true
@@ -1635,7 +1672,8 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 	rows, err := tx.Query(`
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
-		       assignment, network_name, first_seen, last_seen, response_time, address_history
+		       assignment, network_name, first_seen, last_seen, response_time, address_history,
+		       linked_mac, notify_on_seen
 		FROM devices
 	`)
 	if err != nil {
@@ -1684,7 +1722,8 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 		row := tx.QueryRow(`
 			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
-			       assignment, network_name, first_seen, last_seen, response_time, address_history
+			       assignment, network_name, first_seen, last_seen, response_time, address_history,
+			       linked_mac, notify_on_seen
 			FROM devices WHERE ip = ?
 		`, d.IP)
 		existing, err := s.scanDevice(row)
@@ -1731,7 +1770,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 			dev := d
 			dev.Assignment = assignments[d.IP]
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
-			if err := s.addNewDeviceLocked(tx, &dev, now.Add(-65*time.Minute), nil); err != nil {
+			if _, err := s.addNewDeviceLocked(tx, &dev, now.Add(-65*time.Minute), nil); err != nil {
 				return err
 			}
 		}
@@ -2055,3 +2094,67 @@ func (s *Storage) ClearDevices(networkName string) (int64, error) {
 
 	return affected, nil
 }
+
+// GetNetworkNotification retrieves the webhook configuration for a specific network CIDR
+func (s *Storage) GetNetworkNotification(cidr string) (*types.NetworkNotification, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var n types.NetworkNotification
+	var enabledVal int
+	err := s.db.QueryRow(`
+		SELECT network_cidr, slack_webhook, enabled 
+		FROM network_notifications 
+		WHERE network_cidr = ?
+	`, cidr).Scan(&n.NetworkCIDR, &n.SlackWebhook, &enabledVal)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	n.Enabled = enabledVal != 0
+	return &n, nil
+}
+
+// GetNetworkNotifications retrieves all per-network notification configurations
+func (s *Storage) GetNetworkNotifications() ([]types.NetworkNotification, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT network_cidr, slack_webhook, enabled 
+		FROM network_notifications
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []types.NetworkNotification
+	for rows.Next() {
+		var n types.NetworkNotification
+		var enabledVal int
+		if err := rows.Scan(&n.NetworkCIDR, &n.SlackWebhook, &enabledVal); err == nil {
+			n.Enabled = enabledVal != 0
+			list = append(list, n)
+		}
+	}
+	return list, nil
+}
+
+// SaveNetworkNotification upserts a webhook configuration for a specific network CIDR
+func (s *Storage) SaveNetworkNotification(cidr string, webhook string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT INTO network_notifications (network_cidr, slack_webhook, enabled)
+		VALUES (?, ?, ?)
+		ON CONFLICT(network_cidr) DO UPDATE SET
+			slack_webhook = excluded.slack_webhook,
+			enabled = excluded.enabled
+	`, cidr, webhook, boolToInt(enabled))
+	return err
+}
+

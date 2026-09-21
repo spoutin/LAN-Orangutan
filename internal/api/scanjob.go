@@ -554,7 +554,7 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 				current.Probed = true
 
 				// Save back to database
-				_ = h.store.MergeDevices([]types.Device{*current})
+				_, _, _ = h.store.MergeDevices([]types.Device{*current})
 			}
 
 			// Increment completion count

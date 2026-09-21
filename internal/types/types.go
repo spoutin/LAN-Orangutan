@@ -47,6 +47,9 @@ type Device struct {
 	// LinkedMAC specifies the parent MAC address this device is linked (aliased) to.
 	LinkedMAC string `json:"linked_mac,omitempty"`
 
+	// NotifyOnSeen specifies if a Slack notification should be sent each time the device comes online.
+	NotifyOnSeen bool `json:"notify_on_seen"`
+
 	// LinkedChildren lists the display labels of child devices linked to this device.
 	LinkedChildren []string `json:"linked_children,omitempty"`
 
@@ -241,3 +244,11 @@ func (d Device) WebURL() string {
 
 	return fmt.Sprintf("%s://%s%s", scheme, host, portSuffix)
 }
+
+// NetworkNotification represents the webhook configurations per network CIDR
+type NetworkNotification struct {
+	NetworkCIDR  string `json:"network_cidr"`
+	SlackWebhook string `json:"slack_webhook"`
+	Enabled      bool   `json:"enabled"`
+}
+

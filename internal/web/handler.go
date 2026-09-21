@@ -38,11 +38,13 @@ type Handler struct {
 // NetworkView holds network info and device statistics for rendering
 type NetworkView struct {
 	types.Network
-	DeviceCount  int
-	IsScanning   bool
-	IsCompleted  bool
-	LastScanUnix int64
-	LastScanAgo  string
+	DeviceCount   int
+	IsScanning    bool
+	IsCompleted   bool
+	LastScanUnix  int64
+	LastScanAgo   string
+	SlackWebhook  string
+	NotifyEnabled bool
 }
 
 // PageData holds data passed to templates
@@ -496,13 +498,29 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	networks, _ := network.DetectNetworks()
 	networks = network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
 
+	notifs, _ := h.store.GetNetworkNotifications()
+	notifMap := make(map[string]types.NetworkNotification)
+	for _, n := range notifs {
+		notifMap[n.NetworkCIDR] = n
+	}
+
 	var networkViews []NetworkView
 	for _, n := range networks {
 		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
 			n.FriendlyName = name
 		}
+		
+		slackWebhook := ""
+		notifyEnabled := false
+		if conf, exists := notifMap[n.CIDR]; exists {
+			slackWebhook = conf.SlackWebhook
+			notifyEnabled = conf.Enabled
+		}
+
 		networkViews = append(networkViews, NetworkView{
-			Network: n,
+			Network:       n,
+			SlackWebhook:  slackWebhook,
+			NotifyEnabled: notifyEnabled,
 		})
 	}
 

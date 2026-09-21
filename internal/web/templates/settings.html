@@ -146,6 +146,29 @@ orangutan export out.csv</code></pre>
         </section>
 
         <section class="section">
+            <h2 class="section-title">New Device Notifications</h2>
+            <div class="card">
+                <p class="form-help" style="margin-bottom: 1.5rem;">Configure Slack Webhook URLs to notify you whenever a completely brand-new device is detected on a specific network.</p>
+                <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+                    {{range .Networks}}{{if not .IsTailscale}}
+                    <div class="network-notification-row" style="border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; margin-bottom: 1rem;">
+                        <div style="font-weight: 600; margin-bottom: 0.75rem; display: flex; align-items: center; justify-content: space-between;">
+                            <span>{{if .FriendlyName}}{{.FriendlyName}}{{else}}Local Subnet{{end}} ({{.CIDR}})</span>
+                            <label class="switch" style="display: flex; align-items: center; gap: 0.5rem; font-weight: 500; font-size: 0.85rem; cursor: pointer; user-select: none;">
+                                <input type="checkbox" id="notify-enabled-{{.CIDR}}" onchange="saveNotification('{{.CIDR}}')" {{if .NotifyEnabled}}checked{{end}} style="width: auto; margin: 0; cursor: pointer;"> Enabled
+                            </label>
+                        </div>
+                        <div style="display: flex; gap: 0.75rem; align-items: center;">
+                            <input type="text" id="notify-webhook-{{.CIDR}}" class="input" placeholder="https://hooks.slack.com/services/..." value="{{.SlackWebhook}}" style="flex: 1;" onblur="saveNotification('{{.CIDR}}')">
+                            <button class="btn" style="padding: 0.5rem 1rem;" onclick="testNotification('{{.CIDR}}')">Test</button>
+                        </div>
+                    </div>
+                    {{end}}{{end}}
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
             <h2 class="section-title">Appearance</h2>
             <div class="card">
                 <div class="form-group">
@@ -243,6 +266,58 @@ orangutan export out.csv</code></pre>
 
         function exportDevices() {
             window.location.href = '/api/devices?format=csv';
+        }
+
+        async function saveNotification(cidr) {
+            const webhookInput = document.getElementById(`notify-webhook-${cidr}`);
+            const enabledCheckbox = document.getElementById(`notify-enabled-${cidr}`);
+            if (!webhookInput || !enabledCheckbox) return;
+
+            const slack_webhook = webhookInput.value.trim();
+            const enabled = enabledCheckbox.checked;
+
+            try {
+                const response = await fetch('/api/settings/notifications', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ network_cidr: cidr, slack_webhook, enabled })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showToast('Notification setting saved', 'success');
+                } else {
+                    showToast(result.error || 'Failed to save', 'error');
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message, 'error');
+            }
+        }
+
+        async function testNotification(cidr) {
+            const webhookInput = document.getElementById(`notify-webhook-${cidr}`);
+            if (!webhookInput) return;
+
+            const slack_webhook = webhookInput.value.trim();
+            if (!slack_webhook) {
+                showToast('Please enter a Webhook URL first', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/settings/notifications/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slack_webhook })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showToast('Test notification sent!', 'success');
+                } else {
+                    showToast(result.error || 'Test failed', 'error');
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message, 'error');
+            }
         }
     </script>
 </body>
