@@ -1093,17 +1093,17 @@ td[data-copy]:not([data-copy=""]) {
    rules further down hide a column, its share is redistributed across the
    rest, so the table always fills its panel exactly. */
 .col-status     { width: 4%; min-width: 50px; }
-.col-ip         { width: 12%; }
-.col-hostname   { width: 15%; }
+.col-ip         { width: 13%; }
+.col-hostname   { width: 22%; }
 .col-network    { width: 10%; }
 .col-assignment { width: 9%; }
 .col-type       { width: 10%; }
 .col-mac        { display: none; }
-.col-vendor     { width: 11%; }
-.col-label      { width: 12%; }
+.col-vendor     { width: 13%; }
+.col-label      { display: none; }
 .col-group      { display: none; }
-.col-lastseen   { width: 9%; }
-.col-actions    { width: 8%; min-width: 85px; }
+.col-lastseen   { width: 10%; }
+.col-actions    { width: 9%; min-width: 85px; }
 
 /* Resizable Table Columns */
 .table th {
@@ -1733,7 +1733,7 @@ textarea.input {
 }
 
 @media (min-width: 769px) and (max-width: 1120px) {
-    .col-vendor, .col-label {
+    .col-vendor {
         display: none;
     }
 }
