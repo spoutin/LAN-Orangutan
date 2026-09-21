@@ -1076,10 +1076,11 @@ td[data-copy]:not([data-copy=""]) {
        push the table wider than its container. Overlong values truncate within
        their own column. */
     table-layout: fixed;
+    font-size: 0.85rem;
 }
 
 .table th, .table td {
-    padding: 0.5rem 0.45rem;
+    padding: 0.45rem 0.4rem;
     text-align: left;
     border-bottom: 1px solid var(--border-color);
     /* With fixed layout, keep every cell's content inside its column: nothing
@@ -1720,22 +1721,15 @@ textarea.input {
     .main { padding: 1.5rem; }
 }
 
-/* Tablets only (phones switch to the card layout below): drop the widest
-   optional columns (Vendor, Label) so the rest keep room without cramming. */
-@media (min-width: 769px) and (max-width: 1024px) {
-    .col-vendor, .col-label { display: none; }
+/* Aggressive Column Hiding to eliminate horizontal scrolling on any desktop/laptop viewport */
+@media (min-width: 769px) and (max-width: 1380px) {
+    .col-assignment, .col-type {
+        display: none;
+    }
 }
 
-/* Discovered-devices toolbar: on a full desktop the section title sits on one
-   line with its controls (continuous-scan toggle, search, the two filters,
-   Export, Scan All) beside it. Below ~1150px those controls no longer fit next
-   to the title and wrap into three or four ragged rows. Instead, drop them onto
-   their own full-width row under the title and let the search field flex to
-   absorb the slack, so the controls stay on one tidy line down to phone widths.
-   The desktop layout above this width is left untouched. */
-/* Below 1200px, hide Type and Assignment columns to fit on narrower desktop/laptop viewports */
-@media (min-width: 769px) and (max-width: 1200px) {
-    .col-assignment, .col-type {
+@media (min-width: 769px) and (max-width: 1120px) {
+    .col-vendor, .col-label {
         display: none;
     }
 }
