@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -47,6 +48,9 @@ type scanJob struct {
 	portScanTotal    int
 	portScanComplete int
 	portScanWG       sync.WaitGroup
+
+	accumulatedNew  []string
+	accumulatedSeen []string
 }
 
 // scanProgress is the snapshot of a job returned to the UI.
@@ -389,6 +393,10 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		if err != nil {
 			fmt.Printf("[DEBUG] ProcessMissingDevices error: %v\n", err)
 		}
+
+		// Dispatch deferred notifications using fully complete, enriched database entries
+		j.dispatchDeferredNotifications(h)
+
 		j.finish("done", "")
 	} else {
 		j.finish("cancelled", "")
@@ -605,4 +613,72 @@ func (h *Handler) runCleanup() {
 	} else if deleted > 0 {
 		fmt.Printf("[CLEANUP] Pruned %d records older than a year\n", deleted)
 	}
+}
+
+// accumulate appends discovered new and seen device IPs to the scan job
+func (j *scanJob) accumulate(newIPs, seenIPs []string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.accumulatedNew = append(j.accumulatedNew, newIPs...)
+	j.accumulatedSeen = append(j.accumulatedSeen, seenIPs...)
+}
+
+// dispatchDeferredNotifications pulls complete, enriched rows from SQLite and sends the Slack reports
+func (j *scanJob) dispatchDeferredNotifications(h *Handler) {
+	j.mu.Lock()
+	newIPs := j.accumulatedNew
+	seenIPs := j.accumulatedSeen
+	j.mu.Unlock()
+
+	if len(newIPs) == 0 && len(seenIPs) == 0 {
+		return
+	}
+
+	newByNetwork := make(map[string][]types.Device)
+	seenByNetwork := make(map[string][]types.Device)
+
+	// Pull fully complete, enriched models from storage
+	for _, ip := range newIPs {
+		d := h.store.GetDevice(ip)
+		if d != nil {
+			cidr := findSubnetForIP(d.IP, j.networks)
+			if cidr != "" {
+				newByNetwork[cidr] = append(newByNetwork[cidr], *d)
+			}
+		}
+	}
+
+	for _, ip := range seenIPs {
+		d := h.store.GetDevice(ip)
+		if d != nil {
+			cidr := findSubnetForIP(d.IP, j.networks)
+			if cidr != "" {
+				seenByNetwork[cidr] = append(seenByNetwork[cidr], *d)
+			}
+		}
+	}
+
+	// Dispatch consolidated notifications for each subnet
+	for _, cidr := range j.networks {
+		news := newByNetwork[cidr]
+		seens := seenByNetwork[cidr]
+		if len(news) > 0 || len(seens) > 0 {
+			h.dispatchNotifications(cidr, news, seens)
+		}
+	}
+}
+
+// findSubnetForIP returns the network CIDR block that contains the given IP
+func findSubnetForIP(ipStr string, subnets []string) string {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return ""
+	}
+	for _, subnetStr := range subnets {
+		_, subnet, err := net.ParseCIDR(subnetStr)
+		if err == nil && subnet.Contains(ip) {
+			return subnetStr
+		}
+	}
+	return ""
 }

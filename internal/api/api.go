@@ -582,7 +582,25 @@ func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResu
 	if err != nil {
 		return nil, errors.New("failed to save devices")
 	}
-	h.dispatchNotifications(cidr, newDevs, seenDevs)
+
+	h.jobMu.Lock()
+	activeJob := h.job
+	h.jobMu.Unlock()
+
+	if activeJob != nil && activeJob.isRunning() {
+		var newIPs []string
+		for _, d := range newDevs {
+			newIPs = append(newIPs, d.IP)
+		}
+		var seenIPs []string
+		for _, d := range seenDevs {
+			seenIPs = append(seenIPs, d.IP)
+		}
+		activeJob.accumulate(newIPs, seenIPs)
+	} else {
+		h.dispatchNotifications(cidr, newDevs, seenDevs)
+	}
+
 	h.store.SetLastScan(cidr, time.Now())
 	// Remember how long this took so the next scan of the same network can show
 	// a progress estimate based on real measured time.
