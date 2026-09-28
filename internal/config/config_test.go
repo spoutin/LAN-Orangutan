@@ -474,4 +474,3 @@ api_key = test-key
 		}
 	})
 }
-

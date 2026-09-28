@@ -669,7 +669,10 @@ func TestDeviceTelemetryPersistence(t *testing.T) {
 
 func TestMergeUniFiClients(t *testing.T) {
 	s := newTestStorage(t)
-	s.SetNetworkNames(map[string]string{"192.168.1.0/24": "Home LAN"})
+	s.SetNetworkNames(map[string]string{
+		"192.168.1.0/24":  "Home LAN",
+		"192.168.20.0/24": "IoT LAN",
+	})
 
 	// 1. Matching existing device by MAC (case-insensitive) and updating wireless telemetry
 	// while preserving user customizations
@@ -711,7 +714,7 @@ func TestMergeUniFiClients(t *testing.T) {
 		UniFiModel:        "U6-Pro",
 	}
 
-	if err := s.MergeUniFiClients([]types.Device{client}); err != nil {
+	if _, _, err := s.MergeUniFiClients([]types.Device{client}); err != nil {
 		t.Fatalf("MergeUniFiClients: %v", err)
 	}
 
@@ -802,7 +805,7 @@ func TestMergeUniFiClients(t *testing.T) {
 		SSID:   "Guest-WiFi",
 		APName: "Hall AP",
 	}
-	if err := s.MergeUniFiClients([]types.Device{ipClient}); err != nil {
+	if _, _, err := s.MergeUniFiClients([]types.Device{ipClient}); err != nil {
 		t.Fatalf("MergeUniFiClients: %v", err)
 	}
 	updatedIPDev := s.GetDevice("192.168.1.101")
@@ -830,8 +833,15 @@ func TestMergeUniFiClients(t *testing.T) {
 		WiFiStandard: "WiFi 4 (11n)",
 		Signal:       -70,
 	}
-	if err := s.MergeUniFiClients([]types.Device{newClient}); err != nil {
+	newDevs, seenDevs, err := s.MergeUniFiClients([]types.Device{newClient})
+	if err != nil {
 		t.Fatalf("MergeUniFiClients new device: %v", err)
+	}
+	if len(newDevs) != 1 || newDevs[0].IP != "192.168.1.200" {
+		t.Errorf("expected 1 new device 192.168.1.200, got %v", newDevs)
+	}
+	if len(seenDevs) != 0 {
+		t.Errorf("expected 0 seen devices, got %v", seenDevs)
 	}
 	inserted := s.GetDevice("192.168.1.200")
 	if inserted == nil {
@@ -860,36 +870,102 @@ func TestMergeUniFiClients(t *testing.T) {
 	}
 
 	// 4. Empty client list returns nil
-	if err := s.MergeUniFiClients([]types.Device{}); err != nil {
+	if _, _, err := s.MergeUniFiClients([]types.Device{}); err != nil {
 		t.Fatalf("MergeUniFiClients with empty list: %v", err)
 	}
 
 	// 5. Client with no IP and no MAC is skipped
-	if err := s.MergeUniFiClients([]types.Device{{}}); err != nil {
+	if _, _, err := s.MergeUniFiClients([]types.Device{{}}); err != nil {
 		t.Fatalf("MergeUniFiClients with blank device: %v", err)
 	}
 
-	// 6. Device moves IP: MAC matched, moves to free IP, records address history
+	// 6. Device moves IP: MAC matched, moves to free IP on different subnet, records address history and resolves new network_name
 	movingClient := types.Device{
-		IP:     "192.168.1.205",
+		IP:     "192.168.20.205",
 		MAC:    "AA:BB:CC:DD:EE:02", // same MAC as 192.168.1.200
 		SSID:   "IoT-WiFi-Moved",
 		APName: "Garage AP",
 	}
-	if err := s.MergeUniFiClients([]types.Device{movingClient}); err != nil {
+	if _, _, err := s.MergeUniFiClients([]types.Device{movingClient}); err != nil {
 		t.Fatalf("MergeUniFiClients moving IP: %v", err)
 	}
-	moved := s.GetDevice("192.168.1.205")
+	moved := s.GetDevice("192.168.20.205")
 	if moved == nil {
-		t.Fatalf("expected device at 192.168.1.205, got nil")
+		t.Fatalf("expected device at 192.168.20.205, got nil")
 	}
 	if moved.SSID != "IoT-WiFi-Moved" {
 		t.Errorf("SSID = %q, want %q", moved.SSID, "IoT-WiFi-Moved")
+	}
+	if moved.NetworkName != "IoT LAN" {
+		t.Errorf("NetworkName = %q, want %q", moved.NetworkName, "IoT LAN")
 	}
 	if len(moved.AddressHistory) == 0 {
 		t.Errorf("expected address history recorded for moved device, got none")
 	} else if moved.AddressHistory[0].IP != "192.168.1.200" {
 		t.Errorf("address history old IP = %q, want %q", moved.AddressHistory[0].IP, "192.168.1.200")
+	}
+
+	// 7. Presence history and notifications on reconnection (is_online 0 -> 1)
+	reconnectingDev := &types.Device{
+		IP:           "192.168.1.210",
+		MAC:          "AA:BB:CC:DD:EE:03",
+		Hostname:     "presence-test-dev",
+		NotifyOnSeen: true,
+	}
+	if err := s.UpdateDevice(reconnectingDev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+	// Mark device offline 2 hours ago
+	twoHoursAgo := time.Now().Add(-2 * time.Hour)
+	_, err = s.db.Exec("UPDATE devices SET is_online = 0, last_presence_change = ? WHERE ip = ?", twoHoursAgo, "192.168.1.210")
+	if err != nil {
+		t.Fatalf("mark offline: %v", err)
+	}
+
+	reconnectingClient := types.Device{
+		IP:     "192.168.1.210",
+		MAC:    "aa:bb:cc:dd:ee:03",
+		SSID:   "Home-WiFi",
+		APName: "Living Room AP",
+	}
+	newDevs, seenDevs, err = s.MergeUniFiClients([]types.Device{reconnectingClient})
+	if err != nil {
+		t.Fatalf("MergeUniFiClients reconnecting: %v", err)
+	}
+	if len(newDevs) != 0 {
+		t.Errorf("expected 0 new devices, got %d", len(newDevs))
+	}
+	if len(seenDevs) != 1 || seenDevs[0].IP != "192.168.1.210" {
+		t.Fatalf("expected 1 seen device 192.168.1.210, got %v", seenDevs)
+	}
+	events, err := s.GetPresenceEvents()
+	if err != nil {
+		t.Fatalf("GetPresenceEvents: %v", err)
+	}
+	var returnEvent *types.PresenceEventRecord
+	for _, ev := range events {
+		if ev.IP == "192.168.1.210" && ev.Event == "return" {
+			returnEvent = &ev
+			break
+		}
+	}
+	if returnEvent == nil {
+		t.Fatalf("expected 'return' presence event for 192.168.1.210, found none")
+	}
+	if returnEvent.Duration < 7100 || returnEvent.Duration > 7300 {
+		t.Errorf("return event duration = %f, expected ~7200", returnEvent.Duration)
+	}
+	var dbIsOnline int
+	var dbLastPresenceChange time.Time
+	err = s.db.QueryRow("SELECT is_online, last_presence_change FROM devices WHERE ip = ?", "192.168.1.210").Scan(&dbIsOnline, &dbLastPresenceChange)
+	if err != nil {
+		t.Fatalf("scan db: %v", err)
+	}
+	if dbIsOnline != 1 {
+		t.Errorf("expected dbIsOnline == 1, got %d", dbIsOnline)
+	}
+	if time.Since(dbLastPresenceChange) > 5*time.Second {
+		t.Errorf("expected dbLastPresenceChange to be updated to now, got %v", dbLastPresenceChange)
 	}
 }
 
@@ -986,4 +1062,3 @@ func TestMergeRouterDHCP_Telemetry(t *testing.T) {
 		t.Errorf("Assignment = %q, want %q", updatedNonDHCP.Assignment, "Discovered")
 	}
 }
-

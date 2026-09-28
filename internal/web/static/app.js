@@ -859,11 +859,7 @@ function getDeviceTypeIcon(type) {
 
 function formatPhyRate(rate) {
     if (!rate || isNaN(rate) || parseInt(rate, 10) <= 0) return '—';
-    const r = parseInt(rate, 10);
-    if (r > 10000) {
-        return (r / 1000).toFixed(0) + ' Mbps';
-    }
-    return r + ' Mbps';
+    return parseInt(rate, 10) + ' Mbps';
 }
 
 function formatBytes(bytes) {
@@ -1155,23 +1151,27 @@ function openDeviceSidebar(target) {
     }
 
     // 6. Device Customizations Card
-    const editIp = document.getElementById('sb-edit-ip');
-    if (editIp) editIp.value = data.ip || '';
+    // Avoid overwriting active inputs if user is currently typing/editing
+    const isFormActive = document.activeElement && document.getElementById('sb-edit-form')?.contains(document.activeElement);
+    if (!isFormActive) {
+        const editIp = document.getElementById('sb-edit-ip');
+        if (editIp) editIp.value = data.ip || '';
 
-    const editLabel = document.getElementById('sb-edit-label');
-    if (editLabel) editLabel.value = data.labelOriginal || '';
+        const editLabel = document.getElementById('sb-edit-label');
+        if (editLabel) editLabel.value = data.labelOriginal || '';
 
-    const editCustomHostname = document.getElementById('sb-edit-custom-hostname');
-    if (editCustomHostname) editCustomHostname.value = data.customHostnameOriginal || '';
+        const editCustomHostname = document.getElementById('sb-edit-custom-hostname');
+        if (editCustomHostname) editCustomHostname.value = data.customHostnameOriginal || '';
 
-    const editCustomWebUrl = document.getElementById('sb-edit-custom-web-url');
-    if (editCustomWebUrl) editCustomWebUrl.value = data.customWebUrlOriginal || '';
+        const editCustomWebUrl = document.getElementById('sb-edit-custom-web-url');
+        if (editCustomWebUrl) editCustomWebUrl.value = data.customWebUrlOriginal || '';
 
-    const editCustomType = document.getElementById('sb-edit-custom-type');
-    if (editCustomType) editCustomType.value = data.customTypeOriginal || '';
+        const editCustomType = document.getElementById('sb-edit-custom-type');
+        if (editCustomType) editCustomType.value = data.customTypeOriginal || '';
 
-    const editNotes = document.getElementById('sb-edit-notes');
-    if (editNotes) editNotes.value = data.notes || '';
+        const editNotes = document.getElementById('sb-edit-notes');
+        if (editNotes) editNotes.value = data.notes || '';
+    }
 
     // Show sidebar
     const sidebar = document.getElementById('device-sidebar');
@@ -1352,6 +1352,9 @@ async function saveSidebarDevice() {
                     sbWebUi.style.display = 'none';
                 }
             }
+
+            // Refresh table search filter in case hostname/label matches active query
+            filterDevices();
         }
 
         // Brief "Saved!" badge on the button

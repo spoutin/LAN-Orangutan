@@ -137,6 +137,11 @@ func (s *Storage) inSameSubnetLocked(ip1, ip2 string) bool {
 	return false
 }
 
+// GetDB returns the underlying sql.DB instance (useful for test assertions or maintenance).
+func (s *Storage) GetDB() *sql.DB {
+	return s.db
+}
+
 // SetCurrentScanningNetwork sets the network CIDR currently being scanned
 func (s *Storage) SetCurrentScanningNetwork(cidr string) {
 	s.mu.Lock()
@@ -2000,17 +2005,19 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 }
 
 // MergeUniFiClients merges UniFi client wireless telemetry into the devices table.
-func (s *Storage) MergeUniFiClients(clients []types.Device) error {
+func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []types.Device, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer tx.Rollback()
 
 	now := time.Now()
+	var newDevices []types.Device
+	var seenDevices []types.Device
 
 	for _, c := range clients {
 		if c.IP == "" && c.MAC == "" {
@@ -2074,6 +2081,14 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) error {
 		}
 
 		if existing != nil {
+			var isOnlineVal int
+			var lastPresenceChange time.Time
+			err := tx.QueryRow("SELECT is_online, last_presence_change FROM devices WHERE ip = ?", existing.IP).Scan(&isOnlineVal, &lastPresenceChange)
+			if err != nil {
+				isOnlineVal = 1
+				lastPresenceChange = now
+			}
+
 			targetIP := existing.IP
 			// If device has a new IP reported by UniFi that is not already occupied, relocate it
 			if c.IP != "" && c.IP != existing.IP {
@@ -2082,9 +2097,12 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) error {
 				if count == 0 {
 					existing.AddressHistory = appendAddressChange(existing.AddressHistory, existing.IP, now)
 					historyJSON, _ := json.Marshal(existing.AddressHistory)
-					_, err = tx.Exec("UPDATE devices SET ip = ?, address_history = ? WHERE ip = ?", c.IP, string(historyJSON), existing.IP)
+					networkName := resolveNetworkName(c.IP, s.networkNames)
+					existing.NetworkName = networkName
+					_, err = tx.Exec("UPDATE devices SET ip = ?, address_history = ?, network_name = ? WHERE ip = ?", c.IP, string(historyJSON), networkName, existing.IP)
 					if err == nil {
 						targetIP = c.IP
+						existing.IP = c.IP
 					}
 				}
 			}
@@ -2104,6 +2122,46 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) error {
 			typeToSet := existing.Type
 			if typeToSet == "" && c.Type != "" {
 				typeToSet = c.Type
+			}
+
+			if isOnlineVal == 0 {
+				offlineDur := now.Sub(lastPresenceChange).Seconds()
+				if offlineDur < 0 {
+					offlineDur = 0
+				}
+				_, err = tx.Exec(`
+					INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+					VALUES (?, ?, ?, 'return', ?, ?)
+				`, targetIP, macToSet, hostnameToSet, offlineDur, now)
+				if err != nil {
+					return nil, nil, err
+				}
+				isOnlineVal = 1
+				lastPresenceChange = now
+
+				if existing.NotifyOnSeen {
+					seenDev := *existing
+					seenDev.IP = targetIP
+					seenDev.MAC = macToSet
+					seenDev.Hostname = hostnameToSet
+					seenDev.Vendor = vendorToSet
+					seenDev.Type = typeToSet
+					seenDev.SSID = c.SSID
+					seenDev.APName = c.APName
+					seenDev.RadioBand = c.RadioBand
+					seenDev.Channel = c.Channel
+					seenDev.WiFiStandard = c.WiFiStandard
+					seenDev.Signal = c.Signal
+					seenDev.SignalQuality = c.SignalQuality
+					seenDev.RxRate = c.RxRate
+					seenDev.TxRate = c.TxRate
+					seenDev.RxBytes = c.RxBytes
+					seenDev.TxBytes = c.TxBytes
+					seenDev.AssociationUptime = c.AssociationUptime
+					seenDev.UniFiModel = c.UniFiModel
+					seenDev.LastSeen = now
+					seenDevices = append(seenDevices, seenDev)
+				}
 			}
 
 			_, err = tx.Exec(`
@@ -2127,15 +2185,16 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) error {
 					unifi_model = ?,
 					last_seen = ?,
 					is_online = 1,
-					missed_sweeps = 0
+					missed_sweeps = 0,
+					last_presence_change = ?
 				WHERE ip = ?
 			`, macToSet, hostnameToSet, vendorToSet, typeToSet,
 				c.SSID, c.APName, c.RadioBand, c.Channel, c.WiFiStandard,
 				c.Signal, c.SignalQuality, c.RxRate, c.TxRate,
 				c.RxBytes, c.TxBytes, c.AssociationUptime, c.UniFiModel,
-				now, targetIP)
+				now, lastPresenceChange, targetIP)
 			if err != nil {
-				return err
+				return nil, nil, err
 			}
 		} else {
 			if c.IP == "" {
@@ -2146,13 +2205,22 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) error {
 			dev.NetworkName = resolveNetworkName(dev.IP, s.networkNames)
 			dev.FirstSeen = now
 			dev.LastSeen = now
-			if _, err := s.addNewDeviceLocked(tx, &dev, now, nil); err != nil {
-				return err
+			isNew, err := s.addNewDeviceLocked(tx, &dev, now, nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			if isNew {
+				newDevices = append(newDevices, dev)
+			} else if dev.NotifyOnSeen {
+				seenDevices = append(seenDevices, dev)
 			}
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	return newDevices, seenDevices, nil
 }
 
 func resolveNetworkName(ipStr string, networkNames map[string]string) string {
