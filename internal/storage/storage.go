@@ -314,11 +314,15 @@ func (s *Storage) scanDevice(scanner interface {
 	var d types.Device
 	var webUIVal, probedVal, notifyOnSeenVal int
 	var risksStr, addressHistoryStr string
+	var leaseExpiresVal sql.NullTime
 	err := scanner.Scan(
 		&d.IP, &d.MAC, &d.Hostname, &d.Vendor, &d.Type, &webUIVal, &risksStr, &d.Label, &d.Notes, &d.Group,
 		&d.CustomHostname, &d.CustomWebURL, &d.CustomType, &d.WebPort, &d.WebScheme, &probedVal, &d.Assignment,
 		&d.NetworkName, &d.FirstSeen, &d.LastSeen, &d.ResponseTime, &addressHistoryStr, &d.LinkedMAC,
 		&notifyOnSeenVal,
+		&d.SSID, &d.APName, &d.RadioBand, &d.Channel, &d.WiFiStandard, &d.Signal, &d.SignalQuality,
+		&d.RxRate, &d.TxRate, &d.RxBytes, &d.TxBytes, &d.AssociationUptime, &d.UniFiModel,
+		&d.RouterSource, &d.RouterInterface, &leaseExpiresVal, &d.LeaseLifetime, &d.RouterNotes,
 	)
 	if err != nil {
 		return nil, err
@@ -326,6 +330,9 @@ func (s *Storage) scanDevice(scanner interface {
 	d.WebUI = webUIVal != 0
 	d.Probed = probedVal != 0
 	d.NotifyOnSeen = notifyOnSeenVal != 0
+	if leaseExpiresVal.Valid {
+		d.LeaseExpires = leaseExpiresVal.Time
+	}
 	_ = json.Unmarshal([]byte(risksStr), &d.Risks)
 	_ = json.Unmarshal([]byte(addressHistoryStr), &d.AddressHistory)
 	return &d, nil
@@ -347,7 +354,10 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
 			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
 			d.linked_mac,
-			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen
+			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
+			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
+			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model,
+			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 	`)
@@ -469,7 +479,10 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
 			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
 			d.linked_mac,
-			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen
+			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
+			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
+			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model,
+			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 		WHERE d.ip = ?
@@ -495,7 +508,10 @@ func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
 			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
 			d.linked_mac,
-			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen
+			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
+			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
+			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model,
+			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 		WHERE d.ip = ?
@@ -547,6 +563,60 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			device.FirstSeen = existing.FirstSeen
 		}
 		device.NotifyOnSeen = existing.NotifyOnSeen
+		if device.SSID == "" {
+			device.SSID = existing.SSID
+		}
+		if device.APName == "" {
+			device.APName = existing.APName
+		}
+		if device.RadioBand == "" {
+			device.RadioBand = existing.RadioBand
+		}
+		if device.Channel == 0 {
+			device.Channel = existing.Channel
+		}
+		if device.WiFiStandard == "" {
+			device.WiFiStandard = existing.WiFiStandard
+		}
+		if device.Signal == 0 {
+			device.Signal = existing.Signal
+		}
+		if device.SignalQuality == 0 {
+			device.SignalQuality = existing.SignalQuality
+		}
+		if device.RxRate == 0 {
+			device.RxRate = existing.RxRate
+		}
+		if device.TxRate == 0 {
+			device.TxRate = existing.TxRate
+		}
+		if device.RxBytes == 0 {
+			device.RxBytes = existing.RxBytes
+		}
+		if device.TxBytes == 0 {
+			device.TxBytes = existing.TxBytes
+		}
+		if device.AssociationUptime == 0 {
+			device.AssociationUptime = existing.AssociationUptime
+		}
+		if device.UniFiModel == "" {
+			device.UniFiModel = existing.UniFiModel
+		}
+		if device.RouterSource == "" {
+			device.RouterSource = existing.RouterSource
+		}
+		if device.RouterInterface == "" {
+			device.RouterInterface = existing.RouterInterface
+		}
+		if device.LeaseExpires.IsZero() {
+			device.LeaseExpires = existing.LeaseExpires
+		}
+		if device.LeaseLifetime == 0 {
+			device.LeaseLifetime = existing.LeaseLifetime
+		}
+		if device.RouterNotes == "" {
+			device.RouterNotes = existing.RouterNotes
+		}
 	}
 
 	if device.FirstSeen.IsZero() {
@@ -560,13 +630,29 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		isOnline = 1
 	}
 
+	var leaseExpiresVal interface{}
+	if !device.LeaseExpires.IsZero() {
+		leaseExpiresVal = device.LeaseExpires
+	}
+
 	_, err := s.db.Exec(`
 		INSERT INTO devices (
 			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 			assignment, network_name, first_seen, last_seen, response_time, address_history,
-			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen,
+			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
+			router_source, router_interface, lease_expires, lease_lifetime, router_notes
+		) VALUES (
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, 0, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?
+		)
 		ON CONFLICT(ip) DO UPDATE SET
 			mac = excluded.mac,
 			hostname = excluded.hostname,
@@ -589,12 +675,35 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			last_seen = excluded.last_seen,
 			response_time = excluded.response_time,
 			address_history = excluded.address_history,
-			is_online = excluded.is_online
+			is_online = excluded.is_online,
+			linked_mac = excluded.linked_mac,
+			notify_on_seen = excluded.notify_on_seen,
+			ssid = excluded.ssid,
+			ap_name = excluded.ap_name,
+			radio_band = excluded.radio_band,
+			channel = excluded.channel,
+			wifi_standard = excluded.wifi_standard,
+			signal = excluded.signal,
+			signal_quality = excluded.signal_quality,
+			rx_rate = excluded.rx_rate,
+			tx_rate = excluded.tx_rate,
+			rx_bytes = excluded.rx_bytes,
+			tx_bytes = excluded.tx_bytes,
+			association_uptime = excluded.association_uptime,
+			unifi_model = excluded.unifi_model,
+			router_source = excluded.router_source,
+			router_interface = excluded.router_interface,
+			lease_expires = excluded.lease_expires,
+			lease_lifetime = excluded.lease_lifetime,
+			router_notes = excluded.router_notes
 	`, device.IP, device.MAC, device.Hostname, device.Vendor, device.Type, boolToInt(device.WebUI), string(risksJSON),
 		device.Label, device.Notes, device.Group, device.CustomHostname, device.CustomWebURL, device.CustomType,
 		device.WebPort, device.WebScheme, boolToInt(device.Probed), device.Assignment, device.NetworkName,
 		device.FirstSeen, device.LastSeen, device.ResponseTime, string(historyJSON), isOnline, device.LastSeen,
-		device.LinkedMAC, boolToInt(device.NotifyOnSeen))
+		device.LinkedMAC, boolToInt(device.NotifyOnSeen),
+		device.SSID, device.APName, device.RadioBand, device.Channel, device.WiFiStandard, device.Signal, device.SignalQuality,
+		device.RxRate, device.TxRate, device.RxBytes, device.TxBytes, device.AssociationUptime, device.UniFiModel,
+		device.RouterSource, device.RouterInterface, leaseExpiresVal, device.LeaseLifetime, device.RouterNotes)
 	return err
 }
 
@@ -763,7 +872,10 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
-		       linked_mac, notify_on_seen
+		       linked_mac, notify_on_seen,
+		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
+		       router_source, router_interface, lease_expires, lease_lifetime, router_notes
 		FROM devices
 		WHERE mac = ? AND ip != ?
 	`, mac, excludeIP)
@@ -791,7 +903,10 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
-		       linked_mac, notify_on_seen
+		       linked_mac, notify_on_seen,
+		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
+		       router_source, router_interface, lease_expires, lease_lifetime, router_notes
 		FROM devices
 		WHERE mac = ?
 		LIMIT 1
@@ -839,6 +954,60 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			if d.Type == "" {
 				d.Type = old.Type
 			}
+			if d.SSID == "" {
+				d.SSID = old.SSID
+			}
+			if d.APName == "" {
+				d.APName = old.APName
+			}
+			if d.RadioBand == "" {
+				d.RadioBand = old.RadioBand
+			}
+			if d.Channel == 0 {
+				d.Channel = old.Channel
+			}
+			if d.WiFiStandard == "" {
+				d.WiFiStandard = old.WiFiStandard
+			}
+			if d.Signal == 0 {
+				d.Signal = old.Signal
+			}
+			if d.SignalQuality == 0 {
+				d.SignalQuality = old.SignalQuality
+			}
+			if d.RxRate == 0 {
+				d.RxRate = old.RxRate
+			}
+			if d.TxRate == 0 {
+				d.TxRate = old.TxRate
+			}
+			if d.RxBytes == 0 {
+				d.RxBytes = old.RxBytes
+			}
+			if d.TxBytes == 0 {
+				d.TxBytes = old.TxBytes
+			}
+			if d.AssociationUptime == 0 {
+				d.AssociationUptime = old.AssociationUptime
+			}
+			if d.UniFiModel == "" {
+				d.UniFiModel = old.UniFiModel
+			}
+			if d.RouterSource == "" {
+				d.RouterSource = old.RouterSource
+			}
+			if d.RouterInterface == "" {
+				d.RouterInterface = old.RouterInterface
+			}
+			if d.LeaseExpires.IsZero() {
+				d.LeaseExpires = old.LeaseExpires
+			}
+			if d.LeaseLifetime == 0 {
+				d.LeaseLifetime = old.LeaseLifetime
+			}
+			if d.RouterNotes == "" {
+				d.RouterNotes = old.RouterNotes
+			}
 
 			if !oldIPActive {
 				// Relocation: Old IP is offline, so migrate and delete
@@ -862,18 +1031,37 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		isOnline = 1
 	}
 
+	var leaseExpiresVal interface{}
+	if !d.LeaseExpires.IsZero() {
+		leaseExpiresVal = d.LeaseExpires
+	}
+
 	_, err := tx.Exec(`
 		INSERT INTO devices (
 			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 			assignment, network_name, first_seen, last_seen, response_time, address_history,
-			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen,
+			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
+			router_source, router_interface, lease_expires, lease_lifetime, router_notes
+		) VALUES (
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, 0, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?
+		)
 	`, d.IP, d.MAC, d.Hostname, d.Vendor, d.Type, boolToInt(d.WebUI), string(risksJSON),
 		d.Label, d.Notes, d.Group, d.CustomHostname, d.CustomWebURL, d.CustomType,
 		d.WebPort, d.WebScheme, boolToInt(d.Probed), d.Assignment, d.NetworkName,
 		d.FirstSeen, d.LastSeen, d.ResponseTime, string(historyJSON), isOnline, d.LastSeen,
-		d.LinkedMAC, boolToInt(d.NotifyOnSeen))
+		d.LinkedMAC, boolToInt(d.NotifyOnSeen),
+		d.SSID, d.APName, d.RadioBand, d.Channel, d.WiFiStandard, d.Signal, d.SignalQuality,
+		d.RxRate, d.TxRate, d.RxBytes, d.TxBytes, d.AssociationUptime, d.UniFiModel,
+		d.RouterSource, d.RouterInterface, leaseExpiresVal, d.LeaseLifetime, d.RouterNotes)
 	if err != nil {
 		return false, err
 	}
@@ -910,7 +1098,10 @@ func (s *Storage) pruneEphemeralIPv6() error {
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
-		       linked_mac, notify_on_seen
+		       linked_mac, notify_on_seen,
+		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
+		       router_source, router_interface, lease_expires, lease_lifetime, router_notes
 		FROM devices
 	`)
 	if err != nil {
@@ -1673,7 +1864,10 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
-		       linked_mac, notify_on_seen
+		       linked_mac, notify_on_seen,
+		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
+		       router_source, router_interface, lease_expires, lease_lifetime, router_notes
 		FROM devices
 	`)
 	if err != nil {
@@ -1723,7 +1917,10 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 			       assignment, network_name, first_seen, last_seen, response_time, address_history,
-			       linked_mac, notify_on_seen
+			       linked_mac, notify_on_seen,
+			       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+			       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
+			       router_source, router_interface, lease_expires, lease_lifetime, router_notes
 			FROM devices WHERE ip = ?
 		`, d.IP)
 		existing, err := s.scanDevice(row)

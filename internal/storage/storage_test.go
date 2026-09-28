@@ -537,3 +537,132 @@ func mergeDevicesForTest(s *Storage, discovered []types.Device) error {
 	_, _, err := s.MergeDevices(discovered)
 	return err
 }
+
+func TestDeviceTelemetryPersistence(t *testing.T) {
+	s := newTestStorage(t)
+
+	leaseExp := time.Now().Add(24 * time.Hour).Truncate(time.Second)
+	dev := &types.Device{
+		IP:                "192.168.1.50",
+		MAC:               "00:11:22:33:44:55",
+		Hostname:          "living-room-speaker",
+		Vendor:            "Sonos",
+		SSID:              "Orangutan-IoT",
+		APName:            "Living Room AP",
+		RadioBand:         "5GHz",
+		Channel:           36,
+		WiFiStandard:      "WiFi 6 (11ax)",
+		Signal:            -65,
+		SignalQuality:     82,
+		RxRate:            1200000,
+		TxRate:            1200000,
+		RxBytes:           1048576000,
+		TxBytes:           524288000,
+		AssociationUptime: 7200,
+		UniFiModel:        "U6-Pro",
+		RouterSource:      "OPNsense",
+		RouterInterface:   "igb1",
+		LeaseExpires:      leaseExp,
+		LeaseLifetime:     86400,
+		RouterNotes:       "Static reservation for living room speaker",
+	}
+
+	if err := s.UpdateDevice(dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	// 1. Verify retrieval via GetDevice
+	got := s.GetDevice(dev.IP)
+	if got == nil {
+		t.Fatalf("GetDevice(%s) returned nil", dev.IP)
+	}
+
+	if got.SSID != dev.SSID {
+		t.Errorf("SSID = %q, want %q", got.SSID, dev.SSID)
+	}
+	if got.APName != dev.APName {
+		t.Errorf("APName = %q, want %q", got.APName, dev.APName)
+	}
+	if got.RadioBand != dev.RadioBand {
+		t.Errorf("RadioBand = %q, want %q", got.RadioBand, dev.RadioBand)
+	}
+	if got.Channel != dev.Channel {
+		t.Errorf("Channel = %d, want %d", got.Channel, dev.Channel)
+	}
+	if got.WiFiStandard != dev.WiFiStandard {
+		t.Errorf("WiFiStandard = %q, want %q", got.WiFiStandard, dev.WiFiStandard)
+	}
+	if got.Signal != dev.Signal {
+		t.Errorf("Signal = %d, want %d", got.Signal, dev.Signal)
+	}
+	if got.SignalQuality != dev.SignalQuality {
+		t.Errorf("SignalQuality = %d, want %d", got.SignalQuality, dev.SignalQuality)
+	}
+	if got.RxRate != dev.RxRate {
+		t.Errorf("RxRate = %d, want %d", got.RxRate, dev.RxRate)
+	}
+	if got.TxRate != dev.TxRate {
+		t.Errorf("TxRate = %d, want %d", got.TxRate, dev.TxRate)
+	}
+	if got.RxBytes != dev.RxBytes {
+		t.Errorf("RxBytes = %d, want %d", got.RxBytes, dev.RxBytes)
+	}
+	if got.TxBytes != dev.TxBytes {
+		t.Errorf("TxBytes = %d, want %d", got.TxBytes, dev.TxBytes)
+	}
+	if got.AssociationUptime != dev.AssociationUptime {
+		t.Errorf("AssociationUptime = %d, want %d", got.AssociationUptime, dev.AssociationUptime)
+	}
+	if got.UniFiModel != dev.UniFiModel {
+		t.Errorf("UniFiModel = %q, want %q", got.UniFiModel, dev.UniFiModel)
+	}
+	if got.RouterSource != dev.RouterSource {
+		t.Errorf("RouterSource = %q, want %q", got.RouterSource, dev.RouterSource)
+	}
+	if got.RouterInterface != dev.RouterInterface {
+		t.Errorf("RouterInterface = %q, want %q", got.RouterInterface, dev.RouterInterface)
+	}
+	if !got.LeaseExpires.Equal(dev.LeaseExpires) {
+		t.Errorf("LeaseExpires = %v, want %v", got.LeaseExpires, dev.LeaseExpires)
+	}
+	if got.LeaseLifetime != dev.LeaseLifetime {
+		t.Errorf("LeaseLifetime = %d, want %d", got.LeaseLifetime, dev.LeaseLifetime)
+	}
+	if got.RouterNotes != dev.RouterNotes {
+		t.Errorf("RouterNotes = %q, want %q", got.RouterNotes, dev.RouterNotes)
+	}
+
+	// 2. Verify retrieval via GetDevices() map
+	all := s.GetDevices()
+	gotMap, exists := all[dev.IP]
+	if !exists || gotMap == nil {
+		t.Fatalf("GetDevices() missing device %s", dev.IP)
+	}
+	if gotMap.SSID != dev.SSID {
+		t.Errorf("GetDevices() SSID = %q, want %q", gotMap.SSID, dev.SSID)
+	}
+	if gotMap.RouterNotes != dev.RouterNotes {
+		t.Errorf("GetDevices() RouterNotes = %q, want %q", gotMap.RouterNotes, dev.RouterNotes)
+	}
+	if !gotMap.LeaseExpires.Equal(dev.LeaseExpires) {
+		t.Errorf("GetDevices() LeaseExpires = %v, want %v", gotMap.LeaseExpires, dev.LeaseExpires)
+	}
+
+	// 3. Verify nullable LeaseExpires (zero time) does not fail on read/write
+	devNullLease := &types.Device{
+		IP:       "192.168.1.51",
+		MAC:      "00:11:22:33:44:56",
+		Hostname: "wired-pc",
+		SSID:     "", // wired
+	}
+	if err := s.UpdateDevice(devNullLease); err != nil {
+		t.Fatalf("UpdateDevice with zero LeaseExpires: %v", err)
+	}
+	gotNull := s.GetDevice(devNullLease.IP)
+	if gotNull == nil {
+		t.Fatalf("GetDevice(%s) returned nil", devNullLease.IP)
+	}
+	if !gotNull.LeaseExpires.IsZero() {
+		t.Errorf("expected zero LeaseExpires for %s, got %v", devNullLease.IP, gotNull.LeaseExpires)
+	}
+}
