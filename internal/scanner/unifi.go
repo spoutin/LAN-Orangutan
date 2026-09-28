@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -52,11 +53,12 @@ type unifiStation struct {
 
 // FetchUniFiClients queries the UniFi controller for active wireless client stations and AP telemetry.
 func FetchUniFiClients(ctx context.Context, cfg config.UniFiConfig) ([]types.Device, error) {
-	baseURL := strings.TrimRight(cfg.URL, "/")
-	site := cfg.Site
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
+	site := strings.TrimSpace(cfg.Site)
 	if site == "" {
 		site = "default"
 	}
+	apiKey := strings.TrimSpace(cfg.APIKey)
 
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
@@ -67,7 +69,7 @@ func FetchUniFiClients(ctx context.Context, cfg config.UniFiConfig) ([]types.Dev
 	}
 
 	// 1. Fetch AP devices to build mac -> name map
-	devData, err := fetchUniFiEndpoint(ctx, client, baseURL, site, "stat/device", cfg.APIKey)
+	devData, err := fetchUniFiEndpoint(ctx, client, baseURL, site, "stat/device", apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch unifi devices: %w", err)
 	}
@@ -93,7 +95,7 @@ func FetchUniFiClients(ctx context.Context, cfg config.UniFiConfig) ([]types.Dev
 	}
 
 	// 2. Fetch active client stations
-	staData, err := fetchUniFiEndpoint(ctx, client, baseURL, site, "stat/sta", cfg.APIKey)
+	staData, err := fetchUniFiEndpoint(ctx, client, baseURL, site, "stat/sta", apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch unifi stations: %w", err)
 	}
@@ -240,10 +242,7 @@ func mapWiFiStandard(proto string) string {
 }
 
 func calculateSignalQuality(sig int) int {
-	if sig == 0 {
-		return 0
-	}
-	if sig <= -100 {
+	if sig >= 0 || sig <= -100 {
 		return 0
 	}
 	if sig >= -50 {
@@ -256,8 +255,8 @@ func parseRate(v float64) int {
 	if v <= 0 {
 		return 0
 	}
-	if v > 10000 {
-		return int(v / 1000)
+	if v >= 1000 {
+		return int(math.Round(v / 1000.0))
 	}
-	return int(v)
+	return int(math.Round(v))
 }

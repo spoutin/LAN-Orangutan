@@ -77,8 +77,8 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 						"radio":       "ng",
 						"radio_proto": "n",
 						"signal":      -45,
-						"rx_rate":     54,
-						"tx_rate":     54,
+						"rx_rate":     54000,
+						"tx_rate":     54000,
 						"rx_bytes":    1000,
 						"tx_bytes":    2000,
 						"uptime":      7200,
@@ -116,6 +116,22 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 						"tx_bytes":    80000,
 						"uptime":      900,
 					},
+					{
+						"mac":         "22:33:44:55:66:77",
+						"ip":          "192.168.1.54",
+						"hostname":    "legacy-client",
+						"essid":       "HomeNet-Legacy",
+						"ap_mac":      "",
+						"channel":     1,
+						"radio":       "ng",
+						"radio_proto": "g",
+						"signal":      -60,
+						"rx_rate":     6000,
+						"tx_rate":     6000,
+						"rx_bytes":    5000,
+						"tx_bytes":    4000,
+						"uptime":      300,
+					},
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -129,8 +145,8 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 	cfg := config.UniFiConfig{
 		Enable:    true,
 		URL:       server.URL,
-		APIKey:    "my-unifi-secret",
-		Site:      "default",
+		APIKey:    "  my-unifi-secret  ",
+		Site:      "  default  ",
 		VerifySSL: false,
 	}
 
@@ -150,8 +166,8 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 		t.Errorf("Accept header = %q, want %q", receivedAcceptHeader, "application/json")
 	}
 
-	if len(clients) != 4 {
-		t.Fatalf("expected 4 clients, got %d", len(clients))
+	if len(clients) != 5 {
+		t.Fatalf("expected 5 clients, got %d", len(clients))
 	}
 
 	// Verify Station 1
@@ -186,11 +202,11 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 	if c1.SignalQuality != 92 {
 		t.Errorf("c1.SignalQuality = %d, want 92", c1.SignalQuality)
 	}
-	if c1.RxRate != 866 {
-		t.Errorf("c1.RxRate = %d, want 866", c1.RxRate)
+	if c1.RxRate != 867 {
+		t.Errorf("c1.RxRate = %d, want 867", c1.RxRate)
 	}
-	if c1.TxRate != 866 {
-		t.Errorf("c1.TxRate = %d, want 866", c1.TxRate)
+	if c1.TxRate != 867 {
+		t.Errorf("c1.TxRate = %d, want 867", c1.TxRate)
 	}
 	if c1.RxBytes != 12345678 {
 		t.Errorf("c1.RxBytes = %d, want 12345678", c1.RxBytes)
@@ -276,6 +292,15 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 	if c4.RxRate != 2402 || c4.TxRate != 2402 {
 		t.Errorf("c4.rates = (%d, %d), want (2402, 2402)", c4.RxRate, c4.TxRate)
 	}
+
+	// Verify Station 5 (legacy 6 Mbps rate negotiation in Kbps: 6000 -> 6)
+	c5 := clients[4]
+	if c5.IP != "192.168.1.54" {
+		t.Errorf("c5.IP = %q, want %q", c5.IP, "192.168.1.54")
+	}
+	if c5.RxRate != 6 || c5.TxRate != 6 {
+		t.Errorf("c5 rates = (%d, %d), want (6, 6)", c5.RxRate, c5.TxRate)
+	}
 }
 
 func TestFetchUniFiClients_FallbackToLegacyAPI(t *testing.T) {
@@ -356,8 +381,8 @@ func TestFetchUniFiClients_DefaultSite(t *testing.T) {
 	defer server.Close()
 
 	cfg := config.UniFiConfig{
-		URL: server.URL,
-		// Site is empty, should default to "default"
+		URL:  server.URL,
+		Site: "   ", // whitespace site should default to "default"
 	}
 
 	_, _ = FetchUniFiClients(context.Background(), cfg)
@@ -410,5 +435,50 @@ func TestFetchUniFiClients_ErrorCases(t *testing.T) {
 	_, err = FetchUniFiClients(context.Background(), config.UniFiConfig{URL: serverBadJSON.URL})
 	if err == nil {
 		t.Error("expected error on invalid JSON, got nil")
+	}
+}
+
+func TestParseRate(t *testing.T) {
+	tests := []struct {
+		input float64
+		want  int
+	}{
+		{input: 0, want: 0},
+		{input: -10, want: 0},
+		{input: 6000, want: 6},
+		{input: 54000, want: 54},
+		{input: 866666, want: 867},
+		{input: 1201000, want: 1201},
+		{input: 54, want: 54},
+		{input: 866, want: 866},
+	}
+	for _, tt := range tests {
+		got := parseRate(tt.input)
+		if got != tt.want {
+			t.Errorf("parseRate(%v) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestCalculateSignalQuality(t *testing.T) {
+	tests := []struct {
+		sig  int
+		want int
+	}{
+		{sig: 0, want: 0},
+		{sig: 10, want: 0},
+		{sig: -105, want: 0},
+		{sig: -100, want: 0},
+		{sig: -50, want: 100},
+		{sig: -40, want: 100},
+		{sig: -54, want: 92},
+		{sig: -75, want: 50},
+		{sig: -60, want: 80},
+	}
+	for _, tt := range tests {
+		got := calculateSignalQuality(tt.sig)
+		if got != tt.want {
+			t.Errorf("calculateSignalQuality(%d) = %d, want %d", tt.sig, got, tt.want)
+		}
 	}
 }
