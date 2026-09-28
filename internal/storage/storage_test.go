@@ -666,3 +666,324 @@ func TestDeviceTelemetryPersistence(t *testing.T) {
 		t.Errorf("expected zero LeaseExpires for %s, got %v", devNullLease.IP, gotNull.LeaseExpires)
 	}
 }
+
+func TestMergeUniFiClients(t *testing.T) {
+	s := newTestStorage(t)
+	s.SetNetworkNames(map[string]string{"192.168.1.0/24": "Home LAN"})
+
+	// 1. Matching existing device by MAC (case-insensitive) and updating wireless telemetry
+	// while preserving user customizations
+	existing := &types.Device{
+		IP:             "192.168.1.100",
+		MAC:            "AA:BB:CC:DD:EE:01",
+		Hostname:       "my-iphone",
+		Vendor:         "Apple",
+		Type:           "Mobile",
+		Label:          "Custom Label",
+		Notes:          "Personal phone",
+		Group:          "Family",
+		CustomHostname: "Johnny's iPhone",
+		CustomWebURL:   "http://iphone.local",
+		CustomType:     "Phone",
+		LinkedMAC:      "11:22:33:44:55:66",
+		NotifyOnSeen:   true,
+	}
+	if err := s.UpdateDevice(existing); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	client := types.Device{
+		IP:                "192.168.1.100",
+		MAC:               "aa:bb:cc:dd:ee:01", // lowercase
+		Hostname:          "unifi-iphone",
+		SSID:              "Home-WiFi",
+		APName:            "Living Room AP",
+		RadioBand:         "5GHz",
+		Channel:           36,
+		WiFiStandard:      "WiFi 6 (11ax)",
+		Signal:            -58,
+		SignalQuality:     88,
+		RxRate:            1201000,
+		TxRate:            1201000,
+		RxBytes:           987654321,
+		TxBytes:           123456789,
+		AssociationUptime: 3600,
+		UniFiModel:        "U6-Pro",
+	}
+
+	if err := s.MergeUniFiClients([]types.Device{client}); err != nil {
+		t.Fatalf("MergeUniFiClients: %v", err)
+	}
+
+	updated := s.GetDevice("192.168.1.100")
+	if updated == nil {
+		t.Fatalf("GetDevice(192.168.1.100) returned nil")
+	}
+
+	// Wireless telemetry updated
+	if updated.SSID != client.SSID {
+		t.Errorf("SSID = %q, want %q", updated.SSID, client.SSID)
+	}
+	if updated.APName != client.APName {
+		t.Errorf("APName = %q, want %q", updated.APName, client.APName)
+	}
+	if updated.RadioBand != client.RadioBand {
+		t.Errorf("RadioBand = %q, want %q", updated.RadioBand, client.RadioBand)
+	}
+	if updated.Channel != client.Channel {
+		t.Errorf("Channel = %d, want %d", updated.Channel, client.Channel)
+	}
+	if updated.WiFiStandard != client.WiFiStandard {
+		t.Errorf("WiFiStandard = %q, want %q", updated.WiFiStandard, client.WiFiStandard)
+	}
+	if updated.Signal != client.Signal {
+		t.Errorf("Signal = %d, want %d", updated.Signal, client.Signal)
+	}
+	if updated.SignalQuality != client.SignalQuality {
+		t.Errorf("SignalQuality = %d, want %d", updated.SignalQuality, client.SignalQuality)
+	}
+	if updated.RxRate != client.RxRate {
+		t.Errorf("RxRate = %d, want %d", updated.RxRate, client.RxRate)
+	}
+	if updated.TxRate != client.TxRate {
+		t.Errorf("TxRate = %d, want %d", updated.TxRate, client.TxRate)
+	}
+	if updated.RxBytes != client.RxBytes {
+		t.Errorf("RxBytes = %d, want %d", updated.RxBytes, client.RxBytes)
+	}
+	if updated.TxBytes != client.TxBytes {
+		t.Errorf("TxBytes = %d, want %d", updated.TxBytes, client.TxBytes)
+	}
+	if updated.AssociationUptime != client.AssociationUptime {
+		t.Errorf("AssociationUptime = %d, want %d", updated.AssociationUptime, client.AssociationUptime)
+	}
+	if updated.UniFiModel != client.UniFiModel {
+		t.Errorf("UniFiModel = %q, want %q", updated.UniFiModel, client.UniFiModel)
+	}
+
+	// User customizations must NOT be overwritten
+	if updated.Label != existing.Label {
+		t.Errorf("Label = %q, want %q", updated.Label, existing.Label)
+	}
+	if updated.Notes != existing.Notes {
+		t.Errorf("Notes = %q, want %q", updated.Notes, existing.Notes)
+	}
+	if updated.Group != existing.Group {
+		t.Errorf("Group = %q, want %q", updated.Group, existing.Group)
+	}
+	if updated.CustomHostname != existing.CustomHostname {
+		t.Errorf("CustomHostname = %q, want %q", updated.CustomHostname, existing.CustomHostname)
+	}
+	if updated.CustomWebURL != existing.CustomWebURL {
+		t.Errorf("CustomWebURL = %q, want %q", updated.CustomWebURL, existing.CustomWebURL)
+	}
+	if updated.CustomType != existing.CustomType {
+		t.Errorf("CustomType = %q, want %q", updated.CustomType, existing.CustomType)
+	}
+	if updated.LinkedMAC != existing.LinkedMAC {
+		t.Errorf("LinkedMAC = %q, want %q", updated.LinkedMAC, existing.LinkedMAC)
+	}
+	if updated.NotifyOnSeen != existing.NotifyOnSeen {
+		t.Errorf("NotifyOnSeen = %v, want %v", updated.NotifyOnSeen, existing.NotifyOnSeen)
+	}
+
+	// 2. Matching existing device by IP when MAC is unavailable
+	noMacDev := &types.Device{
+		IP:       "192.168.1.101",
+		MAC:      "",
+		Hostname: "ip-only-device",
+	}
+	if err := s.UpdateDevice(noMacDev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+	ipClient := types.Device{
+		IP:     "192.168.1.101",
+		MAC:    "",
+		SSID:   "Guest-WiFi",
+		APName: "Hall AP",
+	}
+	if err := s.MergeUniFiClients([]types.Device{ipClient}); err != nil {
+		t.Fatalf("MergeUniFiClients: %v", err)
+	}
+	updatedIPDev := s.GetDevice("192.168.1.101")
+	if updatedIPDev == nil {
+		t.Fatalf("GetDevice(192.168.1.101) returned nil")
+	}
+	if updatedIPDev.SSID != "Guest-WiFi" {
+		t.Errorf("SSID = %q, want %q", updatedIPDev.SSID, "Guest-WiFi")
+	}
+	if updatedIPDev.APName != "Hall AP" {
+		t.Errorf("APName = %q, want %q", updatedIPDev.APName, "Hall AP")
+	}
+
+	// 3. Insert new discovered client not yet in the database
+	before := time.Now().Add(-1 * time.Second)
+	newClient := types.Device{
+		IP:           "192.168.1.200",
+		MAC:          "AA:BB:CC:DD:EE:02",
+		Hostname:     "smart-thermostat",
+		Vendor:       "Ecobee",
+		SSID:         "IoT-WiFi",
+		APName:       "Living Room AP",
+		RadioBand:    "2.4GHz",
+		Channel:      6,
+		WiFiStandard: "WiFi 4 (11n)",
+		Signal:       -70,
+	}
+	if err := s.MergeUniFiClients([]types.Device{newClient}); err != nil {
+		t.Fatalf("MergeUniFiClients new device: %v", err)
+	}
+	inserted := s.GetDevice("192.168.1.200")
+	if inserted == nil {
+		t.Fatalf("GetDevice(192.168.1.200) returned nil for newly inserted client")
+	}
+	if inserted.Assignment != "Discovered" {
+		t.Errorf("Assignment = %q, want %q", inserted.Assignment, "Discovered")
+	}
+	if inserted.NetworkName != "Home LAN" {
+		t.Errorf("NetworkName = %q, want %q", inserted.NetworkName, "Home LAN")
+	}
+	if inserted.FirstSeen.Before(before) {
+		t.Errorf("FirstSeen = %v, expected after %v", inserted.FirstSeen, before)
+	}
+	if inserted.LastSeen.Before(before) {
+		t.Errorf("LastSeen = %v, expected after %v", inserted.LastSeen, before)
+	}
+	if inserted.SSID != "IoT-WiFi" {
+		t.Errorf("SSID = %q, want %q", inserted.SSID, "IoT-WiFi")
+	}
+	if inserted.APName != "Living Room AP" {
+		t.Errorf("APName = %q, want %q", inserted.APName, "Living Room AP")
+	}
+	if inserted.Channel != 6 {
+		t.Errorf("Channel = %d, want %d", inserted.Channel, 6)
+	}
+
+	// 4. Empty client list returns nil
+	if err := s.MergeUniFiClients([]types.Device{}); err != nil {
+		t.Fatalf("MergeUniFiClients with empty list: %v", err)
+	}
+
+	// 5. Client with no IP and no MAC is skipped
+	if err := s.MergeUniFiClients([]types.Device{{}}); err != nil {
+		t.Fatalf("MergeUniFiClients with blank device: %v", err)
+	}
+
+	// 6. Device moves IP: MAC matched, moves to free IP, records address history
+	movingClient := types.Device{
+		IP:     "192.168.1.205",
+		MAC:    "AA:BB:CC:DD:EE:02", // same MAC as 192.168.1.200
+		SSID:   "IoT-WiFi-Moved",
+		APName: "Garage AP",
+	}
+	if err := s.MergeUniFiClients([]types.Device{movingClient}); err != nil {
+		t.Fatalf("MergeUniFiClients moving IP: %v", err)
+	}
+	moved := s.GetDevice("192.168.1.205")
+	if moved == nil {
+		t.Fatalf("expected device at 192.168.1.205, got nil")
+	}
+	if moved.SSID != "IoT-WiFi-Moved" {
+		t.Errorf("SSID = %q, want %q", moved.SSID, "IoT-WiFi-Moved")
+	}
+	if len(moved.AddressHistory) == 0 {
+		t.Errorf("expected address history recorded for moved device, got none")
+	} else if moved.AddressHistory[0].IP != "192.168.1.200" {
+		t.Errorf("address history old IP = %q, want %q", moved.AddressHistory[0].IP, "192.168.1.200")
+	}
+}
+
+func TestMergeRouterDHCP_Telemetry(t *testing.T) {
+	s := newTestStorage(t)
+	s.SetNetworkNames(map[string]string{"192.168.1.0/24": "Home LAN"})
+
+	existing := &types.Device{
+		IP:             "192.168.1.50",
+		MAC:            "00:11:22:33:44:01",
+		Hostname:       "existing-dev",
+		Label:          "Custom Label",
+		CustomHostname: "Custom Host",
+	}
+	if err := s.UpdateDevice(existing); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	leaseExp := time.Now().Add(12 * time.Hour).Truncate(time.Second)
+	leases := []types.Device{
+		{
+			IP:              "192.168.1.50",
+			MAC:             "00:11:22:33:44:01",
+			Hostname:        "router-lease-name",
+			RouterSource:    "OPNsense",
+			RouterInterface: "vtnet0 (LAN)",
+			LeaseExpires:    leaseExp,
+			LeaseLifetime:   43200,
+		},
+	}
+	reservations := []types.Device{
+		{
+			IP:           "192.168.1.50",
+			MAC:          "00:11:22:33:44:01",
+			RouterSource: "OPNsense",
+			RouterNotes:  "Server static mapping",
+		},
+	}
+
+	if err := s.MergeRouterDHCP(leases, reservations); err != nil {
+		t.Fatalf("MergeRouterDHCP: %v", err)
+	}
+
+	dev := s.GetDevice("192.168.1.50")
+	if dev == nil {
+		t.Fatalf("device 192.168.1.50 not found")
+	}
+	if dev.Assignment != "Static" {
+		t.Errorf("Assignment = %q, want %q", dev.Assignment, "Static")
+	}
+	if dev.RouterSource != "OPNsense" {
+		t.Errorf("RouterSource = %q, want %q", dev.RouterSource, "OPNsense")
+	}
+	if dev.RouterInterface != "vtnet0 (LAN)" {
+		t.Errorf("RouterInterface = %q, want %q", dev.RouterInterface, "vtnet0 (LAN)")
+	}
+	if !dev.LeaseExpires.Equal(leaseExp) {
+		t.Errorf("LeaseExpires = %v, want %v", dev.LeaseExpires, leaseExp)
+	}
+	if dev.LeaseLifetime != 43200 {
+		t.Errorf("LeaseLifetime = %d, want %d", dev.LeaseLifetime, 43200)
+	}
+	if dev.RouterNotes != "Server static mapping" {
+		t.Errorf("RouterNotes = %q, want %q", dev.RouterNotes, "Server static mapping")
+	}
+	// Customizations preserved
+	if dev.Label != "Custom Label" {
+		t.Errorf("Label = %q, want %q", dev.Label, "Custom Label")
+	}
+	if dev.CustomHostname != "Custom Host" {
+		t.Errorf("CustomHostname = %q, want %q", dev.CustomHostname, "Custom Host")
+	}
+
+	// Seed another device with Static assignment, but don't include it in next DHCP merge
+	nonDHCPDev := &types.Device{
+		IP:         "192.168.1.60",
+		MAC:        "00:11:22:33:44:02",
+		Assignment: "Static",
+	}
+	if err := s.UpdateDevice(nonDHCPDev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	// Run MergeRouterDHCP with only 192.168.1.50
+	if err := s.MergeRouterDHCP(leases, reservations); err != nil {
+		t.Fatalf("MergeRouterDHCP second pass: %v", err)
+	}
+
+	updatedNonDHCP := s.GetDevice("192.168.1.60")
+	if updatedNonDHCP == nil {
+		t.Fatalf("device 192.168.1.60 not found")
+	}
+	if updatedNonDHCP.Assignment != "Discovered" {
+		t.Errorf("Assignment = %q, want %q", updatedNonDHCP.Assignment, "Discovered")
+	}
+}
+

@@ -170,7 +170,7 @@ func formatOpenWrtInterface(iface, device, network string) string {
 
 // FetchOpenWrtDHCP contacts the OpenWrt router to retrieve active leases and static reservations.
 func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []types.Device, reservations []types.Device, err error) {
-	baseURL := strings.TrimSuffix(cfg.URL, "/")
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
 	}
@@ -307,7 +307,7 @@ func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []t
 
 // FetchOPNsenseDHCP contacts the OPNsense firewall to retrieve Kea leases, reservations, and ARP entries.
 func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases []types.Device, reservations []types.Device, arpEntries []types.Device, err error) {
-	baseURL := strings.TrimSuffix(cfg.URL, "/")
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
 	}
@@ -365,6 +365,9 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 					leaseExpires = time.Unix(exp, 0)
 				} else {
 					leaseExpires = time.Now().Add(time.Duration(exp) * time.Second)
+					if leaseLifetime == 0 {
+						leaseLifetime = int(exp)
+					}
 				}
 			} else if t, ok := parseTimeFlexible(rl.Expire); ok {
 				leaseExpires = t

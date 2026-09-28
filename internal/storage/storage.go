@@ -1939,6 +1939,21 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 			}
 			existing.Assignment = assignments[d.IP]
 			existing.NetworkName = resolveNetworkName(d.IP, s.networkNames)
+			if d.RouterSource != "" {
+				existing.RouterSource = d.RouterSource
+			}
+			if d.RouterInterface != "" {
+				existing.RouterInterface = d.RouterInterface
+			}
+			if !d.LeaseExpires.IsZero() {
+				existing.LeaseExpires = d.LeaseExpires
+			}
+			if d.LeaseLifetime != 0 {
+				existing.LeaseLifetime = d.LeaseLifetime
+			}
+			if d.RouterNotes != "" {
+				existing.RouterNotes = d.RouterNotes
+			}
 
 			risksJSON, _ := json.Marshal(existing.Risks)
 			historyJSON, _ := json.Marshal(existing.AddressHistory)
@@ -1947,19 +1962,27 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 				isOnline = 1
 			}
 
+			var leaseExpiresVal interface{}
+			if !existing.LeaseExpires.IsZero() {
+				leaseExpiresVal = existing.LeaseExpires
+			}
+
 			_, err = tx.Exec(`
 				UPDATE devices SET
 					mac = ?, hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
 					label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
 					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, assignment = ?,
 					network_name = ?, first_seen = ?, last_seen = ?, response_time = ?,
-					address_history = ?, is_online = ?
+					address_history = ?, is_online = ?,
+					router_source = ?, router_interface = ?, lease_expires = ?, lease_lifetime = ?, router_notes = ?
 				WHERE ip = ?
 			`, existing.MAC, existing.Hostname, existing.Vendor, existing.Type, boolToInt(existing.WebUI), string(risksJSON),
 				existing.Label, existing.Notes, existing.Group, existing.CustomHostname, existing.CustomWebURL,
 				existing.CustomType, existing.WebPort, existing.WebScheme, boolToInt(existing.Probed), existing.Assignment,
 				existing.NetworkName, existing.FirstSeen, existing.LastSeen, existing.ResponseTime,
-				string(historyJSON), isOnline, existing.IP)
+				string(historyJSON), isOnline,
+				existing.RouterSource, existing.RouterInterface, leaseExpiresVal, existing.LeaseLifetime, existing.RouterNotes,
+				existing.IP)
 			if err != nil {
 				return err
 			}
@@ -1968,6 +1991,162 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 			dev.Assignment = assignments[d.IP]
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
 			if _, err := s.addNewDeviceLocked(tx, &dev, now.Add(-65*time.Minute), nil); err != nil {
+				return err
+			}
+		}
+	}
+
+	return tx.Commit()
+}
+
+// MergeUniFiClients merges UniFi client wireless telemetry into the devices table.
+func (s *Storage) MergeUniFiClients(clients []types.Device) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	now := time.Now()
+
+	for _, c := range clients {
+		if c.IP == "" && c.MAC == "" {
+			continue
+		}
+
+		var existing *types.Device
+		if c.MAC != "" {
+			if c.IP != "" {
+				row := tx.QueryRow(`
+					SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+					       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+					       assignment, network_name, first_seen, last_seen, response_time, address_history,
+					       linked_mac, notify_on_seen,
+					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
+					       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+					FROM devices
+					WHERE LOWER(mac) = LOWER(?) AND ip = ?
+					LIMIT 1
+				`, c.MAC, c.IP)
+				if d, err := s.scanDevice(row); err == nil {
+					existing = d
+				}
+			}
+			if existing == nil {
+				row := tx.QueryRow(`
+					SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+					       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+					       assignment, network_name, first_seen, last_seen, response_time, address_history,
+					       linked_mac, notify_on_seen,
+					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
+					       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+					FROM devices
+					WHERE LOWER(mac) = LOWER(?)
+					LIMIT 1
+				`, c.MAC)
+				if d, err := s.scanDevice(row); err == nil {
+					existing = d
+				}
+			}
+		}
+
+		if existing == nil && c.IP != "" {
+			row := tx.QueryRow(`
+				SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+				       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+				       assignment, network_name, first_seen, last_seen, response_time, address_history,
+				       linked_mac, notify_on_seen,
+				       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+				       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
+				       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+				FROM devices
+				WHERE ip = ?
+				LIMIT 1
+			`, c.IP)
+			if d, err := s.scanDevice(row); err == nil {
+				existing = d
+			}
+		}
+
+		if existing != nil {
+			targetIP := existing.IP
+			// If device has a new IP reported by UniFi that is not already occupied, relocate it
+			if c.IP != "" && c.IP != existing.IP {
+				var count int
+				_ = tx.QueryRow("SELECT COUNT(*) FROM devices WHERE ip = ?", c.IP).Scan(&count)
+				if count == 0 {
+					existing.AddressHistory = appendAddressChange(existing.AddressHistory, existing.IP, now)
+					historyJSON, _ := json.Marshal(existing.AddressHistory)
+					_, err = tx.Exec("UPDATE devices SET ip = ?, address_history = ? WHERE ip = ?", c.IP, string(historyJSON), existing.IP)
+					if err == nil {
+						targetIP = c.IP
+					}
+				}
+			}
+
+			macToSet := existing.MAC
+			if macToSet == "" && c.MAC != "" {
+				macToSet = c.MAC
+			}
+			hostnameToSet := existing.Hostname
+			if hostnameToSet == "" && c.Hostname != "" {
+				hostnameToSet = c.Hostname
+			}
+			vendorToSet := existing.Vendor
+			if vendorToSet == "" && c.Vendor != "" {
+				vendorToSet = c.Vendor
+			}
+			typeToSet := existing.Type
+			if typeToSet == "" && c.Type != "" {
+				typeToSet = c.Type
+			}
+
+			_, err = tx.Exec(`
+				UPDATE devices SET
+					mac = ?,
+					hostname = ?,
+					vendor = ?,
+					type = ?,
+					ssid = ?,
+					ap_name = ?,
+					radio_band = ?,
+					channel = ?,
+					wifi_standard = ?,
+					signal = ?,
+					signal_quality = ?,
+					rx_rate = ?,
+					tx_rate = ?,
+					rx_bytes = ?,
+					tx_bytes = ?,
+					association_uptime = ?,
+					unifi_model = ?,
+					last_seen = ?,
+					is_online = 1,
+					missed_sweeps = 0
+				WHERE ip = ?
+			`, macToSet, hostnameToSet, vendorToSet, typeToSet,
+				c.SSID, c.APName, c.RadioBand, c.Channel, c.WiFiStandard,
+				c.Signal, c.SignalQuality, c.RxRate, c.TxRate,
+				c.RxBytes, c.TxBytes, c.AssociationUptime, c.UniFiModel,
+				now, targetIP)
+			if err != nil {
+				return err
+			}
+		} else {
+			if c.IP == "" {
+				continue
+			}
+			dev := c
+			dev.Assignment = "Discovered"
+			dev.NetworkName = resolveNetworkName(dev.IP, s.networkNames)
+			dev.FirstSeen = now
+			dev.LastSeen = now
+			if _, err := s.addNewDeviceLocked(tx, &dev, now, nil); err != nil {
 				return err
 			}
 		}
