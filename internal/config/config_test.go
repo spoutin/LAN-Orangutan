@@ -380,3 +380,98 @@ func TestNormalizeLeavesValidValuesAlone(t *testing.T) {
 		t.Error("Normalize changed already-valid values")
 	}
 }
+
+func TestUniFiConfig(t *testing.T) {
+	t.Run("default values", func(t *testing.T) {
+		cfg := Default()
+		if cfg.UniFi.Enable {
+			t.Error("UniFi.Enable should default to false")
+		}
+		if cfg.UniFi.URL != "" {
+			t.Errorf("UniFi.URL = %q, want empty", cfg.UniFi.URL)
+		}
+		if cfg.UniFi.Site != "default" {
+			t.Errorf("UniFi.Site = %q, want %q", cfg.UniFi.Site, "default")
+		}
+		if cfg.UniFi.APIKey != "" {
+			t.Errorf("UniFi.APIKey = %q, want empty", cfg.UniFi.APIKey)
+		}
+		if cfg.UniFi.VerifySSL {
+			t.Error("UniFi.VerifySSL should default to false")
+		}
+	})
+
+	t.Run("load from ini", func(t *testing.T) {
+		path := writeConfig(t, `
+[unifi]
+enable = true
+url = https://192.168.1.1
+site = mysite
+api_key = test-api-key-123
+verify_ssl = true
+`)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.UniFi.Enable {
+			t.Error("UniFi.Enable should be true")
+		}
+		if cfg.UniFi.URL != "https://192.168.1.1" {
+			t.Errorf("UniFi.URL = %q, want https://192.168.1.1", cfg.UniFi.URL)
+		}
+		if cfg.UniFi.Site != "mysite" {
+			t.Errorf("UniFi.Site = %q, want mysite", cfg.UniFi.Site)
+		}
+		if cfg.UniFi.APIKey != "test-api-key-123" {
+			t.Errorf("UniFi.APIKey = %q, want test-api-key-123", cfg.UniFi.APIKey)
+		}
+		if !cfg.UniFi.VerifySSL {
+			t.Error("UniFi.VerifySSL should be true")
+		}
+	})
+
+	t.Run("load from ini without site defaults to default", func(t *testing.T) {
+		path := writeConfig(t, `
+[unifi]
+enable = true
+url = https://192.168.1.1
+api_key = test-key
+`)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.UniFi.Site != "default" {
+			t.Errorf("UniFi.Site = %q, want default", cfg.UniFi.Site)
+		}
+	})
+
+	t.Run("env overrides", func(t *testing.T) {
+		t.Setenv("ORANGUTAN_UNIFI_ENABLE", "true")
+		t.Setenv("ORANGUTAN_UNIFI_URL", "https://unifi.local:8443")
+		t.Setenv("ORANGUTAN_UNIFI_SITE", "custom-site")
+		t.Setenv("ORANGUTAN_UNIFI_API_KEY", "env-api-key")
+		t.Setenv("ORANGUTAN_UNIFI_VERIFY_SSL", "true")
+
+		cfg := Default()
+		cfg.ApplyEnv()
+
+		if !cfg.UniFi.Enable {
+			t.Error("ORANGUTAN_UNIFI_ENABLE should enable UniFi")
+		}
+		if cfg.UniFi.URL != "https://unifi.local:8443" {
+			t.Errorf("UniFi.URL = %q, want https://unifi.local:8443", cfg.UniFi.URL)
+		}
+		if cfg.UniFi.Site != "custom-site" {
+			t.Errorf("UniFi.Site = %q, want custom-site", cfg.UniFi.Site)
+		}
+		if cfg.UniFi.APIKey != "env-api-key" {
+			t.Errorf("UniFi.APIKey = %q, want env-api-key", cfg.UniFi.APIKey)
+		}
+		if !cfg.UniFi.VerifySSL {
+			t.Error("ORANGUTAN_UNIFI_VERIFY_SSL should enable VerifySSL")
+		}
+	})
+}
+

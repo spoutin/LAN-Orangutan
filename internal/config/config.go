@@ -92,6 +92,7 @@ type Config struct {
 	UI        UIConfig
 	OpenWrt   OpenWrtConfig
 	OPNsense  OPNsenseConfig
+	UniFi     UniFiConfig
 }
 
 // OpenWrtConfig holds OpenWrt connection settings
@@ -108,6 +109,15 @@ type OPNsenseConfig struct {
 	URL       string
 	APIKey    string
 	APISecret string
+	VerifySSL bool
+}
+
+// UniFiConfig holds UniFi controller connection settings
+type UniFiConfig struct {
+	Enable    bool
+	URL       string
+	Site      string
+	APIKey    string
 	VerifySSL bool
 }
 
@@ -235,6 +245,11 @@ func Default() *Config {
 		},
 		OPNsense: OPNsenseConfig{
 			Enable:    false,
+			VerifySSL: false,
+		},
+		UniFi: UniFiConfig{
+			Enable:    false,
+			Site:      "default",
 			VerifySSL: false,
 		},
 	}
@@ -390,6 +405,19 @@ func (c *Config) setValue(section, key, value string) {
 		case "verify_ssl":
 			c.OPNsense.VerifySSL = parseBool(value)
 		}
+	case "unifi":
+		switch key {
+		case "enable":
+			c.UniFi.Enable = parseBool(value)
+		case "url":
+			c.UniFi.URL = value
+		case "site":
+			c.UniFi.Site = value
+		case "api_key":
+			c.UniFi.APIKey = value
+		case "verify_ssl":
+			c.UniFi.VerifySSL = parseBool(value)
+		}
 	}
 }
 
@@ -483,6 +511,22 @@ func (c *Config) ApplyEnv() {
 		c.OPNsense.VerifySSL = parseBool(v)
 	}
 
+	if v := os.Getenv("ORANGUTAN_UNIFI_ENABLE"); v != "" {
+		c.UniFi.Enable = parseBool(v)
+	}
+	if v := os.Getenv("ORANGUTAN_UNIFI_URL"); v != "" {
+		c.UniFi.URL = v
+	}
+	if v := os.Getenv("ORANGUTAN_UNIFI_SITE"); v != "" {
+		c.UniFi.Site = v
+	}
+	if v := os.Getenv("ORANGUTAN_UNIFI_API_KEY"); v != "" {
+		c.UniFi.APIKey = v
+	}
+	if v := os.Getenv("ORANGUTAN_UNIFI_VERIFY_SSL"); v != "" {
+		c.UniFi.VerifySSL = parseBool(v)
+	}
+
 	c.Normalize()
 }
 
@@ -515,6 +559,10 @@ func (c *Config) Normalize() []string {
 			c.Scanning.Networks = append(c.Scanning.Networks, cidr)
 		}
 		sort.Strings(c.Scanning.Networks)
+	}
+
+	if c.UniFi.Site == "" {
+		c.UniFi.Site = "default"
 	}
 
 	return notes
