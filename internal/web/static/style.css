@@ -939,7 +939,7 @@ body.strip-docked .stat-strip .stat-chip-filter {
     backdrop-filter: var(--blur);
     -webkit-backdrop-filter: var(--blur);
     border-radius: var(--radius-lg);
-    overflow: hidden;
+    overflow: clip;
     box-shadow: var(--card-shadow);
     border: 1px solid var(--border-color);
 }

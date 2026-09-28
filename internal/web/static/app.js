@@ -369,7 +369,7 @@ function filterDevices() {
 
     let visible = 0;
     document.querySelectorAll('.device-row').forEach(row => {
-        const text = [row.dataset.ip, row.dataset.hostname, row.dataset.customHostname || '', row.dataset.customWebUrl || '', row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type, row.dataset.network || '', row.dataset.assignment || ''].join(' ').toLowerCase();
+        const text = [row.dataset.ip, row.dataset.hostname, row.dataset.customHostname || '', row.dataset.customWebUrl || '', row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type, row.dataset.network || '', row.dataset.assignment || '', row.dataset.ssid || ''].join(' ').toLowerCase();
         const status = row.dataset.status;
         const group = row.dataset.group || '';
         const network = (row.dataset.network || '').toLowerCase();
@@ -775,6 +775,14 @@ async function toggleNotifyOnSeenMain(ip) {
         const result = await api('device', { ip, notify_on_seen: newVal }, 'POST');
         if (result.success) {
             showToast(newVal ? 'Presence notifications enabled' : 'Presence notifications disabled', 'success');
+            row.dataset.notifyOnSeen = newVal ? '1' : '0';
+            const sbNotify = document.getElementById('sb-notify-btn');
+            const sbIp = document.getElementById('sb-edit-ip')?.value;
+            if (sbNotify && sbIp === ip) {
+                sbNotify.classList.toggle('active', newVal);
+                sbNotify.innerHTML = newVal ? '🔔 Notifying' : '🔕 Notify';
+                sbNotify.title = newVal ? 'Presence notifications enabled (click to disable)' : 'Presence notifications disabled (click to enable)';
+            }
             if (!(await refreshInPlace())) location.reload();
         } else {
             showToast(result.error || 'Failed to toggle notifications', 'error');
@@ -789,12 +797,19 @@ async function deleteDevice(ip) {
     try {
         const response = await fetch(`/api/device?ip=${encodeURIComponent(ip)}`, {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' }
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
         });
         const result = await response.json();
         if (result.success) {
             showToast('Device deleted', 'success');
             document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`)?.remove();
+            const sbIp = document.getElementById('sb-edit-ip')?.value;
+            if (sbIp === ip) {
+                closeDeviceSidebar();
+            }
             filterDevices(); // Update count
         } else {
             showToast(result.error || 'Failed to delete', 'error');
@@ -825,6 +840,548 @@ async function updateDeviceGroup(select) {
         showToast('Failed to update group', 'error');
     }
 }
+
+// Device Details Sidebar Drawer & Inline Editing
+
+function getDeviceTypeIcon(type) {
+    if (!type) return '💻';
+    const t = type.toLowerCase();
+    if (t.includes('phone') || t.includes('mobile')) return '📱';
+    if (t.includes('printer')) return '🖨️';
+    if (t.includes('tv')) return '📺';
+    if (t.includes('media')) return '🎬';
+    if (t.includes('router') || t.includes('gateway') || t.includes('ap') || t.includes('access point')) return '📡';
+    if (t.includes('server') || t.includes('nas')) return '🖥️';
+    if (t.includes('iot') || t.includes('sensor') || t.includes('smart')) return '💡';
+    if (t.includes('game') || t.includes('console')) return '🎮';
+    return '💻';
+}
+
+function formatPhyRate(rate) {
+    if (!rate || isNaN(rate) || parseInt(rate, 10) <= 0) return '—';
+    const r = parseInt(rate, 10);
+    if (r > 10000) {
+        return (r / 1000).toFixed(0) + ' Mbps';
+    }
+    return r + ' Mbps';
+}
+
+function formatBytes(bytes) {
+    if (bytes === undefined || bytes === null || bytes === '' || isNaN(bytes)) return '—';
+    const b = parseInt(bytes, 10);
+    if (b <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(b) / Math.log(1024));
+    if (i === 0) return `${b} B`;
+    return `${(b / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+function formatUptime(seconds) {
+    if (!seconds || isNaN(seconds) || parseInt(seconds, 10) <= 0) return '—';
+    let s = parseInt(seconds, 10);
+    const days = Math.floor(s / 86400);
+    s %= 86400;
+    const hours = Math.floor(s / 3600);
+    s %= 3600;
+    const minutes = Math.floor(s / 60);
+    const secs = s % 60;
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${secs}s`;
+    return `${secs}s`;
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function selectDeviceRow(target) {
+    let row = null;
+    if (typeof target === 'string') {
+        row = document.querySelector(`.device-row[data-ip="${CSS.escape(target)}"]`);
+    } else if (target instanceof HTMLElement) {
+        row = target;
+    }
+    if (!row) return;
+
+    document.querySelectorAll('.device-row.selected-row').forEach(r => r.classList.remove('selected-row'));
+    row.classList.add('selected-row');
+    openDeviceSidebar(row);
+}
+
+function openDeviceSidebar(target) {
+    let row = null;
+    let data = null;
+    if (target instanceof HTMLElement) {
+        row = target;
+        data = target.dataset;
+    } else if (typeof target === 'string') {
+        row = document.querySelector(`.device-row[data-ip="${CSS.escape(target)}"]`);
+        data = row ? row.dataset : {};
+    } else if (target && target.ip) {
+        row = document.querySelector(`.device-row[data-ip="${CSS.escape(target.ip)}"]`);
+        data = row ? row.dataset : target;
+    } else {
+        data = target || {};
+    }
+
+    // 1. Header
+    const effectiveType = data.customTypeOriginal || data.typeDisplay || data.type || '';
+    const iconEl = document.getElementById('sb-icon');
+    if (iconEl) iconEl.textContent = getDeviceTypeIcon(effectiveType);
+
+    const titleEl = document.getElementById('sb-title');
+    if (titleEl) {
+        titleEl.textContent = data.labelOriginal || data.customHostnameOriginal || data.hostnameDisplay || data.hostname || data.ip || 'Device Details';
+    }
+
+    const macEl = document.getElementById('sb-mac');
+    if (macEl) {
+        macEl.textContent = data.macOriginal || (data.mac ? data.mac.toUpperCase() : '') || '--:--:--:--:--:--';
+    }
+
+    const vendorEl = document.getElementById('sb-vendor');
+    if (vendorEl) {
+        vendorEl.textContent = data.vendorOriginal || data.vendor || 'Unknown';
+    }
+
+    // 2. Quick Actions
+    const webBtn = document.getElementById('sb-webui-btn');
+    if (webBtn) {
+        const webUrl = data.customWebUrlOriginal || data.webUrl || data.customWebUrl || '';
+        if (webUrl) {
+            webBtn.href = webUrl;
+            webBtn.style.display = '';
+        } else {
+            webBtn.removeAttribute('href');
+            webBtn.style.display = 'none';
+        }
+    }
+
+    const notifyBtn = document.getElementById('sb-notify-btn');
+    if (notifyBtn) {
+        const isNotify = data.notifyOnSeen === '1' || data.notifyOnSeen === 'true' || data.notifyOnSeen === true;
+        notifyBtn.classList.toggle('active', isNotify);
+        notifyBtn.innerHTML = isNotify ? '🔔 Notifying' : '🔕 Notify';
+        notifyBtn.title = isNotify ? 'Presence notifications enabled (click to disable)' : 'Presence notifications disabled (click to enable)';
+        notifyBtn.onclick = function (e) {
+            e.stopPropagation();
+            if (data.ip) toggleNotifyOnSeenMain(data.ip);
+        };
+    }
+
+    const deleteBtn = document.getElementById('sb-delete-btn');
+    if (deleteBtn) {
+        deleteBtn.onclick = function (e) {
+            e.stopPropagation();
+            if (data.ip) {
+                deleteDevice(data.ip);
+            }
+        };
+    }
+
+    // 3. UniFi Wireless Card
+    const wirelessCard = document.getElementById('sb-wireless-card');
+    if (wirelessCard) {
+        const ssid = (data.ssid || '').trim();
+        if (ssid) {
+            wirelessCard.style.display = '';
+            wirelessCard.classList.remove('hidden');
+
+            const ssidEl = document.getElementById('sb-ssid');
+            if (ssidEl) ssidEl.textContent = ssid;
+
+            const apEl = document.getElementById('sb-ap-name');
+            if (apEl) apEl.textContent = data.apName || '—';
+
+            const chanEl = document.getElementById('sb-channel');
+            if (chanEl) {
+                if (data.radioBand && data.channel) {
+                    chanEl.textContent = `${data.radioBand} (Ch ${data.channel})`;
+                } else if (data.radioBand) {
+                    chanEl.textContent = data.radioBand;
+                } else if (data.channel) {
+                    chanEl.textContent = `Ch ${data.channel}`;
+                } else {
+                    chanEl.textContent = '—';
+                }
+            }
+
+            ['sb-standard', 'sb-wifi-standard'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = data.wifiStandard || '—';
+            });
+
+            // Signal
+            const signalDbm = parseInt(data.signal, 10);
+            const hasSignal = !isNaN(signalDbm) && signalDbm !== 0;
+            const qualityVal = parseInt(data.signalQuality, 10);
+            let qualityPercent = 0;
+            let signalText = '—';
+
+            if (hasSignal) {
+                if (!isNaN(qualityVal) && qualityVal > 0) {
+                    qualityPercent = Math.min(100, Math.max(0, qualityVal));
+                } else {
+                    qualityPercent = Math.min(100, Math.max(0, Math.round(2 * (signalDbm + 100))));
+                }
+                signalText = `${signalDbm} dBm (${qualityPercent}%)`;
+            } else if (!isNaN(qualityVal) && qualityVal > 0) {
+                qualityPercent = qualityVal;
+                signalText = `${qualityPercent}%`;
+            }
+
+            ['sb-signal', 'sb-signal-val'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = signalText;
+            });
+
+            const sigBar = document.getElementById('sb-signal-bar');
+            if (sigBar) {
+                sigBar.style.width = `${qualityPercent}%`;
+                sigBar.classList.remove('warning', 'danger');
+                if (hasSignal) {
+                    if (signalDbm > -65) {
+                        // Green (> -65 dBm)
+                    } else if (signalDbm >= -75) {
+                        sigBar.classList.add('warning'); // Yellow (-65 to -75 dBm)
+                    } else {
+                        sigBar.classList.add('danger'); // Red (< -75 dBm)
+                    }
+                }
+            }
+
+            // PHY rates
+            const txRateStr = formatPhyRate(data.txRate);
+            const rxRateStr = formatPhyRate(data.rxRate);
+            const ratesText = (txRateStr === '—' && rxRateStr === '—') ? '—' : `Tx: ${txRateStr} / Rx: ${rxRateStr}`;
+            ['sb-phy-rates', 'sb-rates'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = ratesText;
+            });
+
+            // Total Bytes
+            const txBytesStr = formatBytes(data.txBytes);
+            const rxBytesStr = formatBytes(data.rxBytes);
+            const bytesText = (txBytesStr === '—' && rxBytesStr === '—') ? '—' : `Tx: ${txBytesStr} / Rx: ${rxBytesStr}`;
+            ['sb-total-bytes', 'sb-traffic'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = bytesText;
+            });
+
+            // Uptime
+            const uptimeEl = document.getElementById('sb-uptime');
+            if (uptimeEl) {
+                uptimeEl.textContent = formatUptime(data.associationUptime);
+            }
+        } else {
+            wirelessCard.style.display = 'none';
+            wirelessCard.classList.add('hidden');
+        }
+    }
+
+    // 4. Router & IPAM Card
+    const routerCard = document.getElementById('sb-router-card');
+    if (routerCard) {
+        const ipEl = document.getElementById('sb-ip');
+        if (ipEl) ipEl.textContent = data.ip || '—';
+
+        ['sb-subnet', 'sb-network'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = data.network || '—';
+        });
+
+        const assignEl = document.getElementById('sb-assignment');
+        if (assignEl) assignEl.textContent = data.assignment || '—';
+
+        const sourceEl = document.getElementById('sb-router-source');
+        if (sourceEl) sourceEl.textContent = data.routerSource || '—';
+
+        const ifaceEl = document.getElementById('sb-router-interface');
+        if (ifaceEl) ifaceEl.textContent = data.routerInterface || '—';
+
+        const leaseEl = document.getElementById('sb-lease-expires');
+        if (leaseEl) {
+            let leaseText = '—';
+            if (data.leaseExpires) {
+                const expDate = new Date(data.leaseExpires);
+                if (!isNaN(expDate.getTime())) {
+                    const diffMs = expDate.getTime() - Date.now();
+                    if (diffMs > 0) {
+                        leaseText = `${formatUptime(Math.floor(diffMs / 1000))} remaining`;
+                    } else {
+                        leaseText = 'Expired';
+                    }
+                }
+            } else if (data.leaseLifetime && parseInt(data.leaseLifetime, 10) > 0) {
+                leaseText = `${formatUptime(parseInt(data.leaseLifetime, 10))} lifetime`;
+            } else if (data.assignment === 'Static' || data.assignment === 'Static DHCP') {
+                leaseText = 'Permanent';
+            }
+            leaseEl.textContent = leaseText;
+        }
+
+        const notesEl = document.getElementById('sb-router-notes');
+        if (notesEl) notesEl.textContent = data.routerNotes || '—';
+    }
+
+    // 5. Hardware & Security Card
+    const hwCard = document.getElementById('sb-hardware-card');
+    if (hwCard) {
+        const vendorVal = data.vendorOriginal || data.vendor || 'Unknown';
+        const hwVendorEl = document.getElementById('sb-hw-vendor');
+        if (hwVendorEl) hwVendorEl.textContent = vendorVal;
+
+        const unifiModelEl = document.getElementById('sb-unifi-model');
+        if (unifiModelEl) unifiModelEl.textContent = data.unifiModel || '—';
+
+        const portsEl = document.getElementById('sb-open-ports');
+        if (portsEl) portsEl.textContent = data.openPorts || 'None detected';
+
+        const firstSeenEl = document.getElementById('sb-first-seen');
+        if (firstSeenEl) firstSeenEl.textContent = data.firstseen || '—';
+
+        const lastSeenEl = document.getElementById('sb-last-seen');
+        if (lastSeenEl) lastSeenEl.textContent = data.lastseenDisplay || data.lastseen || '—';
+
+        const histBtn = document.getElementById('sb-history-btn');
+        if (histBtn) histBtn.onclick = () => viewSidebarPresenceHistory();
+    }
+
+    // 6. Device Customizations Card
+    const editIp = document.getElementById('sb-edit-ip');
+    if (editIp) editIp.value = data.ip || '';
+
+    const editLabel = document.getElementById('sb-edit-label');
+    if (editLabel) editLabel.value = data.labelOriginal || '';
+
+    const editCustomHostname = document.getElementById('sb-edit-custom-hostname');
+    if (editCustomHostname) editCustomHostname.value = data.customHostnameOriginal || '';
+
+    const editCustomWebUrl = document.getElementById('sb-edit-custom-web-url');
+    if (editCustomWebUrl) editCustomWebUrl.value = data.customWebUrlOriginal || '';
+
+    const editCustomType = document.getElementById('sb-edit-custom-type');
+    if (editCustomType) editCustomType.value = data.customTypeOriginal || '';
+
+    const editNotes = document.getElementById('sb-edit-notes');
+    if (editNotes) editNotes.value = data.notes || '';
+
+    // Show sidebar
+    const sidebar = document.getElementById('device-sidebar');
+    if (sidebar) sidebar.classList.remove('hidden');
+}
+
+function closeDeviceSidebar() {
+    const sidebar = document.getElementById('device-sidebar');
+    if (sidebar) sidebar.classList.add('hidden');
+    document.querySelectorAll('.device-row.selected-row').forEach(r => r.classList.remove('selected-row'));
+}
+
+function viewSidebarPresenceHistory() {
+    const ip = document.getElementById('sb-edit-ip')?.value || document.getElementById('sb-ip')?.textContent;
+    const macEl = document.getElementById('sb-mac');
+    const mac = macEl && macEl.textContent !== '--:--:--:--:--:--' ? macEl.textContent : '';
+    if (ip) {
+        viewHistory(ip, mac);
+    }
+}
+
+async function saveSidebarDevice() {
+    const ip = document.getElementById('sb-edit-ip')?.value;
+    if (!ip) return;
+
+    const label = document.getElementById('sb-edit-label')?.value ?? '';
+    const custom_hostname = document.getElementById('sb-edit-custom-hostname')?.value ?? '';
+    const custom_web_url = document.getElementById('sb-edit-custom-web-url')?.value ?? '';
+    const custom_type = document.getElementById('sb-edit-custom-type')?.value ?? '';
+    const notes = document.getElementById('sb-edit-notes')?.value ?? '';
+
+    const saveBtn = document.querySelector('#sb-edit-form button[type="submit"]') ||
+                    document.querySelector('#sb-edit-form button.btn-primary') ||
+                    document.querySelector('#sb-edit-form button[onclick*="saveSidebarDevice"]');
+    const originalBtnText = saveBtn ? saveBtn.innerHTML : 'Save Changes';
+
+    try {
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+        }
+
+        const payload = {
+            ip,
+            label,
+            custom_hostname,
+            custom_web_url,
+            custom_type,
+            notes
+        };
+
+        // Call PUT /api/devices/{ip}
+        let res = await fetch(`/api/devices/${encodeURIComponent(ip)}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        // Fallback to /api/device if needed
+        if (res.status === 404 || res.status === 405) {
+            res = await fetch('/api/device', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify(payload)
+            });
+        }
+
+        if (!res.ok) {
+            let errorMsg = `HTTP ${res.status}`;
+            try {
+                const errData = await res.json();
+                if (errData && errData.error) errorMsg = errData.error;
+            } catch (_) {}
+            throw new Error(errorMsg);
+        }
+
+        const json = await res.json();
+        if (!json.success && json.error) {
+            throw new Error(json.error);
+        }
+
+        // In-place update of the table row
+        const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
+        if (row) {
+            row.dataset.label = label.toLowerCase();
+            row.dataset.labelOriginal = label;
+            row.dataset.customHostname = custom_hostname.toLowerCase();
+            row.dataset.customHostnameOriginal = custom_hostname;
+            row.dataset.customWebUrl = custom_web_url.toLowerCase();
+            row.dataset.customWebUrlOriginal = custom_web_url;
+            row.dataset.customType = custom_type.toLowerCase();
+            row.dataset.customTypeOriginal = custom_type;
+            row.dataset.notes = notes;
+
+            // Update Hostname cell DOM
+            const hostnameCell = row.querySelector('.hostname-cell');
+            if (hostnameCell) {
+                const originalHostname = row.dataset.hostnameDisplay || row.dataset.hostname || '';
+                let cellHtml = '';
+                if (custom_hostname) {
+                    cellHtml = `
+                        <span class="custom-hostname-wrapper" data-tip="Hostname overridden (originally: ${escapeHtml(originalHostname || 'none')})">
+                            ${escapeHtml(custom_hostname)}
+                            <span class="override-indicator"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+                        </span>
+                    `;
+                } else if (originalHostname) {
+                    cellHtml = escapeHtml(originalHostname);
+                } else {
+                    cellHtml = '<span style="color:var(--text-muted)">-</span>';
+                }
+
+                if (notes) {
+                    cellHtml += `
+                        <span class="notes-indicator" data-tip="${escapeHtml(notes)}" style="margin-left: 4px; vertical-align: middle;"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>
+                    `;
+                }
+
+                // Preserve linked children badge if present
+                const childrenBadge = hostnameCell.querySelector('.linked-children-badge');
+                if (childrenBadge) {
+                    cellHtml += childrenBadge.outerHTML;
+                }
+
+                hostnameCell.innerHTML = cellHtml;
+                hostnameCell.setAttribute('data-copy', custom_hostname || originalHostname);
+            }
+
+            // Update Actions Web UI button if needed
+            const effectiveWebUrl = custom_web_url || row.dataset.webUrl || '';
+            const actionsCell = row.querySelector('.actions-cell');
+            if (actionsCell) {
+                let webLink = actionsCell.querySelector('a.btn-icon');
+                let placeholder = actionsCell.querySelector('button.btn-icon.placeholder');
+                if (effectiveWebUrl) {
+                    if (webLink) {
+                        webLink.href = effectiveWebUrl;
+                        webLink.setAttribute('data-tip', `Open Web UI: ${effectiveWebUrl}`);
+                    } else if (placeholder) {
+                        placeholder.outerHTML = `
+                            <a href="${escapeHtml(effectiveWebUrl)}" target="_blank" class="btn-icon" data-tip="Open Web UI: ${escapeHtml(effectiveWebUrl)}" aria-label="Open Web UI" onclick="event.stopPropagation()">
+                                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                            </a>
+                        `;
+                    }
+                } else {
+                    if (webLink) {
+                        webLink.outerHTML = `
+                            <button class="btn-icon placeholder" style="visibility: hidden; pointer-events: none;" disabled>
+                                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                            </button>
+                        `;
+                    }
+                }
+            }
+
+            // Sync sidebar header & webui button
+            const effectiveType = custom_type || row.dataset.typeDisplay || row.dataset.type || '';
+            const iconEl = document.getElementById('sb-icon');
+            if (iconEl) iconEl.textContent = getDeviceTypeIcon(effectiveType);
+
+            const titleEl = document.getElementById('sb-title');
+            if (titleEl) titleEl.textContent = label || custom_hostname || row.dataset.hostnameDisplay || row.dataset.hostname || ip;
+
+            const sbWebUi = document.getElementById('sb-webui-btn');
+            if (sbWebUi) {
+                if (effectiveWebUrl) {
+                    sbWebUi.href = effectiveWebUrl;
+                    sbWebUi.style.display = '';
+                } else {
+                    sbWebUi.removeAttribute('href');
+                    sbWebUi.style.display = 'none';
+                }
+            }
+        }
+
+        // Brief "Saved!" badge on the button
+        if (saveBtn) {
+            saveBtn.textContent = 'Saved! ✓';
+            setTimeout(() => {
+                if (saveBtn) {
+                    saveBtn.innerHTML = originalBtnText;
+                    saveBtn.disabled = false;
+                }
+            }, 1500);
+        }
+
+        showToast('Device updated', 'success');
+    } catch (err) {
+        console.error('Failed to save device:', err);
+        showToast('Failed to save changes: ' + err.message, 'error');
+        if (saveBtn) {
+            saveBtn.innerHTML = originalBtnText;
+            saveBtn.disabled = false;
+        }
+    }
+}
+
+// Global exports
+window.selectDeviceRow = selectDeviceRow;
+window.openDeviceSidebar = openDeviceSidebar;
+window.closeDeviceSidebar = closeDeviceSidebar;
+window.saveSidebarDevice = saveSidebarDevice;
+window.viewSidebarPresenceHistory = viewSidebarPresenceHistory;
 
 // Copy to clipboard.
 //
@@ -1040,6 +1597,10 @@ function compareRows(a, b, column) {
             valA = a.dataset.vendor || 'zzz';
             valB = b.dataset.vendor || 'zzz';
             break;
+        case 'ssid':
+            valA = (a.dataset.ssid || '').toLowerCase() || 'zzz';
+            valB = (b.dataset.ssid || '').toLowerCase() || 'zzz';
+            break;
         case 'status':
             const order = { online: 0, recent: 1, offline: 2 };
             valA = order[a.dataset.status] ?? 3;
@@ -1129,12 +1690,26 @@ async function refreshInPlace() {
     const freshRows = doc.getElementById('devices-tbody');
     if (!freshRows) return false;
 
+    // Preserve selected row across refresh
+    const selectedIp = document.querySelector('.device-row.selected-row')?.dataset?.ip;
+
     document.getElementById('devices-tbody')?.replaceWith(freshRows);
 
     for (const selector of ['.stat-strip', '.table-footer', '#device-count', '#scan-time-top', '.sidebar-networks']) {
         const current = document.querySelector(selector);
         const replacement = doc.querySelector(selector);
         if (current && replacement) current.replaceWith(replacement);
+    }
+
+    if (selectedIp) {
+        const rowToSelect = document.querySelector(`.device-row[data-ip="${CSS.escape(selectedIp)}"]`);
+        if (rowToSelect) {
+            rowToSelect.classList.add('selected-row');
+            const sidebar = document.getElementById('device-sidebar');
+            if (sidebar && !sidebar.classList.contains('hidden')) {
+                openDeviceSidebar(rowToSelect);
+            }
+        }
     }
 
     // The search box, filter dropdowns and column sort are deliberately left
@@ -1533,30 +2108,87 @@ async function disconnectTailscale() {
     window.addEventListener('scroll', hide, { passive: true });
 })();
 
-// Click-to-view for value cells (IP, MAC, hostname, vendor). Driven by a
-// data-copy attribute and event delegation rather than an inline onclick, so rows
-// added by an auto-refresh are covered automatically. Intercepts clicks on key cells
-// and instantly pops open the Device Insights Modal.
-(function initCellClick() {
+// Row click selection for device rows. Clicking any row (outside action buttons, links,
+// form inputs, copy elements, or active text selection) selects the row and opens the
+// interactive sidebar drawer.
+(function initDeviceRowSelection() {
     const table = document.getElementById('devices-table');
     if (!table) return;
     table.addEventListener('click', function (e) {
         // Prevent trigger if they click an action button, a link, or custom form control inside the table
-        if (e.target.closest('.actions-cell') || e.target.closest('a') || e.target.closest('button') || e.target.closest('input')) {
+        if (e.target.closest('.actions-cell') ||
+            e.target.closest('a') ||
+            e.target.closest('button') ||
+            e.target.closest('input') ||
+            e.target.closest('select') ||
+            e.target.closest('.copy-icon') ||
+            e.target.closest('.copy-btn')) {
             return;
         }
 
-        // If the user has highlighted/selected text (for copy-pasting), abort opening the modal!
+        // If the user has highlighted/selected text (for copy-pasting), abort
         if (window.getSelection() && window.getSelection().toString().trim()) {
             return;
         }
 
-        const cell = e.target.closest('td[data-copy]');
-        if (!cell) return;
+        const row = e.target.closest('.device-row');
+        if (row) {
+            selectDeviceRow(row);
+        }
+    });
+})();
 
-        const row = cell.closest('tr');
-        if (row && row.dataset.ip) {
-            editDevice(row.dataset.ip);
+// Keyboard navigation: Escape closes sidebar, ArrowUp/ArrowDown moves selection across visible rows
+(function initKeyboardNav() {
+    document.addEventListener('keydown', function (e) {
+        const sidebar = document.getElementById('device-sidebar');
+        const isSidebarOpen = sidebar && !sidebar.classList.contains('hidden');
+
+        // Check if an input or form control is focused
+        const isInputFocused = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+
+        if (e.key === 'Escape') {
+            if (isSidebarOpen) {
+                e.preventDefault();
+                if (isInputFocused) {
+                    document.activeElement.blur();
+                }
+                closeDeviceSidebar();
+            }
+            return;
+        }
+
+        if (isInputFocused) {
+            return;
+        }
+
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            const visibleRows = Array.from(document.querySelectorAll('.device-row')).filter(
+                r => r.style.display !== 'none' && r.offsetParent !== null
+            );
+            if (visibleRows.length === 0) return;
+
+            e.preventDefault();
+
+            const currentRow = document.querySelector('.device-row.selected-row');
+            let nextIndex = 0;
+
+            if (currentRow) {
+                const currentIndex = visibleRows.indexOf(currentRow);
+                if (e.key === 'ArrowDown') {
+                    nextIndex = (currentIndex >= 0 && currentIndex < visibleRows.length - 1) ? currentIndex + 1 : currentIndex;
+                } else {
+                    nextIndex = currentIndex > 0 ? currentIndex - 1 : 0;
+                }
+            } else {
+                nextIndex = e.key === 'ArrowDown' ? 0 : visibleRows.length - 1;
+            }
+
+            const targetRow = visibleRows[nextIndex];
+            if (targetRow) {
+                selectDeviceRow(targetRow);
+                targetRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
         }
     });
 })();
