@@ -55,6 +55,28 @@ type Device struct {
 
 	// LinkedChildrenDetails stores structured details about each linked child device.
 	LinkedChildrenDetails []LinkedChild `json:"linked_children_details,omitempty"`
+
+	// UniFi wireless telemetry
+	SSID              string `json:"ssid,omitempty"`
+	APName            string `json:"ap_name,omitempty"`
+	RadioBand         string `json:"radio_band,omitempty"`
+	Channel           int    `json:"channel,omitempty"`
+	WiFiStandard      string `json:"wifi_standard,omitempty"`
+	Signal            int    `json:"signal,omitempty"`
+	SignalQuality     int    `json:"signal_quality,omitempty"`
+	RxRate            int    `json:"rx_rate,omitempty"`
+	TxRate            int    `json:"tx_rate,omitempty"`
+	RxBytes           int64  `json:"rx_bytes,omitempty"`
+	TxBytes           int64  `json:"tx_bytes,omitempty"`
+	AssociationUptime int64  `json:"association_uptime,omitempty"`
+	UniFiModel        string `json:"unifi_model,omitempty"`
+
+	// Extended router fields
+	RouterSource    string    `json:"router_source,omitempty"`
+	RouterInterface string    `json:"router_interface,omitempty"`
+	LeaseExpires    time.Time `json:"lease_expires,omitempty"`
+	LeaseLifetime   int       `json:"lease_lifetime,omitempty"`
+	RouterNotes     string    `json:"router_notes,omitempty"`
 }
 
 // LinkedChild represents brief state details of a linked child device

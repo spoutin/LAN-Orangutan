@@ -84,6 +84,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleDevices(w, r)
 	case path == "devices/clear":
 		h.handleDevicesClear(w, r)
+	case strings.HasPrefix(path, "devices/"):
+		ip := strings.TrimPrefix(path, "devices/")
+		q := r.URL.Query()
+		if q.Get("ip") == "" {
+			q.Set("ip", ip)
+			r.URL.RawQuery = q.Encode()
+		}
+		h.handleDevice(w, r)
 	case path == "device":
 		h.handleDevice(w, r)
 	case path == "networks":
@@ -194,7 +202,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 		}
 		h.success(w, device)
 
-	case http.MethodPost:
+	case http.MethodPost, http.MethodPut:
 		var req struct {
 			IP             string  `json:"ip"`
 			Label          *string `json:"label"`

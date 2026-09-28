@@ -30,6 +30,12 @@
     --radius-md: 12px;
     --radius-lg: 16px;
     --transition: all 0.2s ease;
+    --border: var(--border-color);
+    --bg-card: var(--bg-primary);
+    --bg-card-hover: var(--bg-secondary);
+    --selected-bg: var(--bg-secondary);
+    --accent: var(--accent-primary);
+    --radius: var(--radius-md);
 }
 
 [data-theme="dark"],
@@ -56,6 +62,12 @@ html[data-theme="dark"] {
     --glass-strong: rgba(26, 34, 47, 0.82);
     --blur: saturate(180%) blur(20px);
     --header-bg: linear-gradient(135deg, #0a0f17 0%, #141019 100%);
+    --border: var(--border-color);
+    --bg-card: var(--bg-secondary);
+    --bg-card-hover: var(--bg-tertiary);
+    --selected-bg: var(--bg-tertiary);
+    --accent: var(--accent-primary);
+    --radius: var(--radius-md);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -82,6 +94,12 @@ html[data-theme="dark"] {
         --glass-strong: rgba(26, 34, 47, 0.82);
         --blur: saturate(180%) blur(20px);
         --header-bg: linear-gradient(135deg, #0a0f17 0%, #141019 100%);
+        --border: var(--border-color);
+        --bg-card: var(--bg-secondary);
+        --bg-card-hover: var(--bg-tertiary);
+        --selected-bg: var(--bg-tertiary);
+        --accent: var(--accent-primary);
+        --radius: var(--radius-md);
     }
 }
 
@@ -921,10 +939,7 @@ body.strip-docked .stat-strip .stat-chip-filter {
     backdrop-filter: var(--blur);
     -webkit-backdrop-filter: var(--blur);
     border-radius: var(--radius-lg);
-    /* Safety net only: the fixed table layout and the responsive column-hiding
-       below keep the table within this panel at every width, so this never
-       actually scrolls in normal use. The page body never scrolls sideways. */
-    overflow-x: auto;
+    overflow: clip;
     box-shadow: var(--card-shadow);
     border: 1px solid var(--border-color);
 }
@@ -1092,18 +1107,38 @@ td[data-copy]:not([data-copy=""]) {
 /* Column widths for the fixed layout (they sum to 100%). When the responsive
    rules further down hide a column, its share is redistributed across the
    rest, so the table always fills its panel exactly. */
-.col-status     { width: 4%; min-width: 50px; }
-.col-ip         { width: 13%; }
-.col-hostname   { width: 22%; }
-.col-network    { width: 10%; }
-.col-assignment { width: 9%; }
-.col-type       { width: 10%; }
+.col-status     { width: 4%; min-width: 45px; }
+.col-ip         { width: 14%; }
+.col-hostname   { width: 23%; }
+.col-network    { width: 11%; }
+.col-ssid       { width: 14%; }
+.col-vendor     { width: 14%; }
+.col-lastseen   { width: 11%; }
+.col-actions    { width: 9%; min-width: 85px; }
+.col-assignment { display: none; }
+.col-type       { display: none; }
 .col-mac        { display: none; }
-.col-vendor     { width: 13%; }
 .col-label      { display: none; }
 .col-group      { display: none; }
-.col-lastseen   { width: 10%; }
-.col-actions    { width: 9%; min-width: 85px; }
+
+.ssid-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.ssid-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 0.15rem 0.45rem;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
 
 /* Resizable Table Columns */
 .table th {
@@ -1232,6 +1267,24 @@ td[data-copy]:not([data-copy=""]) {
    neighbours: the stripes fused into one unbroken bar down the table and bled
    up against the header instead of marking each row. An inset shadow is not
    part of border collapsing, so each row keeps its own mark. */
+.device-row {
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.device-row:hover {
+    background-color: var(--bg-secondary);
+}
+
+.device-row.selected-row,
+.device-row.selected-row:hover {
+    background-color: var(--selected-bg);
+}
+
+.device-row.selected-row td:first-child {
+    box-shadow: inset 4px 0 0 var(--accent-primary) !important;
+}
+
 .device-row.status-online td:first-child {
     box-shadow: inset 3px 0 0 var(--success);
 }
@@ -1449,6 +1502,19 @@ textarea.input {
 .btn-lg {
     padding: 0.85rem 2rem;
     font-size: 1rem;
+}
+
+.btn.danger,
+.btn-danger {
+    color: var(--danger);
+    border-color: var(--danger-bg);
+}
+
+.btn.danger:hover,
+.btn-danger:hover {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border-color: var(--danger);
 }
 
 .btn-ghost {
@@ -1725,13 +1791,6 @@ textarea.input {
     .main { padding: 1.5rem; }
 }
 
-/* Aggressive Column Hiding to eliminate horizontal scrolling on any desktop/laptop viewport */
-@media (min-width: 769px) and (max-width: 1380px) {
-    .col-assignment, .col-type {
-        display: none;
-    }
-}
-
 @media (min-width: 769px) and (max-width: 1120px) {
     .col-vendor {
         display: none;
@@ -1880,6 +1939,33 @@ textarea.input {
         background: transparent;
         border-top: none;
         padding: 0.85rem 0.15rem;
+    }
+    .devices-view-layout {
+        display: block;
+        min-height: auto;
+    }
+    .table-wrapper {
+        overflow-x: visible;
+    }
+    .device-sidebar {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: auto;
+        width: 100%;
+        max-width: 420px;
+        height: 100vh;
+        max-height: 100vh;
+        z-index: 1300;
+        box-shadow: -8px 0 32px rgba(0, 0, 0, 0.45);
+        border-left: 1px solid var(--border);
+        background: var(--bg-card);
+        display: flex;
+        flex-direction: column;
+    }
+    .device-sidebar.hidden {
+        display: none !important;
     }
 }
 
@@ -2840,4 +2926,250 @@ img.login-logo {
 .presence-session-bar:hover .presence-tooltip {
     visibility: visible;
     opacity: 1;
+}
+
+/* ==========================================================================
+   Devices View Layout & Sidebar Drawer (Desktop & General)
+   ========================================================================== */
+
+.devices-view-layout {
+    display: flex;
+    position: relative;
+    width: 100%;
+    min-height: 480px;
+    align-items: stretch;
+}
+
+.table-wrapper {
+    flex: 1 1 0%;
+    min-width: 0;
+    overflow-x: auto;
+    transition: flex 0.25s ease-in-out;
+}
+
+.device-sidebar {
+    width: 380px;
+    flex: 0 0 380px;
+    border-left: 1px solid var(--border);
+    background: var(--bg-card);
+    display: flex;
+    flex-direction: column;
+    position: sticky;
+    top: 4.5rem;
+    max-height: calc(100vh - 110px);
+    box-shadow: var(--card-shadow);
+    transition: transform 0.25s ease-in-out, opacity 0.2s ease;
+    opacity: 1;
+    z-index: 50;
+    overflow: hidden;
+}
+
+.device-sidebar:not(.hidden) {
+    animation: sidebarSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes sidebarSlideIn {
+    from {
+        transform: translateX(20px);
+        opacity: 0.6;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.device-sidebar.hidden {
+    display: none !important;
+}
+
+/* Sidebar Header */
+.sidebar-header-box {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    flex-shrink: 0;
+}
+
+.sidebar-header-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+}
+
+.sidebar-device-icon {
+    font-size: 1.75rem;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.sidebar-header-text {
+    min-width: 0;
+}
+
+.sidebar-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sidebar-subtitle {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sidebar-close-btn {
+    background: transparent;
+    border: none;
+    font-size: 1.4rem;
+    line-height: 1;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.2rem 0.45rem;
+    border-radius: var(--radius-sm);
+    transition: var(--transition);
+    margin-left: 0.5rem;
+    flex-shrink: 0;
+}
+
+.sidebar-close-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-card-hover);
+}
+
+/* Sidebar Quick Actions */
+.sidebar-quick-actions {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.65rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
+    flex-shrink: 0;
+}
+
+.sidebar-quick-actions .btn {
+    flex: 1;
+    justify-content: center;
+    font-size: 0.8rem;
+    padding: 0.35rem 0.5rem;
+    white-space: nowrap;
+}
+
+/* Sidebar Scrollable Body */
+.sidebar-scrollable-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 1rem 1.15rem;
+    scrollbar-width: thin;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+/* Sidebar Cards */
+.sidebar-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 0.9rem 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.sidebar-card-header {
+    margin-bottom: 0.6rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.sidebar-card-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--accent-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 0;
+}
+
+.sidebar-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+/* Spec lists */
+.sidebar-spec-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+.sidebar-spec-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.82rem;
+    line-height: 1.35;
+}
+
+.sidebar-spec-list .spec-label {
+    color: var(--text-muted);
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.sidebar-spec-list .spec-val {
+    color: var(--text-primary);
+    font-weight: 600;
+    text-align: right;
+    word-break: break-all;
+}
+
+/* Signal Meter */
+.spec-val-meter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.signal-meter-bar {
+    width: 70px;
+    height: 7px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.signal-meter-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--success);
+    border-radius: 3px;
+    transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.signal-meter-fill.warning {
+    background: var(--warning);
+}
+
+.signal-meter-fill.danger {
+    background: var(--danger);
 }

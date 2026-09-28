@@ -13,6 +13,7 @@ import (
 	"github.com/spoutin/LAN-Orangutan/internal/auth"
 	"github.com/spoutin/LAN-Orangutan/internal/config"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 const testPassword = "test-password"
@@ -512,5 +513,82 @@ func TestNoSetupWhenPasswordAlreadyConfigured(t *testing.T) {
 
 	if rec.Code != http.StatusSeeOther {
 		t.Errorf("status = %d, want a redirect when a password already exists", rec.Code)
+	}
+}
+
+func TestIndexPageRendersWithTelemetry(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	dev := types.Device{
+		IP:                "192.168.1.50",
+		MAC:               "aa:bb:cc:dd:ee:ff",
+		Hostname:          "Pixel-8",
+		Vendor:            "Google",
+		Type:              "Phone",
+		SSID:              "Home-IoT",
+		APName:            "Living Room AP",
+		RadioBand:         "5GHz",
+		Channel:           36,
+		WiFiStandard:      "Wi-Fi 6",
+		Signal:            -65,
+		SignalQuality:     85,
+		RxRate:            600,
+		TxRate:            866,
+		RxBytes:           1048576,
+		TxBytes:           2097152,
+		AssociationUptime: 3600,
+		UniFiModel:        "U6-Pro",
+		RouterSource:      "OPNsense",
+		RouterInterface:   "lan",
+		LeaseExpires:      time.Now().Add(2 * time.Hour),
+		LeaseLifetime:     7200,
+		RouterNotes:       "Static Mapping",
+		FirstSeen:         time.Now().Add(-24 * time.Hour),
+		LastSeen:          time.Now(),
+	}
+	if err := h.store.UpdateDevice(&dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	h.handleIndex(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HandleIndex status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	for _, expected := range []string{
+		"col-ssid",
+		"Home-IoT",
+		"ssid-badge",
+		"device-sidebar",
+		"sb-wireless-card",
+		"sb-router-card",
+		"sb-hardware-card",
+		"sb-edit-card",
+		`data-ssid="Home-IoT"`,
+		`data-ap-name="Living Room AP"`,
+		`data-radio-band="5GHz"`,
+		`data-channel="36"`,
+		`data-signal="-65"`,
+		`data-unifi-model="U6-Pro"`,
+		`data-router-source="OPNsense"`,
+		`data-router-interface="lan"`,
+		`data-router-notes="Static Mapping"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("expected body to contain %q", expected)
+		}
+	}
+
+	// Verify old columns Assignment and Type were removed from table headers
+	for _, removed := range []string{
+		`<th class="col-assignment"`,
+		`<th class="col-type"`,
+	} {
+		if strings.Contains(body, removed) {
+			t.Errorf("expected header %q to be removed from table", removed)
+		}
 	}
 }

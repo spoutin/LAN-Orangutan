@@ -380,6 +380,43 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		}
 	}
 
+	// UniFi clients discovery
+	if ctx.Err() == nil && h.cfg.UniFi.Enable {
+		unifiClients, err := scanner.FetchUniFiClients(ctx, h.cfg.UniFi)
+		if err == nil {
+			newDevs, seenDevs, mergeErr := h.store.MergeUniFiClients(unifiClients)
+			if mergeErr != nil {
+				fmt.Printf("[DEBUG] UniFi client merge error: %v\n", mergeErr)
+			}
+			var newIPs, seenIPs []string
+			for _, d := range newDevs {
+				if d.IP != "" {
+					newIPs = append(newIPs, d.IP)
+				}
+			}
+			for _, d := range seenDevs {
+				if d.IP != "" {
+					seenIPs = append(seenIPs, d.IP)
+				}
+			}
+			if len(newIPs) > 0 || len(seenIPs) > 0 {
+				j.accumulate(newIPs, seenIPs)
+			}
+			for _, d := range unifiClients {
+				if d.IP != "" {
+					activeIPsMap[d.IP] = true
+				}
+			}
+			j.addResult(networkScanSummary{
+				Network:     "UniFi Controller",
+				Status:      "scanned",
+				DeviceCount: len(unifiClients),
+			}, len(unifiClients))
+		} else {
+			fmt.Printf("UniFi client fetch error: %v\n", err)
+		}
+	}
+
 	// Wait for any asynchronous port scanning (Stage 2) to complete before finishing the job
 	j.portScanWG.Wait()
 

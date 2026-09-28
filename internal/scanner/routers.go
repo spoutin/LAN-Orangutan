@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,22 +17,39 @@ import (
 
 // OpenWrt API Structs
 type openWrtLease struct {
-	IP       string `json:"ip"`
-	MAC      string `json:"mac"`
-	Hostname string `json:"hostname"`
+	IP            string      `json:"ip"`
+	MAC           string      `json:"mac"`
+	Hostname      string      `json:"hostname"`
+	Expires       interface{} `json:"expires"`
+	LeaseTime     interface{} `json:"leasetime"`
+	ValidLifetime interface{} `json:"valid_lifetime"`
+	Lifetime      interface{} `json:"lifetime"`
+	Device        string      `json:"device"`
+	Interface     string      `json:"interface"`
+	Network       string      `json:"network"`
 }
 
 type openWrtHost struct {
-	Name string   `json:"name"`
-	IP   string   `json:"ip"`
-	MACs []string `json:"macs"`
+	Name     string   `json:"name"`
+	IP       string   `json:"ip"`
+	MACs     []string `json:"macs"`
+	MAC      string   `json:"mac"`
+	Note     string   `json:"note"`
+	Notes    string   `json:"notes"`
+	Comment  string   `json:"comment"`
+	Comments string   `json:"comments"`
 }
 
 // OPNsense API Structs
 type opnSenseLease struct {
-	Address  string `json:"address"`
-	HwAddr   string `json:"hwaddr"`
-	Hostname string `json:"hostname"`
+	Address       string      `json:"address"`
+	HwAddr        string      `json:"hwaddr"`
+	Hostname      string      `json:"hostname"`
+	ValidLifetime interface{} `json:"valid_lifetime"`
+	Cltt          interface{} `json:"cltt"`
+	Expire        interface{} `json:"expire"`
+	Intf          string      `json:"intf"`
+	Interface     string      `json:"interface"`
 }
 
 type opnSenseLeasesResponse struct {
@@ -39,9 +57,13 @@ type opnSenseLeasesResponse struct {
 }
 
 type opnSenseReservation struct {
-	IPAddress string `json:"ip_address"`
-	HwAddr    string `json:"hwaddr"`
-	Hostname  string `json:"hostname"`
+	IPAddress   string `json:"ip_address"`
+	HwAddr      string `json:"hwaddr"`
+	Hostname    string `json:"hostname"`
+	Description string `json:"description"`
+	Notes       string `json:"notes"`
+	Comment     string `json:"comment"`
+	Comments    string `json:"comments"`
 }
 
 type opnSenseReservationsResponse struct {
@@ -49,13 +71,106 @@ type opnSenseReservationsResponse struct {
 }
 
 type opnSenseArp struct {
-	IP  string `json:"ip"`
-	MAC string `json:"mac"`
+	IP              string `json:"ip"`
+	MAC             string `json:"mac"`
+	Hostname        string `json:"hostname"`
+	Intf            string `json:"intf"`
+	IntfDescription string `json:"intf_description"`
+}
+
+func parseNumeric(v interface{}) (int64, bool) {
+	if v == nil {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	case float32:
+		return int64(n), true
+	case json.Number:
+		i, err := n.Int64()
+		if err == nil {
+			return i, true
+		}
+		f, err := n.Float64()
+		if err == nil {
+			return int64(f), true
+		}
+	case string:
+		s := strings.TrimSpace(n)
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return i, true
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return int64(f), true
+		}
+	}
+	return 0, false
+}
+
+func parseTimeFlexible(v interface{}) (time.Time, bool) {
+	if v == nil {
+		return time.Time{}, false
+	}
+	if str, ok := v.(string); ok {
+		str = strings.TrimSpace(str)
+		if str == "" {
+			return time.Time{}, false
+		}
+		layouts := []string{
+			time.RFC3339,
+			time.RFC3339Nano,
+			"2006-01-02 15:04:05",
+			"2006-01-02T15:04:05",
+			"2006/01/02 15:04:05",
+		}
+		for _, l := range layouts {
+			if t, err := time.Parse(l, str); err == nil {
+				return t, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+func formatRouterInterface(intf, desc string) string {
+	intf = strings.TrimSpace(intf)
+	desc = strings.TrimSpace(desc)
+	if intf != "" && desc != "" {
+		if strings.EqualFold(intf, desc) {
+			return intf
+		}
+		return fmt.Sprintf("%s (%s)", intf, desc)
+	}
+	if desc != "" {
+		return desc
+	}
+	return intf
+}
+
+func formatOpenWrtInterface(iface, device, network string) string {
+	iface = strings.TrimSpace(iface)
+	device = strings.TrimSpace(device)
+	network = strings.TrimSpace(network)
+
+	if iface != "" {
+		return iface
+	}
+	if device != "" {
+		return device
+	}
+	return network
 }
 
 // FetchOpenWrtDHCP contacts the OpenWrt router to retrieve active leases and static reservations.
 func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []types.Device, reservations []types.Device, err error) {
-	baseURL := strings.TrimSuffix(cfg.URL, "/")
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
 	}
@@ -92,12 +207,41 @@ func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []t
 			continue
 		}
 		vendor := GetMACVendor(rl.MAC)
+
+		var leaseExpires time.Time
+		var leaseLifetime int
+
+		if lt, ok := parseNumeric(rl.LeaseTime); ok && lt > 0 {
+			leaseLifetime = int(lt)
+		} else if lt, ok := parseNumeric(rl.ValidLifetime); ok && lt > 0 {
+			leaseLifetime = int(lt)
+		} else if lt, ok := parseNumeric(rl.Lifetime); ok && lt > 0 {
+			leaseLifetime = int(lt)
+		}
+
+		if exp, ok := parseNumeric(rl.Expires); ok && exp > 0 {
+			if exp > 1000000000 {
+				leaseExpires = time.Unix(exp, 0)
+			} else {
+				leaseExpires = time.Now().Add(time.Duration(exp) * time.Second)
+				if leaseLifetime == 0 {
+					leaseLifetime = int(exp)
+				}
+			}
+		} else if t, ok := parseTimeFlexible(rl.Expires); ok {
+			leaseExpires = t
+		}
+
 		leases = append(leases, types.Device{
-			IP:       rl.IP,
-			MAC:      rl.MAC,
-			Hostname: rl.Hostname,
-			Vendor:   vendor,
-			Type:     Classify(vendor, rl.Hostname, nil),
+			IP:              rl.IP,
+			MAC:             rl.MAC,
+			Hostname:        rl.Hostname,
+			Vendor:          vendor,
+			Type:            Classify(vendor, rl.Hostname, nil),
+			RouterSource:    "OpenWrt",
+			RouterInterface: formatOpenWrtInterface(rl.Interface, rl.Device, rl.Network),
+			LeaseExpires:    leaseExpires,
+			LeaseLifetime:   leaseLifetime,
 		})
 	}
 
@@ -131,14 +275,30 @@ func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []t
 		mac := ""
 		if len(rh.MACs) > 0 {
 			mac = rh.MACs[0]
+		} else if rh.MAC != "" {
+			mac = rh.MAC
 		}
 		vendor := GetMACVendor(mac)
+
+		notes := strings.TrimSpace(rh.Note)
+		if notes == "" {
+			notes = strings.TrimSpace(rh.Notes)
+		}
+		if notes == "" {
+			notes = strings.TrimSpace(rh.Comment)
+		}
+		if notes == "" {
+			notes = strings.TrimSpace(rh.Comments)
+		}
+
 		reservations = append(reservations, types.Device{
-			IP:       rh.IP,
-			MAC:      mac,
-			Hostname: rh.Name,
-			Vendor:   vendor,
-			Type:     Classify(vendor, rh.Name, nil),
+			IP:           rh.IP,
+			MAC:          mac,
+			Hostname:     rh.Name,
+			Vendor:       vendor,
+			Type:         Classify(vendor, rh.Name, nil),
+			RouterSource: "OpenWrt",
+			RouterNotes:  notes,
 		})
 	}
 
@@ -147,7 +307,7 @@ func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []t
 
 // FetchOPNsenseDHCP contacts the OPNsense firewall to retrieve Kea leases, reservations, and ARP entries.
 func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases []types.Device, reservations []types.Device, arpEntries []types.Device, err error) {
-	baseURL := strings.TrimSuffix(cfg.URL, "/")
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
 	}
@@ -186,12 +346,44 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 			continue
 		}
 		vendor := GetMACVendor(rl.HwAddr)
+
+		var leaseExpires time.Time
+		var leaseLifetime int
+
+		if vl, ok := parseNumeric(rl.ValidLifetime); ok && vl > 0 {
+			leaseLifetime = int(vl)
+		}
+
+		cltt, hasCltt := parseNumeric(rl.Cltt)
+		if hasCltt && cltt > 0 && leaseLifetime > 0 {
+			leaseExpires = time.Unix(cltt+int64(leaseLifetime), 0)
+		}
+
+		if leaseExpires.IsZero() {
+			if exp, ok := parseNumeric(rl.Expire); ok && exp > 0 {
+				if exp > 1000000000 {
+					leaseExpires = time.Unix(exp, 0)
+				} else {
+					leaseExpires = time.Now().Add(time.Duration(exp) * time.Second)
+					if leaseLifetime == 0 {
+						leaseLifetime = int(exp)
+					}
+				}
+			} else if t, ok := parseTimeFlexible(rl.Expire); ok {
+				leaseExpires = t
+			}
+		}
+
 		leases = append(leases, types.Device{
-			IP:       rl.Address,
-			MAC:      rl.HwAddr,
-			Hostname: rl.Hostname,
-			Vendor:   vendor,
-			Type:     Classify(vendor, rl.Hostname, nil),
+			IP:              rl.Address,
+			MAC:             rl.HwAddr,
+			Hostname:        rl.Hostname,
+			Vendor:          vendor,
+			Type:            Classify(vendor, rl.Hostname, nil),
+			RouterSource:    "OPNsense",
+			RouterInterface: formatRouterInterface(rl.Intf, rl.Interface),
+			LeaseExpires:    leaseExpires,
+			LeaseLifetime:   leaseLifetime,
 		})
 	}
 
@@ -223,12 +415,26 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 			continue
 		}
 		vendor := GetMACVendor(rr.HwAddr)
+
+		notes := strings.TrimSpace(rr.Description)
+		if notes == "" {
+			notes = strings.TrimSpace(rr.Notes)
+		}
+		if notes == "" {
+			notes = strings.TrimSpace(rr.Comment)
+		}
+		if notes == "" {
+			notes = strings.TrimSpace(rr.Comments)
+		}
+
 		reservations = append(reservations, types.Device{
-			IP:       rr.IPAddress,
-			MAC:      rr.HwAddr,
-			Hostname: rr.Hostname,
-			Vendor:   vendor,
-			Type:     Classify(vendor, rr.Hostname, nil),
+			IP:           rr.IPAddress,
+			MAC:          rr.HwAddr,
+			Hostname:     rr.Hostname,
+			Vendor:       vendor,
+			Type:         Classify(vendor, rr.Hostname, nil),
+			RouterSource: "OPNsense",
+			RouterNotes:  notes,
 		})
 	}
 
@@ -247,10 +453,13 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 						}
 						vendor := GetMACVendor(ra.MAC)
 						arpEntries = append(arpEntries, types.Device{
-							IP:     ra.IP,
-							MAC:    ra.MAC,
-							Vendor: vendor,
-							Type:   Classify(vendor, "", nil),
+							IP:              ra.IP,
+							MAC:             ra.MAC,
+							Hostname:        ra.Hostname,
+							Vendor:          vendor,
+							Type:            Classify(vendor, ra.Hostname, nil),
+							RouterSource:    "OPNsense",
+							RouterInterface: formatRouterInterface(ra.Intf, ra.IntfDescription),
 						})
 					}
 				}

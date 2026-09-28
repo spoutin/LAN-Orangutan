@@ -271,161 +271,361 @@ orangutan export out.csv</code></pre>
                     <span class="table-info" id="device-count">Showing {{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}</span>
                     <span class="table-scanned" id="scan-time-top"><span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span></span>{{end}}</span>
                 </div>
-                <table class="table" id="devices-table">
-                    <thead>
-                        <tr>
-                            <th class="col-status" data-sort="status" onclick="sortTable('status')">Status <span class="sort-icon">↕</span></th>
-                            <th class="col-ip" data-sort="ip" onclick="sortTable('ip')">IP Address <span class="sort-icon">↕</span></th>
-                            <th class="col-hostname" data-sort="hostname" onclick="sortTable('hostname')">Hostname <span class="sort-icon">↕</span></th>
-                            <th class="col-network" data-sort="network" onclick="sortTable('network')">Network <span class="sort-icon">↕</span></th>
-                             <th class="col-assignment" data-sort="assignment" onclick="sortTable('assignment')">Assignment <span class="sort-icon">↕</span></th>
-                             <th class="col-type" data-sort="type" onclick="sortTable('type')">Type <span class="sort-icon">↕</span></th>
-                             <th class="col-vendor" data-sort="vendor" onclick="sortTable('vendor')">Vendor <span class="sort-icon">↕</span></th>
-                             <th class="col-lastseen" data-sort="lastseen" onclick="sortTable('lastseen')">Last Seen <span class="sort-icon">↕</span></th>
-                            <th class="col-actions">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="devices-tbody">
-                        {{range .Devices}}
-                        <tr class="device-row {{.StatusClass}}"
-                            data-ip="{{.IP}}"
-                            data-hostname="{{lower .Hostname}}"
-                            data-mac="{{lower .MAC}}"
-                            data-mac-original="{{.MAC}}"
-                            data-vendor="{{lower .Vendor}}"
-                            data-vendor-original="{{if .Vendor}}{{.Vendor}}{{else}}Unknown{{end}}"
-                            data-type="{{lower .Type}}"
-                            data-network="{{lower .NetworkName}}"
-                            data-assignment="{{lower .Assignment}}"
-                            data-custom-hostname="{{lower .CustomHostname}}"
-                            data-custom-hostname-original="{{.CustomHostname}}"
-                            data-custom-web-url="{{lower .CustomWebURL}}"
-                            data-custom-web-url-original="{{.CustomWebURL}}"
-                            data-custom-type="{{lower .CustomType}}"
-                            data-custom-type-original="{{.CustomType}}"
-                            data-label="{{lower .Label}}"
-                            data-label-original="{{.Label}}"
-                            data-notes="{{.Notes}}"
-                            data-firstseen="{{.FirstSeen}}"
-                            data-lastseen-display="{{.LastSeen}}"
-                            data-responsetime="{{if .ResponseTime}}{{.ResponseTime}} ms{{else}}N/A{{end}}"
-                            data-status="{{.Status}}"
-                            data-moved="{{if .AddressHistory}}1{{end}}"
-                            data-flagged="{{if .Risks}}1{{end}}"
-                             data-linked-mac="{{.LinkedMAC}}"
-                             data-notify-on-seen="{{if .NotifyOnSeen}}1{{else}}0{{end}}"
-                             data-linked-children="{{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}"
-                            data-lastseen="{{.LastSeenUnix}}">
-                            <td class="col-status" data-label="Status">
-                                <span class="status-indicator {{.StatusClass}}" data-tip="{{.StatusTip}}"></span>
-                            </td>
-                            <td class="col-ip ip-cell" data-label="IP Address" data-copy="{{.IP}}">
-                                {{.IP}}{{if .AddressHistory}}<span class="moved-indicator" data-tip="Changed address{{range .AddressHistory}}, was {{.IP}}{{end}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></span>{{end}}
-                            </td>
-                              <td class="col-hostname hostname-cell" data-label="Hostname" data-copy="{{if .CustomHostname}}{{.CustomHostname}}{{else}}{{.Hostname}}{{end}}">
-                                {{if .CustomHostname}}
-                                    <span class="custom-hostname-wrapper" data-tip="Hostname overridden (originally: {{if .Hostname}}{{.Hostname}}{{else}}none{{end}})">
-                                        {{.CustomHostname}}
-                                        <span class="override-indicator"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
-                                    </span>
-                                {{else if .Hostname}}
-                                    {{.Hostname}}
-                                {{else}}
-                                    <span style="color:var(--text-muted)">-</span>
-                                {{end}}
-                                {{if .Notes}}
-                                    <span class="notes-indicator" data-tip="{{.Notes}}" style="margin-left: 4px; vertical-align: middle;"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>
-                                {{end}}
-                                {{if .LinkedChildren}}
-                                    <div class="linked-children-badge" data-tip="Linked aliases: {{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 3px; display: flex; align-items: center; gap: 4px;">
-                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--success);"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                                        <span>{{len .LinkedChildren}} linked alias{{if ne (len .LinkedChildren) 1}}es{{end}}</span>
-                                    </div>
-                                {{end}}
-                            </td>
-                             <td class="col-network network-cell" data-label="Network">
-                                <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
-                                    <!-- Parent Network Badge -->
-                                    {{if .NetworkName}}
-                                        <span class="network-badge {{if eq .StatusClass "status-offline"}}translucent-network-badge{{end}}"
-                                              {{if eq .StatusClass "status-offline"}}style="opacity: 0.5; border: 1px dashed var(--border); background: transparent;"{{end}}
-                                              data-tip="{{if eq .StatusClass "status-offline"}}Parent Offline on {{.NetworkName}} (not detected){{else}}Parent Active on {{.NetworkName}}{{end}}">
-                                            {{.NetworkName}}
-                                        </span>
-                                    {{end}}
-                                    
-                                    <!-- Children Network Badges -->
-                                    {{range .LinkedChildrenDetails}}
-                                        {{if .NetworkName}}
-                                            <span class="network-badge child-network-badge"
-                                                  style="{{if not .IsOnline}}opacity: 0.5; border: 1px dashed var(--border); background: transparent;{{end}}"
-                                                  data-tip="{{if .IsOnline}}Alias '{{.Hostname}}' Active on {{.NetworkName}}{{else}}Alias '{{.Hostname}}' Offline on {{.NetworkName}} (not detected){{end}}">
-                                                {{.NetworkName}}
+                <div class="devices-view-layout">
+                    <div class="table-wrapper">
+                        <table class="table" id="devices-table">
+                            <thead>
+                                <tr>
+                                    <th class="col-status" data-sort="status" onclick="sortTable('status')">Status <span class="sort-icon">↕</span></th>
+                                    <th class="col-ip" data-sort="ip" onclick="sortTable('ip')">IP Address <span class="sort-icon">↕</span></th>
+                                    <th class="col-hostname" data-sort="hostname" onclick="sortTable('hostname')">Hostname <span class="sort-icon">↕</span></th>
+                                    <th class="col-network" data-sort="network" onclick="sortTable('network')">Network <span class="sort-icon">↕</span></th>
+                                    <th class="col-ssid" data-sort="ssid" onclick="sortTable('ssid')">SSID <span class="sort-icon">↕</span></th>
+                                    <th class="col-vendor" data-sort="vendor" onclick="sortTable('vendor')">Vendor <span class="sort-icon">↕</span></th>
+                                    <th class="col-lastseen" data-sort="lastseen" onclick="sortTable('lastseen')">Last Seen <span class="sort-icon">↕</span></th>
+                                    <th class="col-actions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="devices-tbody">
+                                {{range .Devices}}
+                                <tr class="device-row {{.StatusClass}}"
+                                    data-ip="{{.IP}}"
+                                    data-hostname="{{lower .Hostname}}"
+                                    data-hostname-display="{{.Hostname}}"
+                                    data-mac="{{lower .MAC}}"
+                                    data-mac-original="{{.MAC}}"
+                                    data-vendor="{{lower .Vendor}}"
+                                    data-vendor-original="{{if .Vendor}}{{.Vendor}}{{else}}Unknown{{end}}"
+                                    data-type="{{lower .Type}}"
+                                    data-type-display="{{.Type}}"
+                                    data-network="{{lower .NetworkName}}"
+                                    data-assignment="{{.Assignment}}"
+                                    data-custom-hostname="{{lower .CustomHostname}}"
+                                    data-custom-hostname-original="{{.CustomHostname}}"
+                                    data-custom-web-url="{{lower .CustomWebURL}}"
+                                    data-custom-web-url-original="{{.CustomWebURL}}"
+                                    data-custom-type="{{lower .CustomType}}"
+                                    data-custom-type-original="{{.CustomType}}"
+                                    data-label="{{lower .Label}}"
+                                    data-label-original="{{.Label}}"
+                                    data-notes="{{.Notes}}"
+                                    data-firstseen="{{.FirstSeen}}"
+                                    data-lastseen="{{.LastSeenUnix}}"
+                                    data-lastseen-display="{{.LastSeen}}"
+                                    data-responsetime="{{if .ResponseTime}}{{.ResponseTime}} ms{{else}}N/A{{end}}"
+                                    data-status="{{.Status}}"
+                                    data-status-class="{{.StatusClass}}"
+                                    data-moved="{{if .AddressHistory}}1{{end}}"
+                                    data-flagged="{{if .Risks}}1{{end}}"
+                                    data-linked-mac="{{.LinkedMAC}}"
+                                    data-notify-on-seen="{{if .NotifyOnSeen}}1{{else}}0{{end}}"
+                                    data-linked-children="{{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}"
+                                    data-web-url="{{.WebURL}}"
+                                    data-open-ports="{{range $i, $p := .OpenPorts}}{{if $i}}, {{end}}{{$p}}{{end}}"
+                                    data-ssid="{{.SSID}}"
+                                    data-ap-name="{{.APName}}"
+                                    data-radio-band="{{.RadioBand}}"
+                                    data-channel="{{.Channel}}"
+                                    data-wifi-standard="{{.WiFiStandard}}"
+                                    data-signal="{{.Signal}}"
+                                    data-signal-quality="{{.SignalQuality}}"
+                                    data-rx-rate="{{.RxRate}}"
+                                    data-tx-rate="{{.TxRate}}"
+                                    data-rx-bytes="{{.RxBytes}}"
+                                    data-tx-bytes="{{.TxBytes}}"
+                                    data-association-uptime="{{.AssociationUptime}}"
+                                    data-unifi-model="{{.UniFiModel}}"
+                                    data-router-source="{{.RouterSource}}"
+                                    data-router-interface="{{.RouterInterface}}"
+                                    data-lease-expires="{{if not .LeaseExpires.IsZero}}{{.LeaseExpires.Format "2006-01-02T15:04:05Z07:00"}}{{end}}"
+                                    data-lease-lifetime="{{.LeaseLifetime}}"
+                                    data-router-notes="{{.RouterNotes}}">
+                                    <td class="col-status" data-label="Status">
+                                        <span class="status-indicator {{.StatusClass}}" data-tip="{{.StatusTip}}"></span>
+                                    </td>
+                                    <td class="col-ip ip-cell" data-label="IP Address" data-copy="{{.IP}}">
+                                        {{.IP}}{{if .AddressHistory}}<span class="moved-indicator" data-tip="Changed address{{range .AddressHistory}}, was {{.IP}}{{end}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></span>{{end}}
+                                    </td>
+                                    <td class="col-hostname hostname-cell" data-label="Hostname" data-copy="{{if .CustomHostname}}{{.CustomHostname}}{{else}}{{.Hostname}}{{end}}">
+                                        {{if .CustomHostname}}
+                                            <span class="custom-hostname-wrapper" data-tip="Hostname overridden (originally: {{if .Hostname}}{{.Hostname}}{{else}}none{{end}})">
+                                                {{.CustomHostname}}
+                                                <span class="override-indicator"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
                                             </span>
+                                        {{else if .Hostname}}
+                                            {{.Hostname}}
+                                        {{else}}
+                                            <span style="color:var(--text-muted)">-</span>
                                         {{end}}
-                                    {{end}}
+                                        {{if .Notes}}
+                                            <span class="notes-indicator" data-tip="{{.Notes}}" style="margin-left: 4px; vertical-align: middle;"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>
+                                        {{end}}
+                                        {{if .LinkedChildren}}
+                                            <div class="linked-children-badge" data-tip="Linked aliases: {{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 3px; display: flex; align-items: center; gap: 4px;">
+                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--success);"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                                                <span>{{len .LinkedChildren}} linked alias{{if ne (len .LinkedChildren) 1}}es{{end}}</span>
+                                            </div>
+                                        {{end}}
+                                    </td>
+                                    <td class="col-network network-cell" data-label="Network">
+                                        <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
+                                            <!-- Parent Network Badge -->
+                                            {{if .NetworkName}}
+                                                <span class="network-badge {{if eq .StatusClass "status-offline"}}translucent-network-badge{{end}}"
+                                                      {{if eq .StatusClass "status-offline"}}style="opacity: 0.5; border: 1px dashed var(--border); background: transparent;"{{end}}
+                                                      data-tip="{{if eq .StatusClass "status-offline"}}Parent Offline on {{.NetworkName}} (not detected){{else}}Parent Active on {{.NetworkName}}{{end}}">
+                                                    {{.NetworkName}}
+                                                </span>
+                                            {{end}}
+                                            
+                                            <!-- Children Network Badges -->
+                                            {{range .LinkedChildrenDetails}}
+                                                {{if .NetworkName}}
+                                                    <span class="network-badge child-network-badge"
+                                                          style="{{if not .IsOnline}}opacity: 0.5; border: 1px dashed var(--border); background: transparent;{{end}}"
+                                                          data-tip="{{if .IsOnline}}Alias '{{.Hostname}}' Active on {{.NetworkName}}{{else}}Alias '{{.Hostname}}' Offline on {{.NetworkName}} (not detected){{end}}">
+                                                        {{.NetworkName}}
+                                                    </span>
+                                                {{end}}
+                                            {{end}}
+                                        </div>
+                                    </td>
+                                    <td class="col-ssid ssid-cell" data-label="SSID">
+                                        {{if .SSID}}
+                                            <span class="ssid-badge" data-tip="SSID: {{.SSID}}{{if .APName}} &middot; AP: {{.APName}}{{end}}{{if .RadioBand}} ({{.RadioBand}}){{end}}">📶 {{.SSID}}</span>
+                                        {{else}}
+                                            <span style="color:var(--text-muted)">—</span>
+                                        {{end}}
+                                    </td>
+                                    <td class="col-vendor vendor-cell" data-label="Vendor" data-copy="{{.Vendor}}">{{if .Vendor}}{{.Vendor}}{{else}}<span style="color:var(--text-muted)">Unknown</span>{{end}}</td>
+                                    <td class="col-lastseen time-cell" data-label="Last Seen" data-relative-time="{{.LastSeenUnix}}">{{.TimeAgo}}</td>
+                                    <td class="col-actions actions-cell" data-label="Actions">
+                                        {{if or .WebUI .CustomWebURL}}
+                                        <a href="{{.WebURL}}" target="_blank" class="btn-icon" data-tip="Open Web UI: {{.WebURL}}" aria-label="Open Web UI" onclick="event.stopPropagation()">
+                                            <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                        </a>
+                                        {{else}}
+                                        <button class="btn-icon placeholder" style="visibility: hidden; pointer-events: none;" disabled>
+                                            <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                        </button>
+                                        {{end}}
+                                        <button class="btn-icon" onclick="event.stopPropagation(); toggleNotifyOnSeenMain('{{.IP}}')" data-tip="{{if .NotifyOnSeen}}Disable presence notifications{{else}}Enable presence notifications{{end}}" aria-label="Toggle presence notifications">
+                                            {{if .NotifyOnSeen}}
+                                            <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--success);">
+                                                <polyline points="9 11 12 14 22 4"></polyline>
+                                                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                                            </svg>
+                                            {{else}}
+                                            <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                            </svg>
+                                            {{end}}
+                                        </button>
+                                        <button class="btn-icon danger" onclick="event.stopPropagation(); deleteDevice('{{.IP}}')" data-tip="Delete" aria-label="Delete"><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg></button>
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                    <aside id="device-sidebar" class="device-sidebar hidden" aria-label="Device Details Sidebar">
+                        <!-- Header -->
+                        <div class="sidebar-header-box">
+                            <div class="sidebar-header-info">
+                                <span id="sb-icon" class="sidebar-device-icon">💻</span>
+                                <div class="sidebar-header-text">
+                                    <h3 id="sb-title" class="sidebar-title">Device Details</h3>
+                                    <div class="sidebar-subtitle">
+                                        <span id="sb-mac">--:--:--:--:--:--</span> &middot; <span id="sb-vendor">Unknown</span>
+                                    </div>
                                 </div>
-                            </td>
-                            <td class="col-assignment assignment-cell" data-label="Assignment">
-                                {{if eq .Assignment "Static"}}
-                                    <span class="assignment-badge static">Static</span>
-                                {{else if eq .Assignment "Dynamic"}}
-                                    <span class="assignment-badge dynamic">Dynamic</span>
-                                {{else if eq .Assignment "Discovered"}}
-                                    <span class="assignment-badge discovered">Discovered</span>
-                                {{else if .Assignment}}
-                                    <span class="assignment-badge na">{{.Assignment}}</span>
-                                {{else}}
-                                    <span style="color:var(--text-muted)">-</span>
-                                {{end}}
-                            </td>
-                            <td class="col-type type-cell" data-label="Type">
-                                {{if .CustomType}}
-                                    <span class="type-badge custom-type" data-tip="Device Type overridden (originally: {{if .Type}}{{.Type}}{{else}}none{{end}})">
-                                        {{typeIcon .CustomType}}{{.CustomType}}
-                                        <span class="override-indicator"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
-                                    </span>
-                                {{else if .Type}}
-                                    <span class="type-badge">{{typeIcon .Type}}{{.Type}}</span>
-                                {{end}}
-                                {{if .Risks}}<span class="risk-indicator" data-tip="Security: {{range $i, $r := .Risks}}{{if $i}}; {{end}}{{$r}}{{end}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>{{end}}
-                            </td>
-                             <td class="col-vendor vendor-cell" data-label="Vendor" data-copy="{{.Vendor}}">{{if .Vendor}}{{.Vendor}}{{else}}<span style="color:var(--text-muted)">Unknown</span>{{end}}</td>
-                             <td class="col-lastseen time-cell" data-label="Last Seen" data-relative-time="{{.LastSeenUnix}}">{{.TimeAgo}}</td>
-                            <td class="col-actions actions-cell" data-label="Actions">
-                                {{if or .WebUI .CustomWebURL}}
-                                <a href="{{.WebURL}}" target="_blank" class="btn-icon" data-tip="Open Web UI: {{.WebURL}}" aria-label="Open Web UI">
-                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                                </a>
-                                {{else}}
-                                <button class="btn-icon placeholder" style="visibility: hidden; pointer-events: none;" disabled>
-                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                                </button>
-                                {{end}}
-                                <button class="btn-icon" onclick="toggleNotifyOnSeenMain('{{.IP}}')" data-tip="{{if .NotifyOnSeen}}Disable presence notifications{{else}}Enable presence notifications{{end}}" aria-label="Toggle presence notifications">
-                                    {{if .NotifyOnSeen}}
-                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--success);">
-                                        <polyline points="9 11 12 14 22 4"></polyline>
-                                        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-                                    </svg>
-                                    {{else}}
-                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                                    </svg>
-                                    {{end}}
-                                </button>
-                                <button class="btn-icon" onclick="editDevice('{{.IP}}')" data-tip="View Details" aria-label="View Details">
-                                    <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                                        <circle cx="12" cy="12" r="3"/>
-                                    </svg>
-                                </button>
-                                <button class="btn-icon danger" onclick="deleteDevice('{{.IP}}')" data-tip="Delete" aria-label="Delete"><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg></button>
-                            </td>
-                        </tr>
-                        {{end}}
-                    </tbody>
-                </table>
+                            </div>
+                            <button type="button" class="sidebar-close-btn" onclick="closeDeviceSidebar()" aria-label="Close sidebar">&times;</button>
+                        </div>
+
+                        <!-- Quick Action Bar -->
+                        <div class="sidebar-quick-actions">
+                            <a id="sb-webui-btn" class="btn btn-sm" target="_blank" rel="noopener">🌐 Web UI</a>
+                            <button type="button" id="sb-notify-btn" class="btn btn-sm">🔔 Notify</button>
+                            <button type="button" id="sb-delete-btn" class="btn btn-sm danger">🗑️ Delete</button>
+                        </div>
+
+                        <!-- Sidebar Scrollable Body -->
+                        <div class="sidebar-scrollable-body">
+                            <!-- Card: UniFi Wireless Connection -->
+                            <div id="sb-wireless-card" class="sidebar-card">
+                                <div class="sidebar-card-header">
+                                    <h4 class="sidebar-card-title">📶 UniFi Wireless Connection</h4>
+                                </div>
+                                <div class="sidebar-card-body">
+                                    <ul class="sidebar-spec-list">
+                                        <li>
+                                            <span class="spec-label">SSID:</span>
+                                            <span class="spec-val" id="sb-ssid">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Connected AP:</span>
+                                            <span class="spec-val" id="sb-ap-name">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Band &amp; Channel:</span>
+                                            <span class="spec-val" id="sb-channel">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Wi-Fi Protocol:</span>
+                                            <span class="spec-val" id="sb-wifi-standard">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Signal RSSI:</span>
+                                            <div class="spec-val-meter">
+                                                <span id="sb-signal-val">—</span>
+                                                <div class="signal-meter-bar">
+                                                    <div id="sb-signal-bar" class="signal-meter-fill" style="width: 0%;"></div>
+                                                </div>
+                                            </div>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">PHY Link Rate:</span>
+                                            <span class="spec-val" id="sb-rates">Tx: — / Rx: —</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Total Data:</span>
+                                            <span class="spec-val" id="sb-traffic">Tx: — / Rx: —</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Uptime:</span>
+                                            <span class="spec-val" id="sb-uptime">—</span>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- Card: Router & IPAM Details -->
+                            <div id="sb-router-card" class="sidebar-card">
+                                <div class="sidebar-card-header">
+                                    <h4 class="sidebar-card-title">🌐 Router &amp; IPAM Details</h4>
+                                </div>
+                                <div class="sidebar-card-body">
+                                    <ul class="sidebar-spec-list">
+                                        <li>
+                                            <span class="spec-label">IP Address:</span>
+                                            <span class="spec-val" id="sb-ip">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Subnet / VLAN:</span>
+                                            <span class="spec-val" id="sb-network">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Assignment:</span>
+                                            <span class="spec-val" id="sb-assignment">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Router Source:</span>
+                                            <span class="spec-val" id="sb-router-source">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Interface:</span>
+                                            <span class="spec-val" id="sb-router-interface">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Lease Expiration:</span>
+                                            <span class="spec-val" id="sb-lease-expires">—</span>
+                                        </li>
+                                        <li id="sb-router-notes-row">
+                                            <span class="spec-label">Router Notes:</span>
+                                            <span class="spec-val" id="sb-router-notes">—</span>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- Card: Hardware & Security -->
+                            <div id="sb-hardware-card" class="sidebar-card">
+                                <div class="sidebar-card-header">
+                                    <h4 class="sidebar-card-title">🔒 Hardware &amp; Security</h4>
+                                </div>
+                                <div class="sidebar-card-body">
+                                    <ul class="sidebar-spec-list">
+                                        <li>
+                                            <span class="spec-label">Vendor:</span>
+                                            <span class="spec-val" id="sb-hw-vendor">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">UniFi Model:</span>
+                                            <span class="spec-val" id="sb-unifi-model">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Open Ports:</span>
+                                            <span class="spec-val" id="sb-open-ports">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">First Seen:</span>
+                                            <span class="spec-val" id="sb-first-seen">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Last Seen:</span>
+                                            <span class="spec-val" id="sb-last-seen">—</span>
+                                        </li>
+                                    </ul>
+                                    <button type="button" id="sb-history-btn" class="btn" style="width: 100%; margin-top: 0.5rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: var(--bg-card-hover); border: 1px solid var(--border);" onclick="viewSidebarPresenceHistory()">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <circle cx="12" cy="12" r="10"/>
+                                            <polyline points="12 6 12 12 16 14"/>
+                                        </svg>
+                                        <span>View Presence History</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Card: Device Customizations -->
+                            <div id="sb-edit-card" class="sidebar-card">
+                                <div class="sidebar-card-header">
+                                    <h4 class="sidebar-card-title">✏️ Device Customizations</h4>
+                                </div>
+                                <div class="sidebar-card-body">
+                                    <form id="sb-edit-form" onsubmit="event.preventDefault(); saveSidebarDevice();">
+                                        <input type="hidden" id="sb-edit-ip" name="ip">
+                                        
+                                        <div class="form-group">
+                                            <label for="sb-edit-label">Friendly Label</label>
+                                            <input type="text" id="sb-edit-label" name="label" class="input" placeholder="e.g., Living Room TV">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="sb-edit-custom-hostname">Custom Hostname (Override)</label>
+                                            <input type="text" id="sb-edit-custom-hostname" name="custom_hostname" class="input" placeholder="e.g., My-Smart-TV">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="sb-edit-custom-web-url">Custom Web URL (Override)</label>
+                                            <input type="text" id="sb-edit-custom-web-url" name="custom_web_url" class="input" placeholder="e.g., https://my-nas:5001">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="sb-edit-custom-type">Device Type (Override)</label>
+                                            <select id="sb-edit-custom-type" name="custom_type" class="select">
+                                                <option value="">Auto-Detect</option>
+                                                <option value="Phone">Phone</option>
+                                                <option value="Computer">Computer</option>
+                                                <option value="Printer">Printer</option>
+                                                <option value="TV">TV</option>
+                                                <option value="Media Player">Media Player</option>
+                                                <option value="Router">Router</option>
+                                                <option value="Server">Server</option>
+                                                <option value="IoT">IoT</option>
+                                                <option value="Game Console">Game Console</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="sb-edit-notes">Device Notes</label>
+                                            <textarea id="sb-edit-notes" name="notes" class="input" rows="3" placeholder="Add notes about this device..."></textarea>
+                                        </div>
+                                        <div class="form-actions" style="margin-top: 1rem;">
+                                            <button type="button" class="btn btn-primary" style="width: 100%;" onclick="saveSidebarDevice()">Save Changes</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </aside>
+                </div>
 
                 {{/* Everything above is a snapshot from the last scan, not a
                      live view. State when that was, so "last seen" times are
