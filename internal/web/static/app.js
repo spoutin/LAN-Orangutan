@@ -1082,7 +1082,61 @@ function openDeviceSidebar(target) {
         }
     }
 
-    // 4. Router & IPAM Card
+    // 4. Switch Connection Card
+    const switchCard = document.getElementById('sb-switch-card');
+    if (switchCard) {
+        const switchPort = (data.switchPort || '').trim();
+        if (switchPort) {
+            const isUplink = /^po\d+$/i.test(switchPort);
+            const isWirelessClient = !!(data.ssid || '').trim();
+            const switchTitle = document.getElementById('sb-switch-title');
+            if (switchTitle) switchTitle.textContent = isUplink ? 'Switch Uplink' : isWirelessClient ? 'Upstream AP Connection' : 'Switch Connection';
+
+            const switchPortLabel = document.getElementById('sb-switch-port-label');
+            if (switchPortLabel) switchPortLabel.textContent = isUplink ? 'Interface:' : isWirelessClient ? 'AP Port:' : 'Port:';
+
+            const switchName = document.getElementById('sb-switch-name');
+            if (switchName) switchName.textContent = data.switchName || data.switchHost || '—';
+
+            const switchPortEl = document.getElementById('sb-switch-port');
+            if (switchPortEl) switchPortEl.textContent = switchPort;
+
+            const switchVLANRow = document.getElementById('sb-switch-vlan-row');
+            const switchVLAN = document.getElementById('sb-switch-vlan');
+            const vlan = parseInt(data.switchVlan, 10);
+            if (switchVLANRow) switchVLANRow.style.display = !isUplink && !isNaN(vlan) && vlan > 0 ? '' : 'none';
+            if (switchVLAN) switchVLAN.textContent = !isNaN(vlan) && vlan > 0 ? vlan : '—';
+
+            const switchLinkRow = document.getElementById('sb-switch-link-row');
+            const switchLink = document.getElementById('sb-switch-link');
+            const linkParts = [];
+            if (data.switchLinkState) linkParts.push(data.switchLinkState.charAt(0).toUpperCase() + data.switchLinkState.slice(1));
+            const speed = parseInt(data.switchLinkSpeed, 10);
+            if (!isNaN(speed) && speed > 0) linkParts.push(speed >= 1000 ? `${speed / 1000} Gbps` : `${speed} Mbps`);
+            if (data.switchDuplex) linkParts.push(`${data.switchDuplex.charAt(0).toUpperCase() + data.switchDuplex.slice(1)} duplex`);
+            if (switchLinkRow) switchLinkRow.style.display = !isUplink && linkParts.length ? '' : 'none';
+            if (switchLink) switchLink.textContent = linkParts.join(' · ') || '—';
+
+            const switchPoERow = document.getElementById('sb-switch-poe-row');
+            const switchPoE = document.getElementById('sb-switch-poe');
+            const poeWatts = Number(data.switchPoeWatts);
+            const hasPoE = data.switchPoeWatts !== '' && !isNaN(poeWatts);
+            if (switchPoERow) switchPoERow.style.display = hasPoE ? '' : 'none';
+            if (switchPoE) switchPoE.textContent = hasPoE ? `${poeWatts} W` : '—';
+
+            const switchUpdated = document.getElementById('sb-switch-updated');
+            const updated = new Date(data.switchUpdatedAt);
+            if (switchUpdated) switchUpdated.textContent = !isNaN(updated.getTime()) ? relativeTime(Math.floor(updated.getTime() / 1000)) : '—';
+
+            switchCard.style.display = '';
+            switchCard.classList.remove('hidden');
+        } else {
+            switchCard.style.display = 'none';
+            switchCard.classList.add('hidden');
+        }
+    }
+
+    // 5. Router & IPAM Card
     const routerCard = document.getElementById('sb-router-card');
     if (routerCard) {
         const ipEl = document.getElementById('sb-ip');
@@ -1127,7 +1181,7 @@ function openDeviceSidebar(target) {
         if (notesEl) notesEl.textContent = data.routerNotes || '—';
     }
 
-    // 5. Hardware & Security Card
+    // 6. Hardware & Security Card
     const hwCard = document.getElementById('sb-hardware-card');
     if (hwCard) {
         const vendorVal = data.vendorOriginal || data.vendor || 'Unknown';
@@ -1150,7 +1204,7 @@ function openDeviceSidebar(target) {
         if (histBtn) histBtn.onclick = () => viewSidebarPresenceHistory();
     }
 
-    // 6. Device Customizations Card
+    // 7. Device Customizations Card
     // Avoid overwriting active inputs if user is currently typing/editing
     const isFormActive = document.activeElement && document.getElementById('sb-edit-form')?.contains(document.activeElement);
     if (!isFormActive) {

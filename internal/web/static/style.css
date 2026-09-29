@@ -3140,6 +3140,14 @@ img.login-logo {
     word-break: break-all;
 }
 
+.sb-switch-spec-list {
+    gap: 0.4rem;
+}
+
+.sb-switch-spec-list li {
+    font-size: 0.78rem;
+}
+
 /* Signal Meter */
 .spec-val-meter {
     display: flex;

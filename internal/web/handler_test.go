@@ -592,3 +592,58 @@ func TestIndexPageRendersWithTelemetry(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexPageRendersSwitchConnection(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	poeWatts := 8.2
+	dev := types.Device{
+		IP:              "192.168.1.60",
+		MAC:             "aa:bb:cc:dd:ee:60",
+		Hostname:        "wired-device",
+		SwitchName:      "switchy",
+		SwitchHost:      "10.0.0.2",
+		SwitchPort:      "gi1/23",
+		SwitchVLAN:      3,
+		SwitchLinkState: "up",
+		SwitchLinkSpeed: 1000,
+		SwitchDuplex:    "full",
+		SwitchPoEWatts:  &poeWatts,
+		SwitchUpdatedAt: time.Now(),
+	}
+	if err := h.store.UpdateDevice(&dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HandleIndex status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	for _, expected := range []string{
+		`data-switch-name="switchy"`,
+		`data-switch-host="10.0.0.2"`,
+		`data-switch-port="gi1/23"`,
+		`data-switch-vlan="3"`,
+		`data-switch-link-state="up"`,
+		`data-switch-link-speed="1000"`,
+		`data-switch-duplex="full"`,
+		`data-switch-poe-watts="8.2"`,
+		`data-switch-updated-at=`,
+		`id="sb-switch-card"`,
+		`id="sb-switch-title"`,
+		`id="sb-switch-name"`,
+		`id="sb-switch-port"`,
+		`id="sb-switch-vlan"`,
+		`id="sb-switch-link"`,
+		`id="sb-switch-poe-row"`,
+		`id="sb-switch-poe"`,
+		`id="sb-switch-updated"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("expected body to contain %q", expected)
+		}
+	}
+}

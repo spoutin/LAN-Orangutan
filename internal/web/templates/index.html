@@ -336,10 +336,19 @@ orangutan export out.csv</code></pre>
                                     data-association-uptime="{{.AssociationUptime}}"
                                     data-unifi-model="{{.UniFiModel}}"
                                     data-router-source="{{.RouterSource}}"
-                                    data-router-interface="{{.RouterInterface}}"
-                                    data-lease-expires="{{if not .LeaseExpires.IsZero}}{{.LeaseExpires.Format "2006-01-02T15:04:05Z07:00"}}{{end}}"
-                                    data-lease-lifetime="{{.LeaseLifetime}}"
-                                    data-router-notes="{{.RouterNotes}}">
+                                     data-router-interface="{{.RouterInterface}}"
+                                     data-lease-expires="{{if not .LeaseExpires.IsZero}}{{.LeaseExpires.Format "2006-01-02T15:04:05Z07:00"}}{{end}}"
+                                     data-lease-lifetime="{{.LeaseLifetime}}"
+                                     data-router-notes="{{.RouterNotes}}"
+                                     data-switch-name="{{.SwitchName}}"
+                                     data-switch-host="{{.SwitchHost}}"
+                                     data-switch-port="{{.SwitchPort}}"
+                                     data-switch-vlan="{{.SwitchVLAN}}"
+                                     data-switch-link-state="{{.SwitchLinkState}}"
+                                     data-switch-link-speed="{{.SwitchLinkSpeed}}"
+                                     data-switch-duplex="{{.SwitchDuplex}}"
+                                     data-switch-poe-watts="{{if .SwitchPoEWatts}}{{.SwitchPoEWatts}}{{end}}"
+                                     data-switch-updated-at="{{if not .SwitchUpdatedAt.IsZero}}{{.SwitchUpdatedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}">
                                     <td class="col-status" data-label="Status">
                                         <span class="status-indicator {{.StatusClass}}" data-tip="{{.StatusTip}}"></span>
                                     </td>
@@ -450,8 +459,43 @@ orangutan export out.csv</code></pre>
                             <button type="button" id="sb-delete-btn" class="btn btn-sm danger">🗑️ Delete</button>
                         </div>
 
-                        <!-- Sidebar Scrollable Body -->
-                        <div class="sidebar-scrollable-body">
+                         <!-- Sidebar Scrollable Body -->
+                         <div class="sidebar-scrollable-body">
+                            <!-- Card: Switch Connection -->
+                            <div id="sb-switch-card" class="sidebar-card hidden">
+                                <div class="sidebar-card-header">
+                                    <h4 id="sb-switch-title" class="sidebar-card-title">Switch Connection</h4>
+                                </div>
+                                <div class="sidebar-card-body">
+                                    <ul class="sidebar-spec-list sb-switch-spec-list">
+                                        <li>
+                                            <span class="spec-label">Switch:</span>
+                                            <span class="spec-val" id="sb-switch-name">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label" id="sb-switch-port-label">Port:</span>
+                                            <span class="spec-val" id="sb-switch-port">—</span>
+                                        </li>
+                                        <li id="sb-switch-vlan-row">
+                                            <span class="spec-label">VLAN:</span>
+                                            <span class="spec-val" id="sb-switch-vlan">—</span>
+                                        </li>
+                                        <li id="sb-switch-link-row">
+                                            <span class="spec-label">Link:</span>
+                                            <span class="spec-val" id="sb-switch-link">—</span>
+                                        </li>
+                                        <li id="sb-switch-poe-row">
+                                            <span class="spec-label">PoE:</span>
+                                            <span class="spec-val" id="sb-switch-poe">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Updated:</span>
+                                            <span class="spec-val" id="sb-switch-updated">—</span>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+
                             <!-- Card: UniFi Wireless Connection -->
                             <div id="sb-wireless-card" class="sidebar-card">
                                 <div class="sidebar-card-header">
