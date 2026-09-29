@@ -75,6 +75,56 @@ sudo systemctl enable lan-orangutan
 sudo systemctl start lan-orangutan
 ```
 
+#### SNMPv3 switch credentials with a systemd override
+
+Configure non-secret switch settings in `/etc/lan-orangutan/config.ini`, including multiple switches when needed:
+
+```ini
+[switches]
+enable = true
+names = core, garage
+
+[switch.core]
+host = 10.0.0.2
+username = lan-orangutan
+security_level = authPriv
+auth_protocol = SHA
+privacy_protocol = AES
+
+[switch.garage]
+host = 10.0.0.3
+username = lan-orangutan
+security_level = authPriv
+auth_protocol = SHA
+privacy_protocol = AES
+```
+
+Keep passwords outside the configuration file and source control. Create a root-readable environment file and reference it from a systemd override:
+
+```bash
+sudo install -d -m 0755 /etc/lan-orangutan
+sudo install -m 0600 /dev/null /etc/lan-orangutan/switch-secrets.env
+sudo systemctl edit lan-orangutan
+```
+
+```ini
+# /etc/systemd/system/lan-orangutan.service.d/override.conf
+[Service]
+EnvironmentFile=/etc/lan-orangutan/switch-secrets.env
+```
+
+```ini
+# /etc/lan-orangutan/switch-secrets.env (mode 0600)
+ORANGUTAN_SWITCH_CORE_AUTH_PASSWORD=replace-with-core-auth-password
+ORANGUTAN_SWITCH_CORE_PRIVACY_PASSWORD=replace-with-core-privacy-password
+ORANGUTAN_SWITCH_GARAGE_AUTH_PASSWORD=replace-with-garage-auth-password
+ORANGUTAN_SWITCH_GARAGE_PRIVACY_PASSWORD=replace-with-garage-privacy-password
+```
+
+Then run `sudo systemctl daemon-reload` and `sudo systemctl restart lan-orangutan`. SNMPv3 `authPriv` is read-only in LAN Orangutan: it never sends SNMP SET requests. Never commit these credentials. Cisco SG500X firmware commonly needs legacy `SHA` authentication with `DES` privacy; choose `AES` for newer compatible switches.
+
+Switch locations are forwarding-table results. A Wi-Fi client may resolve to its access point's upstream port instead of a unique physical client port. A `Po` port-channel result is an uplink/LAG, not a physical member port. PoE watts are not displayed in this first release because a correct SG500X consumption OID has not been validated.
+
 ### macOS (launchd)
 
 Create `~/Library/LaunchAgents/com.291group.lan-orangutan.plist`:

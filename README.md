@@ -287,6 +287,34 @@ Every setting can also be supplied through the environment, which is usually eas
 | `ORANGUTAN_NETWORKS` | Extra networks to scan, comma separated (see below) |
 | `ORANGUTAN_THEME` | `light`, `dark` or `auto` |
 
+### Switch-port discovery
+
+LAN Orangutan can resolve an inventoried device MAC address to the learned port on one or more SNMPv3 switches. Configure ordered switch IDs and one section per switch:
+
+```ini
+[switches]
+enable = true
+names = core, garage
+
+[switch.core]
+host = 10.0.0.2
+username = lan-orangutan
+security_level = authPriv
+auth_protocol = SHA
+privacy_protocol = AES
+
+[switch.garage]
+host = 10.0.0.3
+username = lan-orangutan
+security_level = authPriv
+auth_protocol = SHA
+privacy_protocol = AES
+```
+
+Only read-only SNMPv3 `authPriv` is supported. LAN Orangutan never sends SNMP SET requests. Do not commit `auth_password` or `privacy_password`; supply them through protected systemd environment overrides or another secret manager. Cisco SG500X firmware commonly needs the legacy `SHA` + `DES` combination; prefer `AES` on newer equipment that supports it.
+
+The result is the switch forwarding-table location, not a guaranteed dedicated physical port. Wi-Fi clients can resolve to the access point's upstream switch port. A `Po` port-channel result is an uplink/LAG and does not identify one of its physical member ports. The first release does not show PoE watts because a correct SG500X consumption OID has not yet been validated.
+
 ## Building from Source
 
 ```bash
