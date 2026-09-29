@@ -77,6 +77,17 @@ type Device struct {
 	LeaseExpires    time.Time `json:"lease_expires,omitempty"`
 	LeaseLifetime   int       `json:"lease_lifetime,omitempty"`
 	RouterNotes     string    `json:"router_notes,omitempty"`
+
+	// Switch connection telemetry
+	SwitchName      string    `json:"switch_name,omitempty"`
+	SwitchHost      string    `json:"switch_host,omitempty"`
+	SwitchPort      string    `json:"switch_port,omitempty"`
+	SwitchVLAN      int       `json:"switch_vlan,omitempty"`
+	SwitchLinkState string    `json:"switch_link_state,omitempty"`
+	SwitchLinkSpeed int       `json:"switch_link_speed,omitempty"`
+	SwitchDuplex    string    `json:"switch_duplex,omitempty"`
+	SwitchPoEWatts  *float64  `json:"switch_poe_watts,omitempty"`
+	SwitchUpdatedAt time.Time `json:"switch_updated_at,omitempty"`
 }
 
 // LinkedChild represents brief state details of a linked child device

@@ -30,6 +30,20 @@ type Storage struct {
 	completedNetworks      []string
 }
 
+// SwitchConnection is a current switch forwarding-table match for a device MAC.
+type SwitchConnection struct {
+	MAC        string
+	SwitchName string
+	SwitchHost string
+	Port       string
+	VLAN       int
+	LinkState  string
+	LinkSpeed  int
+	Duplex     string
+	PoEWatts   *float64
+	UpdatedAt  time.Time
+}
+
 // New creates a new Storage instance
 func New(devicesFile, stateFile string) (*Storage, error) {
 	// Ensure directories exist
@@ -319,7 +333,8 @@ func (s *Storage) scanDevice(scanner interface {
 	var d types.Device
 	var webUIVal, probedVal, notifyOnSeenVal int
 	var risksStr, addressHistoryStr string
-	var leaseExpiresVal sql.NullTime
+	var leaseExpiresVal, switchUpdatedAtVal sql.NullTime
+	var switchPoEWattsVal sql.NullFloat64
 	err := scanner.Scan(
 		&d.IP, &d.MAC, &d.Hostname, &d.Vendor, &d.Type, &webUIVal, &risksStr, &d.Label, &d.Notes, &d.Group,
 		&d.CustomHostname, &d.CustomWebURL, &d.CustomType, &d.WebPort, &d.WebScheme, &probedVal, &d.Assignment,
@@ -328,6 +343,7 @@ func (s *Storage) scanDevice(scanner interface {
 		&d.SSID, &d.APName, &d.RadioBand, &d.Channel, &d.WiFiStandard, &d.Signal, &d.SignalQuality,
 		&d.RxRate, &d.TxRate, &d.RxBytes, &d.TxBytes, &d.AssociationUptime, &d.UniFiModel,
 		&d.RouterSource, &d.RouterInterface, &leaseExpiresVal, &d.LeaseLifetime, &d.RouterNotes,
+		&d.SwitchName, &d.SwitchHost, &d.SwitchPort, &d.SwitchVLAN, &d.SwitchLinkState, &d.SwitchLinkSpeed, &d.SwitchDuplex, &switchPoEWattsVal, &switchUpdatedAtVal,
 	)
 	if err != nil {
 		return nil, err
@@ -337,6 +353,12 @@ func (s *Storage) scanDevice(scanner interface {
 	d.NotifyOnSeen = notifyOnSeenVal != 0
 	if leaseExpiresVal.Valid {
 		d.LeaseExpires = leaseExpiresVal.Time
+	}
+	if switchPoEWattsVal.Valid {
+		d.SwitchPoEWatts = &switchPoEWattsVal.Float64
+	}
+	if switchUpdatedAtVal.Valid {
+		d.SwitchUpdatedAt = switchUpdatedAtVal.Time
 	}
 	_ = json.Unmarshal([]byte(risksStr), &d.Risks)
 	_ = json.Unmarshal([]byte(addressHistoryStr), &d.AddressHistory)
@@ -362,7 +384,8 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model,
-			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes
+			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
+			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 	`)
@@ -487,7 +510,8 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model,
-			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes
+			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
+			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 		WHERE d.ip = ?
@@ -516,7 +540,8 @@ func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model,
-			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes
+			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
+			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 		WHERE d.ip = ?
@@ -639,6 +664,10 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 	if !device.LeaseExpires.IsZero() {
 		leaseExpiresVal = device.LeaseExpires
 	}
+	var switchUpdatedAtVal interface{}
+	if !device.SwitchUpdatedAt.IsZero() {
+		switchUpdatedAtVal = device.SwitchUpdatedAt
+	}
 
 	_, err := s.db.Exec(`
 		INSERT INTO devices (
@@ -648,7 +677,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen,
 			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
-			router_source, router_interface, lease_expires, lease_lifetime, router_notes
+			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+			switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
@@ -656,7 +686,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			?, 0, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?, ?
 		)
 		ON CONFLICT(ip) DO UPDATE SET
 			mac = excluded.mac,
@@ -700,7 +731,16 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			router_interface = excluded.router_interface,
 			lease_expires = excluded.lease_expires,
 			lease_lifetime = excluded.lease_lifetime,
-			router_notes = excluded.router_notes
+			router_notes = excluded.router_notes,
+			switch_name = excluded.switch_name,
+			switch_host = excluded.switch_host,
+			switch_port = excluded.switch_port,
+			switch_vlan = excluded.switch_vlan,
+			switch_link_state = excluded.switch_link_state,
+			switch_link_speed = excluded.switch_link_speed,
+			switch_duplex = excluded.switch_duplex,
+			switch_poe_watts = excluded.switch_poe_watts,
+			switch_updated_at = excluded.switch_updated_at
 	`, device.IP, device.MAC, device.Hostname, device.Vendor, device.Type, boolToInt(device.WebUI), string(risksJSON),
 		device.Label, device.Notes, device.Group, device.CustomHostname, device.CustomWebURL, device.CustomType,
 		device.WebPort, device.WebScheme, boolToInt(device.Probed), device.Assignment, device.NetworkName,
@@ -708,7 +748,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		device.LinkedMAC, boolToInt(device.NotifyOnSeen),
 		device.SSID, device.APName, device.RadioBand, device.Channel, device.WiFiStandard, device.Signal, device.SignalQuality,
 		device.RxRate, device.TxRate, device.RxBytes, device.TxBytes, device.AssociationUptime, device.UniFiModel,
-		device.RouterSource, device.RouterInterface, leaseExpiresVal, device.LeaseLifetime, device.RouterNotes)
+		device.RouterSource, device.RouterInterface, leaseExpiresVal, device.LeaseLifetime, device.RouterNotes,
+		device.SwitchName, device.SwitchHost, device.SwitchPort, device.SwitchVLAN, device.SwitchLinkState, device.SwitchLinkSpeed, device.SwitchDuplex, device.SwitchPoEWatts, switchUpdatedAtVal)
 	return err
 }
 
@@ -880,7 +921,8 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 		       linked_mac, notify_on_seen,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
-		       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 		FROM devices
 		WHERE mac = ? AND ip != ?
 	`, mac, excludeIP)
@@ -911,7 +953,8 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 		       linked_mac, notify_on_seen,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
-		       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 		FROM devices
 		WHERE mac = ?
 		LIMIT 1
@@ -1040,6 +1083,10 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 	if !d.LeaseExpires.IsZero() {
 		leaseExpiresVal = d.LeaseExpires
 	}
+	var switchUpdatedAtVal interface{}
+	if !d.SwitchUpdatedAt.IsZero() {
+		switchUpdatedAtVal = d.SwitchUpdatedAt
+	}
 
 	_, err := tx.Exec(`
 		INSERT INTO devices (
@@ -1049,7 +1096,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen,
 			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
-			router_source, router_interface, lease_expires, lease_lifetime, router_notes
+			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+			switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
@@ -1057,7 +1105,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			?, 0, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?
+			?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?, ?
 		)
 	`, d.IP, d.MAC, d.Hostname, d.Vendor, d.Type, boolToInt(d.WebUI), string(risksJSON),
 		d.Label, d.Notes, d.Group, d.CustomHostname, d.CustomWebURL, d.CustomType,
@@ -1066,7 +1115,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		d.LinkedMAC, boolToInt(d.NotifyOnSeen),
 		d.SSID, d.APName, d.RadioBand, d.Channel, d.WiFiStandard, d.Signal, d.SignalQuality,
 		d.RxRate, d.TxRate, d.RxBytes, d.TxBytes, d.AssociationUptime, d.UniFiModel,
-		d.RouterSource, d.RouterInterface, leaseExpiresVal, d.LeaseLifetime, d.RouterNotes)
+		d.RouterSource, d.RouterInterface, leaseExpiresVal, d.LeaseLifetime, d.RouterNotes,
+		d.SwitchName, d.SwitchHost, d.SwitchPort, d.SwitchVLAN, d.SwitchLinkState, d.SwitchLinkSpeed, d.SwitchDuplex, d.SwitchPoEWatts, switchUpdatedAtVal)
 	if err != nil {
 		return false, err
 	}
@@ -1106,7 +1156,8 @@ func (s *Storage) pruneEphemeralIPv6() error {
 		       linked_mac, notify_on_seen,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
-		       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 		FROM devices
 	`)
 	if err != nil {
@@ -1872,7 +1923,8 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 		       linked_mac, notify_on_seen,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
-		       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 		FROM devices
 	`)
 	if err != nil {
@@ -1925,7 +1977,8 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 			       linked_mac, notify_on_seen,
 			       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 			       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
-			       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+			       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 			FROM devices WHERE ip = ?
 		`, d.IP)
 		existing, err := s.scanDevice(row)
@@ -2004,6 +2057,56 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 	return tx.Commit()
 }
 
+// MergeSwitchConnections stores the latest successful forwarding-table results
+// for one switch. An empty successful result clears only that switch's entries.
+func (s *Storage) MergeSwitchConnections(connections []SwitchConnection, switchName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		UPDATE devices SET
+			switch_name = '', switch_host = '', switch_port = '', switch_vlan = 0,
+			switch_link_state = '', switch_link_speed = 0, switch_duplex = '',
+			switch_poe_watts = NULL, switch_updated_at = NULL
+		WHERE switch_name = ?
+	`, switchName); err != nil {
+		return err
+	}
+
+	for _, connection := range connections {
+		if connection.MAC == "" {
+			continue
+		}
+		var poeWatts interface{}
+		if connection.PoEWatts != nil {
+			poeWatts = *connection.PoEWatts
+		}
+		var updatedAt interface{}
+		if !connection.UpdatedAt.IsZero() {
+			updatedAt = connection.UpdatedAt
+		}
+		if _, err := tx.Exec(`
+			UPDATE devices SET
+				switch_name = ?, switch_host = ?, switch_port = ?, switch_vlan = ?,
+				switch_link_state = ?, switch_link_speed = ?, switch_duplex = ?,
+				switch_poe_watts = ?, switch_updated_at = ?
+			WHERE LOWER(mac) = LOWER(?)
+		`, connection.SwitchName, connection.SwitchHost, connection.Port, connection.VLAN,
+			connection.LinkState, connection.LinkSpeed, connection.Duplex, poeWatts, updatedAt,
+			connection.MAC); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 // MergeUniFiClients merges UniFi client wireless telemetry into the devices table.
 func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []types.Device, error) {
 	s.mu.Lock()
@@ -2034,7 +2137,8 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					       linked_mac, notify_on_seen,
 					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
-					       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+				       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 					FROM devices
 					WHERE LOWER(mac) = LOWER(?) AND ip = ?
 					LIMIT 1
@@ -2051,7 +2155,8 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					       linked_mac, notify_on_seen,
 					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
-					       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+				       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 					FROM devices
 					WHERE LOWER(mac) = LOWER(?)
 					LIMIT 1
@@ -2070,7 +2175,8 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 				       linked_mac, notify_on_seen,
 				       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 				       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model,
-				       router_source, router_interface, lease_expires, lease_lifetime, router_notes
+			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+			       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 				FROM devices
 				WHERE ip = ?
 				LIMIT 1
