@@ -426,7 +426,12 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 				vlanByMAC[device.MAC] = device.SwitchVLAN
 			}
 		}
+		seenSwitches := make(map[string]struct{}, len(h.cfg.Switches.Names))
 		for _, name := range h.cfg.Switches.Names {
+			if _, seen := seenSwitches[name]; seen {
+				continue
+			}
+			seenSwitches[name] = struct{}{}
 			switchCfg, ok := h.cfg.Switches.Configs[name]
 			if !ok {
 				continue

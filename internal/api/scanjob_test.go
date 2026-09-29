@@ -46,6 +46,28 @@ func TestScanJob_SwitchesPollSequentiallyAndPropagateKnownVLAN(t *testing.T) {
 	}
 }
 
+func TestScanJob_SwitchesIgnoreDuplicateConfiguredNames(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := switchTestConfig("switchy", "switchy", "core")
+	h := NewHandler(store, cfg)
+	var calls []string
+	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
+		calls = append(calls, switchCfg.ID)
+		return nil, nil
+	}
+
+	job := runSwitchScanJob(t, h)
+	if got, want := calls, []string{"switchy", "core"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("switch calls = %v, want %v", got, want)
+	}
+	if got := countSwitchSummaries(job, "switchy SNMP"); got != 1 {
+		t.Errorf("switchy summary count = %d, want 1", got)
+	}
+	if got := countSwitchSummaries(job, "core SNMP"); got != 1 {
+		t.Errorf("core summary count = %d, want 1", got)
+	}
+}
+
 func TestScanJob_SwitchFailureIsIsolated(t *testing.T) {
 	store := newScanJobTestStore(t)
 	cfg := switchTestConfig("unreachable", "edge-b")
@@ -135,6 +157,18 @@ func switchSummary(t *testing.T, job *scanJob, network string) networkScanSummar
 	}
 	t.Fatalf("missing %s summary in %+v", network, job.results)
 	return networkScanSummary{}
+}
+
+func countSwitchSummaries(job *scanJob, network string) int {
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	count := 0
+	for _, result := range job.results {
+		if result.Network == network {
+			count++
+		}
+	}
+	return count
 }
 
 func TestScanJob_UniFiIntegration(t *testing.T) {
