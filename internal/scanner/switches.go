@@ -79,12 +79,9 @@ func fetchSwitchConnections(ctx context.Context, cfg config.SwitchConfig, vlanBy
 		requestedVLAN[normalizeSwitchMAC(mac)] = vlan
 	}
 
-	candidates := make(map[string]struct{})
-	for key := range qbridge {
-		candidates[key.mac] = struct{}{}
-	}
-	for key := range bridge {
-		candidates[key.mac] = struct{}{}
+	candidates := make(map[string]struct{}, len(requestedVLAN))
+	for mac := range requestedVLAN {
+		candidates[mac] = struct{}{}
 	}
 	macs := make([]string, 0, len(candidates))
 	for mac := range candidates {

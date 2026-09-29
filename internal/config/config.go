@@ -363,9 +363,6 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg.Normalize()
-	if err := cfg.validateSwitches(); err != nil {
-		return nil, err
-	}
 	return cfg, nil
 }
 
@@ -698,18 +695,6 @@ func (c *Config) ApplyEnv() error {
 	}
 
 	c.Normalize()
-	return c.validateSwitches()
-}
-
-func (c *Config) validateSwitches() error {
-	if !c.Switches.Enable {
-		return nil
-	}
-	for _, id := range c.Switches.Names {
-		if err := c.Switches.Configs[id].Validate(); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

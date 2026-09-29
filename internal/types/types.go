@@ -70,6 +70,7 @@ type Device struct {
 	TxBytes           int64  `json:"tx_bytes,omitempty"`
 	AssociationUptime int64  `json:"association_uptime,omitempty"`
 	UniFiModel        string `json:"unifi_model,omitempty"`
+	VLAN              int    `json:"vlan,omitempty"`
 
 	// Extended router fields
 	RouterSource    string    `json:"router_source,omitempty"`

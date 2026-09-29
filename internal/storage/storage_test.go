@@ -667,6 +667,33 @@ func TestDeviceTelemetryPersistence(t *testing.T) {
 	}
 }
 
+func TestUpdateDevicePersistsUniFiVLAN(t *testing.T) {
+	s := newTestStorage(t)
+	device := &types.Device{IP: "192.168.1.230", MAC: "00:11:22:33:44:55", VLAN: 42}
+	if err := s.UpdateDevice(device); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	stored := s.GetDevice(device.IP)
+	if stored == nil || stored.VLAN != 42 {
+		t.Fatalf("stored device = %+v, want VLAN 42", stored)
+	}
+}
+
+func TestUpdateDevicePreservesUniFiVLANWhenOmitted(t *testing.T) {
+	s := newTestStorage(t)
+	if err := s.UpdateDevice(&types.Device{IP: "192.168.1.231", MAC: "00:11:22:33:44:56", VLAN: 42}); err != nil {
+		t.Fatalf("UpdateDevice initial: %v", err)
+	}
+	if err := s.UpdateDevice(&types.Device{IP: "192.168.1.231", MAC: "00:11:22:33:44:56", Hostname: "updated"}); err != nil {
+		t.Fatalf("UpdateDevice update: %v", err)
+	}
+
+	if got := s.GetDevice("192.168.1.231"); got == nil || got.VLAN != 42 {
+		t.Fatalf("stored device = %+v, want preserved VLAN 42", got)
+	}
+}
+
 func TestMergeUniFiClients(t *testing.T) {
 	s := newTestStorage(t)
 	s.SetNetworkNames(map[string]string{

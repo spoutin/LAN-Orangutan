@@ -49,6 +49,7 @@ type unifiStation struct {
 	Model      string  `json:"model"`
 	UnifiModel string  `json:"unifi_model"`
 	DevModel   string  `json:"dev_model"`
+	VLAN       int     `json:"vlan"`
 }
 
 // FetchUniFiClients queries the UniFi controller for active wireless client stations and AP telemetry.
@@ -159,6 +160,7 @@ func FetchUniFiClients(ctx context.Context, cfg config.UniFiConfig) ([]types.Dev
 			TxBytes:           s.TxBytes,
 			AssociationUptime: s.Uptime,
 			UniFiModel:        model,
+			VLAN:              s.VLAN,
 		})
 	}
 

@@ -52,6 +52,7 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 				"data": []map[string]interface{}{
 					{
 						"mac":         "dc:a6:32:01:02:03",
+						"vlan":        37,
 						"ip":          "192.168.1.50",
 						"hostname":    "raspberrypi",
 						"essid":       "HomeNet-5G",
@@ -183,6 +184,9 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 	}
 	if c1.SSID != "HomeNet-5G" {
 		t.Errorf("c1.SSID = %q, want %q", c1.SSID, "HomeNet-5G")
+	}
+	if c1.VLAN != 37 {
+		t.Errorf("c1.VLAN = %d, want 37", c1.VLAN)
 	}
 	if c1.APName != "Living Room AP" {
 		t.Errorf("c1.APName = %q, want %q", c1.APName, "Living Room AP")

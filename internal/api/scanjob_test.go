@@ -17,7 +17,7 @@ import (
 
 func TestScanJob_SwitchesPollSequentiallyAndPropagateKnownVLAN(t *testing.T) {
 	store := newScanJobTestStore(t)
-	if err := store.UpdateDevice(&types.Device{IP: "192.168.1.10", MAC: "AA:BB:CC:DD:EE:01", SwitchVLAN: 30}); err != nil {
+	if err := store.UpdateDevice(&types.Device{IP: "192.168.1.10", MAC: "AA:BB:CC:DD:EE:01", VLAN: 30}); err != nil {
 		t.Fatalf("UpdateDevice: %v", err)
 	}
 	cfg := switchTestConfig("edge-a", "edge-b")
@@ -71,8 +71,8 @@ func TestScanJob_SwitchesIgnoreDuplicateConfiguredNames(t *testing.T) {
 func TestScanJob_SwitchesIgnoreAliasesWithSameID(t *testing.T) {
 	store := newScanJobTestStore(t)
 	cfg := switchTestConfig("primary", "alias")
-	cfg.Switches.Configs["primary"] = config.SwitchConfig{ID: "switchy", Host: "switchy.example.test"}
-	cfg.Switches.Configs["alias"] = config.SwitchConfig{ID: "switchy", Host: "switchy.example.test"}
+	cfg.Switches.Configs["primary"] = validSwitchConfig("switchy", "switchy.example.test")
+	cfg.Switches.Configs["alias"] = validSwitchConfig("switchy", "switchy.example.test")
 	h := NewHandler(store, cfg)
 	calls := 0
 	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
@@ -112,6 +112,32 @@ func TestScanJob_SwitchFailureIsIsolated(t *testing.T) {
 	failed := switchSummary(t, job, "unreachable SNMP")
 	if failed.Status != "failed" || failed.Error == "" || failed.Error == "authentication password leaked" {
 		t.Errorf("failed summary = %+v, want sanitized error", failed)
+	}
+	if success := switchSummary(t, job, "edge-b SNMP"); success.Status != "scanned" {
+		t.Errorf("edge-b summary = %+v, want scanned", success)
+	}
+}
+
+func TestScanJob_InvalidSwitchIsIsolated(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := switchTestConfig("invalid", "edge-b")
+	cfg.Switches.Configs["invalid"] = config.SwitchConfig{ID: "invalid"}
+	h := NewHandler(store, cfg)
+	var calls []string
+	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
+		calls = append(calls, switchCfg.ID)
+		return nil, nil
+	}
+
+	job := runSwitchScanJob(t, h)
+	if len(calls) != 1 || calls[0] != "edge-b" {
+		t.Fatalf("switch calls = %v, want only edge-b", calls)
+	}
+	if failed := switchSummary(t, job, "invalid SNMP"); failed.Status != "failed" {
+		t.Errorf("invalid switch summary = %+v, want failed", failed)
+	}
+	if got := countSwitchSummaries(job, "invalid SNMP"); got != 1 {
+		t.Errorf("invalid switch summary count = %d, want 1", got)
 	}
 	if success := switchSummary(t, job, "edge-b SNMP"); success.Status != "scanned" {
 		t.Errorf("edge-b summary = %+v, want scanned", success)
@@ -158,9 +184,13 @@ func switchTestConfig(names ...string) *config.Config {
 	cfg.Switches.Names = names
 	cfg.Switches.Configs = make(map[string]config.SwitchConfig, len(names))
 	for _, name := range names {
-		cfg.Switches.Configs[name] = config.SwitchConfig{ID: name, Host: name + ".example.test"}
+		cfg.Switches.Configs[name] = validSwitchConfig(name, name+".example.test")
 	}
 	return cfg
+}
+
+func validSwitchConfig(id, host string) config.SwitchConfig {
+	return config.SwitchConfig{ID: id, Host: host, Port: 161, Version: 3, Username: "monitor", SecurityLevel: "authPriv", AuthProtocol: "SHA", AuthPassword: "auth-secret", PrivacyProtocol: "AES", PrivacyPassword: "privacy-secret", TimeoutSeconds: 5}
 }
 
 func runSwitchScanJob(t *testing.T, h *Handler) *scanJob {
@@ -213,6 +243,7 @@ func TestScanJob_UniFiIntegration(t *testing.T) {
 				"data": [
 					{
 						"mac": "aa:bb:cc:dd:ee:01",
+						"vlan": 42,
 						"ip": "192.168.1.150",
 						"hostname": "test-workstation",
 						"essid": "Corp-WiFi",
@@ -249,8 +280,22 @@ func TestScanJob_UniFiIntegration(t *testing.T) {
 	cfg.UniFi.APIKey = "test-token"
 	cfg.OpenWrt.Enable = false
 	cfg.OPNsense.Enable = false
+	cfg.Switches.Enable = true
+	cfg.Switches.Names = []string{"edge"}
+	cfg.Switches.Configs["edge"] = validSwitchConfig("edge", "edge.example.test")
 
 	h := NewHandler(store, cfg)
+	fetches := 0
+	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, vlanByMAC map[string]int) ([]scanner.SwitchConnection, error) {
+		fetches++
+		if switchCfg.ID != "edge" {
+			t.Fatalf("switch ID = %q, want edge", switchCfg.ID)
+		}
+		if got := vlanByMAC["aa:bb:cc:dd:ee:01"]; got != 42 {
+			t.Fatalf("UniFi VLAN passed to switch fetcher = %d, want 42", got)
+		}
+		return nil, nil
+	}
 
 	job := &scanJob{
 		id:        "test-job-1",
@@ -268,6 +313,12 @@ func TestScanJob_UniFiIntegration(t *testing.T) {
 	}
 	if dev.SSID != "Corp-WiFi" {
 		t.Errorf("dev.SSID = %q, want %q", dev.SSID, "Corp-WiFi")
+	}
+	if dev.VLAN != 42 {
+		t.Errorf("dev.VLAN = %d, want 42", dev.VLAN)
+	}
+	if fetches != 1 {
+		t.Errorf("switch fetches = %d, want 1", fetches)
 	}
 	if dev.APName != "Office AP" {
 		t.Errorf("dev.APName = %q, want %q", dev.APName, "Office AP")

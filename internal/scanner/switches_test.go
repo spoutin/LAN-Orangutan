@@ -83,6 +83,23 @@ func TestSwitchPrefersRequestedVLANOverOtherVLANForwardingEntries(t *testing.T) 
 	}
 }
 
+func TestSwitchIgnoresNonInventoryForwardingEntries(t *testing.T) {
+	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), map[string]int{"6c:4c:bc:29:e8:c1": 3}, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
+		ifNameOID:            {pdu(ifNameOID+".71", "gi1/23"), pdu(ifNameOID+".72", "gi1/24")},
+		dot1dBasePortIfIndex: {pdu(dot1dBasePortIfIndex+".71", 71), pdu(dot1dBasePortIfIndex+".72", 72)},
+		dot1qTpFdbPort: {
+			pdu(dot1qTpFdbPort+".3.108.76.188.41.232.193", 71),
+			pdu(dot1qTpFdbPort+".3.0.17.34.51.68.85", 72),
+		},
+	}})
+	if err != nil {
+		t.Fatalf("fetchSwitchConnections: %v", err)
+	}
+	if len(connections) != 1 || connections[0].MAC != "6c:4c:bc:29:e8:c1" {
+		t.Fatalf("connections = %#v, want only the inventory MAC", connections)
+	}
+}
+
 func TestSwitchResolvesVLANAboveMACOctetRange(t *testing.T) {
 	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), map[string]int{"6c:4c:bc:29:e8:c1": 300}, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
 		ifNameOID:            {pdu(ifNameOID+".71", "gi1/23")},
@@ -98,7 +115,7 @@ func TestSwitchResolvesVLANAboveMACOctetRange(t *testing.T) {
 }
 
 func TestSwitchRejectsInvalidMACOctets(t *testing.T) {
-	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), nil, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
+	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), map[string]int{"6c:4c:bc:29:e8:c1": 0}, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
 		ifNameOID:            {pdu(ifNameOID+".71", "gi1/23")},
 		dot1dBasePortIfIndex: {pdu(dot1dBasePortIfIndex+".71", 71)},
 		dot1qTpFdbPort:       {pdu(dot1qTpFdbPort+".300.256.76.188.41.232.193", 71)},
@@ -112,7 +129,7 @@ func TestSwitchRejectsInvalidMACOctets(t *testing.T) {
 }
 
 func TestSwitchFallsBackToBridgeFDBWhenQBridgeIsUnavailable(t *testing.T) {
-	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), nil, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
+	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), map[string]int{"6c:4c:bc:29:e8:c1": 0}, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
 		ifNameOID:            {pdu(ifNameOID+".71", "gi1/23")},
 		dot1dBasePortIfIndex: {pdu(dot1dBasePortIfIndex+".71", 71)},
 		dot1dTpFdbPort:       {pdu(dot1dTpFdbPort+".108.76.188.41.232.193", 71)},
@@ -126,7 +143,7 @@ func TestSwitchFallsBackToBridgeFDBWhenQBridgeIsUnavailable(t *testing.T) {
 }
 
 func TestSwitchIgnoresBridgePortZero(t *testing.T) {
-	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), nil, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
+	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), map[string]int{"6c:4c:bc:29:e8:c1": 0}, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
 		ifNameOID:      {pdu(ifNameOID+".71", "gi1/23")},
 		dot1qTpFdbPort: {pdu(dot1qTpFdbPort+".3.108.76.188.41.232.193", 0)},
 	}})
@@ -140,7 +157,7 @@ func TestSwitchIgnoresBridgePortZero(t *testing.T) {
 
 func TestSwitchRetainsPortChannelAndContinuesWithoutPoE(t *testing.T) {
 	var walks []string
-	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), nil, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
+	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), map[string]int{"6c:4c:bc:29:e8:c1": 0}, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
 		ifNameOID:            {pdu(ifNameOID+".200", "Po2")},
 		dot1dBasePortIfIndex: {pdu(dot1dBasePortIfIndex+".80", 200)},
 		dot1dTpFdbPort:       {pdu(dot1dTpFdbPort+".108.76.188.41.232.193", 80)},

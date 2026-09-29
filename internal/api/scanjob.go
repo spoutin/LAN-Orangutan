@@ -420,10 +420,8 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	if ctx.Err() == nil && h.cfg.Switches.Enable {
 		vlanByMAC := make(map[string]int)
 		for _, device := range h.store.GetDevices() {
-			// Reuse only an already observed VLAN. A zero value remains unknown
-			// so the scanner can apply its unambiguous forwarding-table fallback.
-			if device.MAC != "" && device.SwitchVLAN > 0 {
-				vlanByMAC[device.MAC] = device.SwitchVLAN
+			if device.MAC != "" && device.VLAN > 0 {
+				vlanByMAC[device.MAC] = device.VLAN
 			}
 		}
 		seenSwitches := make(map[string]struct{}, len(h.cfg.Switches.Names))
@@ -436,6 +434,11 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 				continue
 			}
 			seenSwitches[switchCfg.ID] = struct{}{}
+			if err := switchCfg.Validate(); err != nil {
+				fmt.Printf("Switch %s SNMP configuration invalid\n", switchCfg.ID)
+				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP configuration invalid"}, 0)
+				continue
+			}
 			connections, err := h.fetchSwitchConnections(ctx, switchCfg, vlanByMAC)
 			if err != nil {
 				// SNMP failures can include transport details. Keep user-visible

@@ -597,7 +597,7 @@ func TestSwitchConfigValidation(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsInvalidEnabledSwitchConfig(t *testing.T) {
+func TestLoadAllowsInvalidEnabledSwitchConfig(t *testing.T) {
 	for name, setting := range map[string]string{
 		"SNMPv2":              "version = 2",
 		"authNoPriv":          "security_level = authNoPriv",
@@ -610,14 +610,14 @@ func TestLoadRejectsInvalidEnabledSwitchConfig(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := writeConfig(t, "[switches]\nenable = true\nnames = switchy\n\n[switch.switchy]\nhost = 10.0.0.2\nusername = monitor\nauth_password = auth-secret\nprivacy_password = privacy-secret\n"+setting+"\n")
-			if _, err := Load(path); err == nil {
-				t.Fatal("Load() error = nil, want invalid enabled switch configuration rejected")
+			if _, err := Load(path); err != nil {
+				t.Fatalf("Load() error = %v, want invalid switch configuration retained for scan-time isolation", err)
 			}
 		})
 	}
 }
 
-func TestApplyEnvRejectsInvalidEnabledSwitchConfig(t *testing.T) {
+func TestApplyEnvAllowsInvalidEnabledSwitchConfig(t *testing.T) {
 	for name, env := range map[string]string{
 		"SNMPv2":           "ORANGUTAN_SWITCH_SWITCHY_VERSION=2",
 		"authNoPriv":       "ORANGUTAN_SWITCH_SWITCHY_SECURITY_LEVEL=authNoPriv",
@@ -630,14 +630,14 @@ func TestApplyEnvRejectsInvalidEnabledSwitchConfig(t *testing.T) {
 			cfg := validEnabledSwitchConfig(t)
 			parts := strings.SplitN(env, "=", 2)
 			t.Setenv(parts[0], parts[1])
-			if err := cfg.ApplyEnv(); err == nil {
-				t.Fatal("ApplyEnv() error = nil, want invalid enabled switch configuration rejected")
+			if err := cfg.ApplyEnv(); err != nil {
+				t.Fatalf("ApplyEnv() error = %v, want invalid switch configuration retained for scan-time isolation", err)
 			}
 		})
 	}
 }
 
-func TestApplyEnvRejectsEnabledSwitchWithMissingSecrets(t *testing.T) {
+func TestApplyEnvAllowsEnabledSwitchWithMissingSecrets(t *testing.T) {
 	for name, setting := range map[string]string{
 		"authentication password": "auth_password =",
 		"privacy password":        "privacy_password =",
@@ -649,8 +649,8 @@ func TestApplyEnvRejectsEnabledSwitchWithMissingSecrets(t *testing.T) {
 				t.Fatalf("Load disabled config: %v", err)
 			}
 			t.Setenv("ORANGUTAN_SWITCHES_ENABLE", "true")
-			if err := cfg.ApplyEnv(); err == nil {
-				t.Fatal("ApplyEnv() error = nil, want enabled switch without a required secret rejected")
+			if err := cfg.ApplyEnv(); err != nil {
+				t.Fatalf("ApplyEnv() error = %v, want missing secrets retained for scan-time isolation", err)
 			}
 		})
 	}
