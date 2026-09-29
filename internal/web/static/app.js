@@ -1085,26 +1085,25 @@ function openDeviceSidebar(target) {
     // 4. Switch Connection Card
     const switchCard = document.getElementById('sb-switch-card');
     if (switchCard) {
-        const switchPort = (data.switchPort || '').trim();
-        if (switchPort) {
-            const isUplink = /^po\d+$/i.test(switchPort);
-            const isWirelessClient = !!(data.ssid || '').trim();
+        const switchPresentation = switchConnectionPresentation(data);
+        const switchUpdated = document.getElementById('sb-switch-updated');
+        if (switchPresentation.visible) {
             const switchTitle = document.getElementById('sb-switch-title');
-            if (switchTitle) switchTitle.textContent = isUplink ? 'Switch Uplink' : isWirelessClient ? 'Upstream AP Connection' : 'Switch Connection';
+            if (switchTitle) switchTitle.textContent = switchPresentation.title;
 
             const switchPortLabel = document.getElementById('sb-switch-port-label');
-            if (switchPortLabel) switchPortLabel.textContent = isUplink ? 'Interface:' : isWirelessClient ? 'AP Port:' : 'Port:';
+            if (switchPortLabel) switchPortLabel.textContent = switchPresentation.interfaceLabel;
 
             const switchName = document.getElementById('sb-switch-name');
             if (switchName) switchName.textContent = data.switchName || data.switchHost || '—';
 
             const switchPortEl = document.getElementById('sb-switch-port');
-            if (switchPortEl) switchPortEl.textContent = switchPort;
+            if (switchPortEl) switchPortEl.textContent = switchPresentation.connectionText;
 
             const switchVLANRow = document.getElementById('sb-switch-vlan-row');
             const switchVLAN = document.getElementById('sb-switch-vlan');
             const vlan = parseInt(data.switchVlan, 10);
-            if (switchVLANRow) switchVLANRow.style.display = !isUplink && !isNaN(vlan) && vlan > 0 ? '' : 'none';
+            if (switchVLANRow) switchVLANRow.style.display = switchPresentation.showVLAN && !isNaN(vlan) && vlan > 0 ? '' : 'none';
             if (switchVLAN) switchVLAN.textContent = !isNaN(vlan) && vlan > 0 ? vlan : '—';
 
             const switchLinkRow = document.getElementById('sb-switch-link-row');
@@ -1114,25 +1113,31 @@ function openDeviceSidebar(target) {
             const speed = parseInt(data.switchLinkSpeed, 10);
             if (!isNaN(speed) && speed > 0) linkParts.push(speed >= 1000 ? `${speed / 1000} Gbps` : `${speed} Mbps`);
             if (data.switchDuplex) linkParts.push(`${data.switchDuplex.charAt(0).toUpperCase() + data.switchDuplex.slice(1)} duplex`);
-            if (switchLinkRow) switchLinkRow.style.display = !isUplink && linkParts.length ? '' : 'none';
+            if (switchLinkRow) switchLinkRow.style.display = switchPresentation.showLink && linkParts.length ? '' : 'none';
             if (switchLink) switchLink.textContent = linkParts.join(' · ') || '—';
 
             const switchPoERow = document.getElementById('sb-switch-poe-row');
             const switchPoE = document.getElementById('sb-switch-poe');
             const poeWatts = Number(data.switchPoeWatts);
-            const hasPoE = data.switchPoeWatts !== '' && !isNaN(poeWatts);
-            if (switchPoERow) switchPoERow.style.display = hasPoE ? '' : 'none';
-            if (switchPoE) switchPoE.textContent = hasPoE ? `${poeWatts} W` : '—';
+            if (switchPoERow) switchPoERow.style.display = switchPresentation.showPoE ? '' : 'none';
+            if (switchPoE) switchPoE.textContent = switchPresentation.showPoE ? `${poeWatts} W` : '—';
 
-            const switchUpdated = document.getElementById('sb-switch-updated');
             const updated = new Date(data.switchUpdatedAt);
-            if (switchUpdated) switchUpdated.textContent = !isNaN(updated.getTime()) ? relativeTime(Math.floor(updated.getTime() / 1000)) : '—';
+            if (switchUpdated) {
+                const updatedAt = !isNaN(updated.getTime()) ? Math.floor(updated.getTime() / 1000) : null;
+                switchUpdated.dataset.relativeTime = updatedAt === null ? '' : updatedAt;
+                switchUpdated.textContent = updatedAt === null ? '—' : relativeTime(updatedAt);
+            }
 
             switchCard.style.display = '';
             switchCard.classList.remove('hidden');
         } else {
             switchCard.style.display = 'none';
             switchCard.classList.add('hidden');
+            if (switchUpdated) {
+                switchUpdated.dataset.relativeTime = '';
+                switchUpdated.textContent = '—';
+            }
         }
     }
 

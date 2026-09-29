@@ -21,3 +21,17 @@ All final verification commands passed.
 ## Notes
 
 - PoE is rendered only when telemetry provides watts; the current scanner deliberately leaves it absent.
+
+## Review Follow-up
+
+- Extracted `switchConnectionPresentation` into a browser-loaded, Node-testable pure helper used by `openDeviceSidebar`.
+- Added Node built-in test coverage for no-port hiding, physical ports, absent PoE, `Po2` uplinks, and SSID upstream AP connections.
+- The switch update field now uses `data-relative-time`, allowing `updateRelativeTimes()` to refresh it. The timestamp and displayed value are both cleared when the card hides.
+
+### Verification
+
+- `node --test internal/web/static/switch-presentation.test.js`
+- `go test -v ./internal/web`
+- `node --check internal/web/static/app.js`
+- `node --check internal/web/static/switch-presentation.js`
+- `git diff --check`
