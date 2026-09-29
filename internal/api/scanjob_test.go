@@ -68,6 +68,30 @@ func TestScanJob_SwitchesIgnoreDuplicateConfiguredNames(t *testing.T) {
 	}
 }
 
+func TestScanJob_SwitchesIgnoreAliasesWithSameID(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := switchTestConfig("primary", "alias")
+	cfg.Switches.Configs["primary"] = config.SwitchConfig{ID: "switchy", Host: "switchy.example.test"}
+	cfg.Switches.Configs["alias"] = config.SwitchConfig{ID: "switchy", Host: "switchy.example.test"}
+	h := NewHandler(store, cfg)
+	calls := 0
+	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
+		calls++
+		if switchCfg.ID != "switchy" {
+			t.Fatalf("fetched switch ID = %q, want switchy", switchCfg.ID)
+		}
+		return nil, nil
+	}
+
+	job := runSwitchScanJob(t, h)
+	if calls != 1 {
+		t.Errorf("switch fetch calls = %d, want 1", calls)
+	}
+	if got := countSwitchSummaries(job, "switchy SNMP"); got != 1 {
+		t.Errorf("switchy summary count = %d, want 1", got)
+	}
+}
+
 func TestScanJob_SwitchFailureIsIsolated(t *testing.T) {
 	store := newScanJobTestStore(t)
 	cfg := switchTestConfig("unreachable", "edge-b")
