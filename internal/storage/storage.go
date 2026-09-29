@@ -647,6 +647,17 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		if device.RouterNotes == "" {
 			device.RouterNotes = existing.RouterNotes
 		}
+		if device.SwitchName == "" {
+			device.SwitchName = existing.SwitchName
+			device.SwitchHost = existing.SwitchHost
+			device.SwitchPort = existing.SwitchPort
+			device.SwitchVLAN = existing.SwitchVLAN
+			device.SwitchLinkState = existing.SwitchLinkState
+			device.SwitchLinkSpeed = existing.SwitchLinkSpeed
+			device.SwitchDuplex = existing.SwitchDuplex
+			device.SwitchPoEWatts = existing.SwitchPoEWatts
+			device.SwitchUpdatedAt = existing.SwitchUpdatedAt
+		}
 	}
 
 	if device.FirstSeen.IsZero() {

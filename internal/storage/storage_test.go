@@ -1185,3 +1185,50 @@ func TestMergeSwitchConnectionsStoresNullPoEAndTimestamp(t *testing.T) {
 		t.Errorf("SwitchUpdatedAt = %v, want zero time", got.SwitchUpdatedAt)
 	}
 }
+
+func TestUpdateDevicePreservesExistingSwitchTelemetryWhenOmitted(t *testing.T) {
+	s := newTestStorage(t)
+	device := &types.Device{
+		IP:       "192.168.1.54",
+		MAC:      "AA:BB:CC:DD:EE:05",
+		Hostname: "original-name",
+	}
+	if err := s.UpdateDevice(device); err != nil {
+		t.Fatalf("UpdateDevice initial: %v", err)
+	}
+
+	poeWatts := 4.6
+	updatedAt := time.Now().Add(-time.Minute).Truncate(time.Second)
+	if err := s.MergeSwitchConnections([]SwitchConnection{{
+		MAC:        device.MAC,
+		SwitchName: "switchy",
+		SwitchHost: "10.0.0.2",
+		Port:       "gi1/4",
+		VLAN:       20,
+		LinkState:  "up",
+		LinkSpeed:  1000,
+		Duplex:     "full",
+		PoEWatts:   &poeWatts,
+		UpdatedAt:  updatedAt,
+	}}, "switchy"); err != nil {
+		t.Fatalf("MergeSwitchConnections: %v", err)
+	}
+
+	if err := s.UpdateDevice(&types.Device{IP: device.IP, MAC: device.MAC, Hostname: "updated-name"}); err != nil {
+		t.Fatalf("UpdateDevice update: %v", err)
+	}
+
+	got := s.GetDevice(device.IP)
+	if got == nil {
+		t.Fatalf("GetDevice(%s) returned nil", device.IP)
+	}
+	if got.SwitchName != "switchy" || got.SwitchHost != "10.0.0.2" || got.SwitchPort != "gi1/4" || got.SwitchVLAN != 20 || got.SwitchLinkState != "up" || got.SwitchLinkSpeed != 1000 || got.SwitchDuplex != "full" {
+		t.Errorf("switch telemetry was not preserved: %+v", got)
+	}
+	if got.SwitchPoEWatts == nil || *got.SwitchPoEWatts != 4.6 {
+		t.Errorf("SwitchPoEWatts = %v, want 4.6", got.SwitchPoEWatts)
+	}
+	if !got.SwitchUpdatedAt.Equal(updatedAt) {
+		t.Errorf("SwitchUpdatedAt = %v, want %v", got.SwitchUpdatedAt, updatedAt)
+	}
+}
