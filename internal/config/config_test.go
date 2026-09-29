@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -473,4 +475,158 @@ api_key = test-key
 			t.Error("ORANGUTAN_UNIFI_VERIFY_SSL should enable VerifySSL")
 		}
 	})
+}
+
+func TestSwitchConfig(t *testing.T) {
+	t.Run("loads ordered switches with SNMPv3 defaults", func(t *testing.T) {
+		path := writeConfig(t, `
+[switches]
+enable = true
+names = switchy, core
+
+[switch.switchy]
+host = 10.0.0.2
+username = monitor
+auth_password = auth-secret
+privacy_password = privacy-secret
+
+[switch.core]
+host = core.example.test
+port = 1161
+version = 3
+username = core-monitor
+security_level = authPriv
+auth_protocol = SHA
+auth_password = core-auth-secret
+privacy_protocol = AES
+privacy_password = core-privacy-secret
+timeout_seconds = 10
+`)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Switches.Enable {
+			t.Error("Switches.Enable should be true")
+		}
+		if got, want := cfg.Switches.Names, []string{"switchy", "core"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+			t.Errorf("Switches.Names = %v, want %v", got, want)
+		}
+
+		switchy := cfg.Switches.Configs["switchy"]
+		if switchy.ID != "switchy" || switchy.Host != "10.0.0.2" || switchy.Port != 161 || switchy.Version != 3 || switchy.SecurityLevel != "authPriv" || switchy.AuthProtocol != "SHA" || switchy.PrivacyProtocol != "DES" || switchy.TimeoutSeconds != 5 {
+			t.Error("switchy should use the configured host and SNMPv3 authPriv defaults")
+		}
+
+		core := cfg.Switches.Configs["core"]
+		if core.Host != "core.example.test" || core.Port != 1161 || core.PrivacyProtocol != "AES" || core.TimeoutSeconds != 10 {
+			t.Error("core should preserve configured non-secret values")
+		}
+	})
+
+	t.Run("environment overrides configured switch", func(t *testing.T) {
+		path := writeConfig(t, `
+[switches]
+enable = false
+names = switchy
+
+[switch.switchy]
+host = 10.0.0.2
+username = monitor
+auth_password = file-auth-secret
+privacy_password = file-privacy-secret
+`)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		t.Setenv("ORANGUTAN_SWITCHES_ENABLE", "true")
+		t.Setenv("ORANGUTAN_SWITCH_SWITCHY_HOST", "10.0.0.3")
+		t.Setenv("ORANGUTAN_SWITCH_SWITCHY_PORT", "1161")
+		t.Setenv("ORANGUTAN_SWITCH_SWITCHY_PRIVACY_PROTOCOL", "AES")
+		t.Setenv("ORANGUTAN_SWITCH_SWITCHY_TIMEOUT_SECONDS", "15")
+		cfg.ApplyEnv()
+
+		switchy := cfg.Switches.Configs["switchy"]
+		if !cfg.Switches.Enable || switchy.Host != "10.0.0.3" || switchy.Port != 1161 || switchy.PrivacyProtocol != "AES" || switchy.TimeoutSeconds != 15 {
+			t.Error("environment should override the switch's non-secret settings")
+		}
+	})
+}
+
+func TestSwitchConfigValidation(t *testing.T) {
+	valid := SwitchConfig{
+		ID:              "switchy",
+		Host:            "10.0.0.2",
+		Port:            161,
+		Version:         3,
+		Username:        "monitor",
+		SecurityLevel:   "authPriv",
+		AuthProtocol:    "SHA",
+		AuthPassword:    "auth-secret",
+		PrivacyProtocol: "AES",
+		PrivacyPassword: "privacy-secret",
+		TimeoutSeconds:  5,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v for valid SNMPv3 authPriv configuration", err)
+	}
+
+	for name, mutate := range map[string]func(*SwitchConfig){
+		"requires version 3":                  func(c *SwitchConfig) { c.Version = 2 },
+		"requires authPriv":                   func(c *SwitchConfig) { c.SecurityLevel = "authNoPriv" },
+		"requires SHA authentication":         func(c *SwitchConfig) { c.AuthProtocol = "MD5" },
+		"requires DES or AES privacy":         func(c *SwitchConfig) { c.PrivacyProtocol = "3DES" },
+		"requires a host":                     func(c *SwitchConfig) { c.Host = "" },
+		"requires a username":                 func(c *SwitchConfig) { c.Username = "" },
+		"requires an authentication password": func(c *SwitchConfig) { c.AuthPassword = "" },
+		"requires a privacy password":         func(c *SwitchConfig) { c.PrivacyPassword = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := valid
+			mutate(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("Validate() error = nil, want rejection")
+			}
+		})
+	}
+}
+
+func TestSwitchConfigDoesNotSerializeCredentials(t *testing.T) {
+	cfg := Default()
+	cfg.setSwitchNames("switchy")
+	cfg.setSwitchValue("switchy", "auth_password", "auth-secret")
+	cfg.setSwitchValue("switchy", "privacy_password", "privacy-secret")
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "auth-secret") || strings.Contains(string(data), "privacy-secret") {
+		t.Fatal("serialized configuration must not include SNMP credentials")
+	}
+}
+
+func TestSwitchConfigNormalizesInvalidTimeout(t *testing.T) {
+	path := writeConfig(t, `
+[switches]
+names = switchy
+
+[switch.switchy]
+host = 10.0.0.2
+username = monitor
+auth_password = auth-secret
+privacy_password = privacy-secret
+timeout_seconds = 0
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Switches.Configs["switchy"].TimeoutSeconds; got != 5 {
+		t.Errorf("TimeoutSeconds = %d, want default 5", got)
+	}
 }

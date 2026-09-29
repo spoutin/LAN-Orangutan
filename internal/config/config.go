@@ -93,6 +93,7 @@ type Config struct {
 	OpenWrt   OpenWrtConfig
 	OPNsense  OPNsenseConfig
 	UniFi     UniFiConfig
+	Switches  SwitchesConfig
 }
 
 // OpenWrtConfig holds OpenWrt connection settings
@@ -119,6 +120,57 @@ type UniFiConfig struct {
 	Site      string
 	APIKey    string
 	VerifySSL bool
+}
+
+// SwitchesConfig holds the ordered list of SNMP switches and their settings.
+type SwitchesConfig struct {
+	Enable  bool
+	Names   []string
+	Configs map[string]SwitchConfig
+}
+
+// SwitchConfig holds SNMPv3 authPriv connection settings for one switch.
+type SwitchConfig struct {
+	ID              string
+	Host            string
+	Port            int
+	Version         int
+	Username        string
+	SecurityLevel   string
+	AuthProtocol    string
+	AuthPassword    string `json:"-"`
+	PrivacyProtocol string
+	PrivacyPassword string `json:"-"`
+	TimeoutSeconds  int
+}
+
+// Validate verifies that c uses the supported secure SNMPv3 configuration.
+func (c SwitchConfig) Validate() error {
+	if c.Version != 3 {
+		return fmt.Errorf("switch %q: version must be 3", c.ID)
+	}
+	if !strings.EqualFold(c.SecurityLevel, "authPriv") {
+		return fmt.Errorf("switch %q: security_level must be authPriv", c.ID)
+	}
+	if !strings.EqualFold(c.AuthProtocol, "SHA") {
+		return fmt.Errorf("switch %q: auth_protocol must be SHA", c.ID)
+	}
+	if !strings.EqualFold(c.PrivacyProtocol, "DES") && !strings.EqualFold(c.PrivacyProtocol, "AES") {
+		return fmt.Errorf("switch %q: privacy_protocol must be DES or AES", c.ID)
+	}
+	if c.Host == "" {
+		return fmt.Errorf("switch %q: host is required", c.ID)
+	}
+	if c.Username == "" {
+		return fmt.Errorf("switch %q: username is required", c.ID)
+	}
+	if c.AuthPassword == "" {
+		return fmt.Errorf("switch %q: auth_password is required", c.ID)
+	}
+	if c.PrivacyPassword == "" {
+		return fmt.Errorf("switch %q: privacy_password is required", c.ID)
+	}
+	return nil
 }
 
 // ServerConfig holds web server settings
@@ -252,6 +304,9 @@ func Default() *Config {
 			Site:      "default",
 			VerifySSL: false,
 		},
+		Switches: SwitchesConfig{
+			Configs: make(map[string]SwitchConfig),
+		},
 	}
 }
 
@@ -301,6 +356,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
 
+	cfg.Normalize()
 	return cfg, nil
 }
 
@@ -418,7 +474,83 @@ func (c *Config) setValue(section, key, value string) {
 		case "verify_ssl":
 			c.UniFi.VerifySSL = parseBool(value)
 		}
+	case "switches":
+		switch key {
+		case "enable":
+			c.Switches.Enable = parseBool(value)
+		case "names":
+			c.setSwitchNames(value)
+		}
+	default:
+		if strings.HasPrefix(section, "switch.") {
+			c.setSwitchValue(strings.TrimPrefix(section, "switch."), key, value)
+		}
 	}
+}
+
+func (c *Config) setSwitchNames(value string) {
+	c.Switches.Names = nil
+	for _, name := range strings.Split(value, ",") {
+		id := strings.ToLower(strings.TrimSpace(name))
+		if id == "" {
+			continue
+		}
+		c.Switches.Names = append(c.Switches.Names, id)
+		c.ensureSwitch(id)
+	}
+}
+
+func (c *Config) ensureSwitch(id string) *SwitchConfig {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if c.Switches.Configs == nil {
+		c.Switches.Configs = make(map[string]SwitchConfig)
+	}
+	switchCfg, ok := c.Switches.Configs[id]
+	if !ok {
+		switchCfg = SwitchConfig{
+			ID:              id,
+			Port:            161,
+			Version:         3,
+			SecurityLevel:   "authPriv",
+			AuthProtocol:    "SHA",
+			PrivacyProtocol: "DES",
+			TimeoutSeconds:  5,
+		}
+	}
+	return &switchCfg
+}
+
+func (c *Config) setSwitchValue(id, key, value string) {
+	switchCfg := c.ensureSwitch(id)
+	switch key {
+	case "host":
+		switchCfg.Host = value
+	case "port":
+		if v, err := strconv.Atoi(value); err == nil {
+			switchCfg.Port = v
+		}
+	case "version":
+		if v, err := strconv.Atoi(value); err == nil {
+			switchCfg.Version = v
+		}
+	case "username":
+		switchCfg.Username = value
+	case "security_level":
+		switchCfg.SecurityLevel = value
+	case "auth_protocol":
+		switchCfg.AuthProtocol = value
+	case "auth_password":
+		switchCfg.AuthPassword = value
+	case "privacy_protocol":
+		switchCfg.PrivacyProtocol = value
+	case "privacy_password":
+		switchCfg.PrivacyPassword = value
+	case "timeout_seconds":
+		if v, err := strconv.Atoi(value); err == nil {
+			switchCfg.TimeoutSeconds = v
+		}
+	}
+	c.Switches.Configs[switchCfg.ID] = *switchCfg
 }
 
 // ApplyEnv overlays settings from environment variables onto c.
@@ -527,6 +659,35 @@ func (c *Config) ApplyEnv() {
 		c.UniFi.VerifySSL = parseBool(v)
 	}
 
+	if v := os.Getenv("ORANGUTAN_SWITCHES_ENABLE"); v != "" {
+		c.Switches.Enable = parseBool(v)
+	}
+	if v := os.Getenv("ORANGUTAN_SWITCHES_NAMES"); v != "" {
+		c.setSwitchNames(v)
+	}
+	for _, id := range c.Switches.Names {
+		prefix := "ORANGUTAN_SWITCH_" + strings.ToUpper(id) + "_"
+		for _, setting := range []struct {
+			key string
+			env string
+		}{
+			{"host", "HOST"},
+			{"port", "PORT"},
+			{"version", "VERSION"},
+			{"username", "USERNAME"},
+			{"security_level", "SECURITY_LEVEL"},
+			{"auth_protocol", "AUTH_PROTOCOL"},
+			{"auth_password", "AUTH_PASSWORD"},
+			{"privacy_protocol", "PRIVACY_PROTOCOL"},
+			{"privacy_password", "PRIVACY_PASSWORD"},
+			{"timeout_seconds", "TIMEOUT_SECONDS"},
+		} {
+			if v := os.Getenv(prefix + setting.env); v != "" {
+				c.setSwitchValue(id, setting.key, v)
+			}
+		}
+	}
+
 	c.Normalize()
 }
 
@@ -563,6 +724,14 @@ func (c *Config) Normalize() []string {
 
 	if c.UniFi.Site == "" {
 		c.UniFi.Site = "default"
+	}
+
+	for _, id := range c.Switches.Names {
+		switchCfg := c.ensureSwitch(id)
+		if switchCfg.TimeoutSeconds <= 0 {
+			switchCfg.TimeoutSeconds = 5
+		}
+		c.Switches.Configs[id] = *switchCfg
 	}
 
 	return notes

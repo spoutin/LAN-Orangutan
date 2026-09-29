@@ -3,6 +3,7 @@ module github.com/spoutin/LAN-Orangutan
 go 1.26.0
 
 require (
+	github.com/gosnmp/gosnmp v1.45.0
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.55.0
