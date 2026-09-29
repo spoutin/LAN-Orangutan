@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/gosnmp/gosnmp"
@@ -14,15 +15,19 @@ const (
 	dot1dBasePortIfIndex = "1.3.6.1.2.1.17.1.4.1.2"
 	dot1dTpFdbPort       = "1.3.6.1.2.1.17.4.3.1.2"
 	dot1qTpFdbPort       = "1.3.6.1.2.1.17.7.1.2.2.1.2"
-	pethPsePower         = "1.3.6.1.2.1.105.1.1.1.10"
+	optionalPoETable     = "optional-poe-table"
 )
 
 type fakeSwitchWalker struct {
 	tables map[string][]gosnmp.SnmpPDU
 	errs   map[string]error
+	walks  *[]string
 }
 
 func (w fakeSwitchWalker) Walk(_ context.Context, oid string) ([]gosnmp.SnmpPDU, error) {
+	if w.walks != nil {
+		*w.walks = append(*w.walks, oid)
+	}
 	if err := w.errs[oid]; err != nil {
 		return nil, err
 	}
@@ -78,6 +83,34 @@ func TestSwitchPrefersRequestedVLANOverOtherVLANForwardingEntries(t *testing.T) 
 	}
 }
 
+func TestSwitchResolvesVLANAboveMACOctetRange(t *testing.T) {
+	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), map[string]int{"6c:4c:bc:29:e8:c1": 300}, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
+		ifNameOID:            {pdu(ifNameOID+".71", "gi1/23")},
+		dot1dBasePortIfIndex: {pdu(dot1dBasePortIfIndex+".71", 71)},
+		dot1qTpFdbPort:       {pdu(dot1qTpFdbPort+".300.108.76.188.41.232.193", 71)},
+	}})
+	if err != nil {
+		t.Fatalf("fetchSwitchConnections: %v", err)
+	}
+	if len(connections) != 1 || connections[0].VLAN != 300 || connections[0].Port != "gi1/23" {
+		t.Fatalf("connections = %#v, want VLAN 300 gi1/23", connections)
+	}
+}
+
+func TestSwitchRejectsInvalidMACOctets(t *testing.T) {
+	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), nil, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
+		ifNameOID:            {pdu(ifNameOID+".71", "gi1/23")},
+		dot1dBasePortIfIndex: {pdu(dot1dBasePortIfIndex+".71", 71)},
+		dot1qTpFdbPort:       {pdu(dot1qTpFdbPort+".300.256.76.188.41.232.193", 71)},
+	}})
+	if err != nil {
+		t.Fatalf("fetchSwitchConnections: %v", err)
+	}
+	if len(connections) != 0 {
+		t.Fatalf("connections = %#v, want invalid MAC entry ignored", connections)
+	}
+}
+
 func TestSwitchFallsBackToBridgeFDBWhenQBridgeIsUnavailable(t *testing.T) {
 	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), nil, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
 		ifNameOID:            {pdu(ifNameOID+".71", "gi1/23")},
@@ -106,16 +139,22 @@ func TestSwitchIgnoresBridgePortZero(t *testing.T) {
 }
 
 func TestSwitchRetainsPortChannelAndContinuesWithoutPoE(t *testing.T) {
+	var walks []string
 	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), nil, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
 		ifNameOID:            {pdu(ifNameOID+".200", "Po2")},
 		dot1dBasePortIfIndex: {pdu(dot1dBasePortIfIndex+".80", 200)},
 		dot1dTpFdbPort:       {pdu(dot1dTpFdbPort+".108.76.188.41.232.193", 80)},
-	}, errs: map[string]error{pethPsePower: errors.New("unsupported table")}})
+	}, errs: map[string]error{optionalPoETable: errors.New("unsupported table")}, walks: &walks})
 	if err != nil {
 		t.Fatalf("fetchSwitchConnections: %v", err)
 	}
 	if len(connections) != 1 || connections[0].Port != "Po2" || connections[0].PoEWatts != nil {
 		t.Fatalf("connections = %#v, want port-channel without PoE", connections)
+	}
+	for _, oid := range walks {
+		if strings.HasPrefix(oid, "1.3.6.1.2.1.105.") {
+			t.Fatal("switch scanner must not poll an unavailable PoE watts table")
+		}
 	}
 }
 

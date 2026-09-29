@@ -20,8 +20,6 @@ const (
 	switchBridgePortIfIndexOID = "1.3.6.1.2.1.17.1.4.1.2"
 	switchBridgeFDBPortOID     = "1.3.6.1.2.1.17.4.3.1.2"
 	switchQBridgeFDBPortOID    = "1.3.6.1.2.1.17.7.1.2.2.1.2"
-	switchPSEIfIndexOID        = "1.3.6.1.2.1.105.1.1.1.2"
-	switchPSEPowerOID          = "1.3.6.1.2.1.105.1.1.1.10"
 )
 
 // SwitchConnection is a current FDB-to-interface match. Task 4 maps it to
@@ -76,8 +74,6 @@ func fetchSwitchConnections(ctx context.Context, cfg config.SwitchConfig, vlanBy
 	operStatus, _ := walkIntTable(ctx, w, switchIfOperStatusOID)
 	highSpeed, _ := walkIntTable(ctx, w, switchIfHighSpeedOID)
 	duplex, _ := walkIntTable(ctx, w, switchIfDuplexOID)
-	poeWatts := walkPoEWatts(ctx, w)
-
 	requestedVLAN := make(map[string]int, len(vlanByMAC))
 	for mac, vlan := range vlanByMAC {
 		requestedVLAN[normalizeSwitchMAC(mac)] = vlan
@@ -115,9 +111,6 @@ func fetchSwitchConnections(ctx context.Context, cfg config.SwitchConfig, vlanBy
 			MAC: mac, SwitchName: cfg.ID, SwitchHost: cfg.Host, Port: port, VLAN: vlan,
 			LinkState: linkState(operStatus[ifIndex]), LinkSpeed: highSpeed[ifIndex], Duplex: duplexState(duplex[ifIndex]),
 			UpdatedAt: now,
-		}
-		if watts, ok := poeWatts[ifIndex]; ok {
-			connection.PoEWatts = &watts
 		}
 		connections = append(connections, connection)
 	}
@@ -222,37 +215,12 @@ func walkFDBTable(ctx context.Context, w switchWalker, oid string, vlanAware boo
 			vlan = index[0]
 			index = index[1:]
 		}
+		if !isMACIndex(index) {
+			continue
+		}
 		result[fdbKey{mac: bytesMAC(index), vlan: vlan}] = port
 	}
 	return result, nil
-}
-
-func walkPoEWatts(ctx context.Context, w switchWalker) map[int]float64 {
-	indices, err := w.Walk(ctx, switchPSEIfIndexOID)
-	if err != nil {
-		return nil
-	}
-	powers, err := w.Walk(ctx, switchPSEPowerOID)
-	if err != nil {
-		return nil
-	}
-	byPSE := make(map[string]int, len(indices))
-	for _, pdu := range indices {
-		if index, ok := oidIndex(pdu.Name, switchPSEIfIndexOID, 2); ok {
-			if ifIndex, ok := snmpInt(pdu.Value); ok {
-				byPSE[indexKey(index)] = ifIndex
-			}
-		}
-	}
-	result := make(map[int]float64, len(powers))
-	for _, pdu := range powers {
-		if index, ok := oidIndex(pdu.Name, switchPSEPowerOID, 2); ok {
-			if watts, ok := snmpInt(pdu.Value); ok && byPSE[indexKey(index)] != 0 {
-				result[byPSE[indexKey(index)]] = float64(watts)
-			}
-		}
-	}
-	return result
 }
 
 func oidIndex(name, root string, count int) ([]int, bool) {
@@ -265,12 +233,24 @@ func oidIndex(name, root string, count int) ([]int, bool) {
 	index := make([]int, count)
 	for i, part := range parts {
 		value, err := strconv.Atoi(part)
-		if err != nil || value < 0 || value > 255 && count > 1 {
+		if err != nil || value < 0 {
 			return nil, false
 		}
 		index[i] = value
 	}
 	return index, true
+}
+
+func isMACIndex(index []int) bool {
+	if len(index) != 6 {
+		return false
+	}
+	for _, value := range index {
+		if value > 255 {
+			return false
+		}
+	}
+	return true
 }
 
 func snmpInt(value any) (int, bool) {
@@ -322,8 +302,6 @@ func uniqueNonZeroPorts(ports []int) []int {
 	}
 	return result
 }
-
-func indexKey(index []int) string { return strconv.Itoa(index[0]) + "." + strconv.Itoa(index[1]) }
 
 func linkState(value int) string {
 	if value == 1 {
