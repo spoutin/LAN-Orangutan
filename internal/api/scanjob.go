@@ -420,7 +420,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	if ctx.Err() == nil && h.cfg.Switches.Enable {
 		vlanByMAC := make(map[string]int)
 		for _, device := range h.store.GetDevices() {
-			if device.MAC != "" && device.VLAN > 0 {
+			if device.MAC != "" {
 				vlanByMAC[device.MAC] = device.VLAN
 			}
 		}

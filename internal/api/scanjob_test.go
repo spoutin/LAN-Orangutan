@@ -46,6 +46,31 @@ func TestScanJob_SwitchesPollSequentiallyAndPropagateKnownVLAN(t *testing.T) {
 	}
 }
 
+func TestScanJob_SwitchesResolveUnknownVLANInventoryMACThroughBridgeFDB(t *testing.T) {
+	store := newScanJobTestStore(t)
+	if err := store.UpdateDevice(&types.Device{IP: "192.168.1.11", MAC: "AA:BB:CC:DD:EE:02"}); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+	cfg := switchTestConfig("edge-a")
+	h := NewHandler(store, cfg)
+	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, vlanByMAC map[string]int) ([]scanner.SwitchConnection, error) {
+		vlan, ok := vlanByMAC["AA:BB:CC:DD:EE:02"]
+		if !ok || vlan != 0 {
+			t.Fatalf("vlanByMAC = %v, want unknown-VLAN inventory MAC", vlanByMAC)
+		}
+		// This represents the resolver's unambiguous standard BRIDGE FDB match.
+		return []scanner.SwitchConnection{{MAC: "aa:bb:cc:dd:ee:02", SwitchName: switchCfg.ID, SwitchHost: switchCfg.Host, Port: "gi1/11", VLAN: 0}}, nil
+	}
+
+	job := runSwitchScanJob(t, h)
+	if summary := switchSummary(t, job, "edge-a SNMP"); summary.Status != "scanned" || summary.DeviceCount != 1 {
+		t.Errorf("switch summary = %+v, want one resolved connection", summary)
+	}
+	if device := store.GetDevice("192.168.1.11"); device == nil || device.SwitchPort != "gi1/11" || device.SwitchVLAN != 0 {
+		t.Errorf("stored switch telemetry = %+v, want standard BRIDGE FDB result", device)
+	}
+}
+
 func TestScanJob_SwitchesIgnoreDuplicateConfiguredNames(t *testing.T) {
 	store := newScanJobTestStore(t)
 	cfg := switchTestConfig("switchy", "switchy", "core")
