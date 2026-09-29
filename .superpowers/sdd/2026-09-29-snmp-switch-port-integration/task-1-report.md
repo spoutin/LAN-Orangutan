@@ -25,3 +25,28 @@
 
 - `gosnmp` is intentionally retained as a direct dependency even though this task does not import it yet; Task 3 consumes it for SNMP table walks.
 - The existing untracked implementation plan file was left unchanged and excluded from the task commit.
+
+## Review Fixes
+
+### Implementation
+
+- Added enabled-switch validation after INI parsing and normalization in `Load`. Invalid enabled switches now prevent configuration loading.
+- Changed `ApplyEnv` to return an error after environment overlays and normalization. The CLI now reports that error and exits before startup.
+- Validation is restricted to configured names when switch discovery is enabled, so disabled switch configuration does not block unrelated application use.
+- Added port validation for the inclusive range `1..65535` and a positive `timeout_seconds` check after normalization.
+- Added public-pipeline tests for `Load` and `ApplyEnv` rejecting SNMPv2, `authNoPriv`, MD5, 3DES, missing authentication/password credentials, and out-of-range ports.
+- Added boundary coverage for valid ports `1` and `65535`.
+
+### Commands And Output Summary
+
+- `go test -v ./internal/config`: passed all configuration tests, including the new load and environment validation integration cases.
+- `go test ./...`: passed all Go package tests.
+- `go vet ./...`: completed with no diagnostics.
+- `git diff --check`: completed with no whitespace errors.
+
+### Self-Review
+
+- Confirmed `SwitchConfig.Validate` is now called only after defaults and timeout normalization in both public configuration paths.
+- Confirmed the CLI consumes the environment-overlay error, preventing an invalid enabled switch configuration from reaching scan startup.
+- Confirmed validation error messages identify settings and switch IDs but do not contain authentication or privacy credentials.
+- Confirmed existing disabled-switch configurations remain loadable; only enabled configured switches are rejected.

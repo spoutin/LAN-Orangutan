@@ -70,5 +70,8 @@ func initConfig() {
 
 	// Environment variables override the file, so containers can be configured
 	// without mounting one.
-	cfg.ApplyEnv()
+	if err := cfg.ApplyEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error applying environment configuration: %v\n", err)
+		os.Exit(1)
+	}
 }

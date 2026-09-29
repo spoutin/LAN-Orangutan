@@ -583,6 +583,9 @@ func TestSwitchConfigValidation(t *testing.T) {
 		"requires a username":                 func(c *SwitchConfig) { c.Username = "" },
 		"requires an authentication password": func(c *SwitchConfig) { c.AuthPassword = "" },
 		"requires a privacy password":         func(c *SwitchConfig) { c.PrivacyPassword = "" },
+		"requires a positive timeout":         func(c *SwitchConfig) { c.TimeoutSeconds = 0 },
+		"rejects ports below 1":               func(c *SwitchConfig) { c.Port = 0 },
+		"rejects ports above 65535":           func(c *SwitchConfig) { c.Port = 65536 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := valid
@@ -592,6 +595,84 @@ func TestSwitchConfigValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadRejectsInvalidEnabledSwitchConfig(t *testing.T) {
+	for name, setting := range map[string]string{
+		"SNMPv2":              "version = 2",
+		"authNoPriv":          "security_level = authNoPriv",
+		"MD5":                 "auth_protocol = MD5",
+		"3DES":                "privacy_protocol = 3DES",
+		"missing auth key":    "auth_password =",
+		"missing privacy key": "privacy_password =",
+		"port below range":    "port = 0",
+		"port above range":    "port = 65536",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, "[switches]\nenable = true\nnames = switchy\n\n[switch.switchy]\nhost = 10.0.0.2\nusername = monitor\nauth_password = auth-secret\nprivacy_password = privacy-secret\n"+setting+"\n")
+			if _, err := Load(path); err == nil {
+				t.Fatal("Load() error = nil, want invalid enabled switch configuration rejected")
+			}
+		})
+	}
+}
+
+func TestApplyEnvRejectsInvalidEnabledSwitchConfig(t *testing.T) {
+	for name, env := range map[string]string{
+		"SNMPv2":           "ORANGUTAN_SWITCH_SWITCHY_VERSION=2",
+		"authNoPriv":       "ORANGUTAN_SWITCH_SWITCHY_SECURITY_LEVEL=authNoPriv",
+		"MD5":              "ORANGUTAN_SWITCH_SWITCHY_AUTH_PROTOCOL=MD5",
+		"3DES":             "ORANGUTAN_SWITCH_SWITCHY_PRIVACY_PROTOCOL=3DES",
+		"port below range": "ORANGUTAN_SWITCH_SWITCHY_PORT=0",
+		"port above range": "ORANGUTAN_SWITCH_SWITCHY_PORT=65536",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := validEnabledSwitchConfig(t)
+			parts := strings.SplitN(env, "=", 2)
+			t.Setenv(parts[0], parts[1])
+			if err := cfg.ApplyEnv(); err == nil {
+				t.Fatal("ApplyEnv() error = nil, want invalid enabled switch configuration rejected")
+			}
+		})
+	}
+}
+
+func TestApplyEnvRejectsEnabledSwitchWithMissingSecrets(t *testing.T) {
+	for name, setting := range map[string]string{
+		"authentication password": "auth_password =",
+		"privacy password":        "privacy_password =",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, "[switches]\nenable = false\nnames = switchy\n\n[switch.switchy]\nhost = 10.0.0.2\nusername = monitor\nauth_password = auth-secret\nprivacy_password = privacy-secret\n"+setting+"\n")
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load disabled config: %v", err)
+			}
+			t.Setenv("ORANGUTAN_SWITCHES_ENABLE", "true")
+			if err := cfg.ApplyEnv(); err == nil {
+				t.Fatal("ApplyEnv() error = nil, want enabled switch without a required secret rejected")
+			}
+		})
+	}
+}
+
+func TestSwitchConfigPortBoundaries(t *testing.T) {
+	for _, port := range []int{1, 65535} {
+		cfg := SwitchConfig{ID: "switchy", Host: "10.0.0.2", Port: port, Version: 3, Username: "monitor", SecurityLevel: "authPriv", AuthProtocol: "SHA", AuthPassword: "auth-secret", PrivacyProtocol: "AES", PrivacyPassword: "privacy-secret", TimeoutSeconds: 5}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() error = %v for port %d", err, port)
+		}
+	}
+}
+
+func validEnabledSwitchConfig(t *testing.T) *Config {
+	t.Helper()
+	path := writeConfig(t, "[switches]\nenable = true\nnames = switchy\n\n[switch.switchy]\nhost = 10.0.0.2\nusername = monitor\nauth_password = auth-secret\nprivacy_password = privacy-secret\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load valid config: %v", err)
+	}
+	return cfg
 }
 
 func TestSwitchConfigDoesNotSerializeCredentials(t *testing.T) {

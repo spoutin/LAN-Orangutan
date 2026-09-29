@@ -149,6 +149,9 @@ func (c SwitchConfig) Validate() error {
 	if c.Version != 3 {
 		return fmt.Errorf("switch %q: version must be 3", c.ID)
 	}
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("switch %q: port must be between 1 and 65535", c.ID)
+	}
 	if !strings.EqualFold(c.SecurityLevel, "authPriv") {
 		return fmt.Errorf("switch %q: security_level must be authPriv", c.ID)
 	}
@@ -169,6 +172,9 @@ func (c SwitchConfig) Validate() error {
 	}
 	if c.PrivacyPassword == "" {
 		return fmt.Errorf("switch %q: privacy_password is required", c.ID)
+	}
+	if c.TimeoutSeconds <= 0 {
+		return fmt.Errorf("switch %q: timeout_seconds must be positive", c.ID)
 	}
 	return nil
 }
@@ -357,6 +363,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg.Normalize()
+	if err := cfg.validateSwitches(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 
@@ -558,7 +567,7 @@ func (c *Config) setSwitchValue(id, key, value string) {
 // Environment variables take precedence over the config file, which makes the
 // app configurable in a container without mounting a config file. Command line
 // flags still win over both.
-func (c *Config) ApplyEnv() {
+func (c *Config) ApplyEnv() error {
 	if v := os.Getenv("ORANGUTAN_PORT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.Server.Port = n
@@ -689,6 +698,19 @@ func (c *Config) ApplyEnv() {
 	}
 
 	c.Normalize()
+	return c.validateSwitches()
+}
+
+func (c *Config) validateSwitches() error {
+	if !c.Switches.Enable {
+		return nil
+	}
+	for _, id := range c.Switches.Names {
+		if err := c.Switches.Configs[id].Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Normalize repairs out-of-range scan timings, clamping them back to the
