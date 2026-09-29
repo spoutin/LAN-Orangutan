@@ -14,5 +14,8 @@ config.ini
 .idea/
 .vscode/
 
+# Local agent worktrees
+.worktrees/
+
 # OS
 .DS_Store
