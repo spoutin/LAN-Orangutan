@@ -25,6 +25,9 @@ type Handler struct {
 	store   *storage.Storage
 	cfg     *config.Config
 	scanner *scanner.Scanner
+	// fetchSwitchConnections is injectable so scan-pipeline tests do not need
+	// an SNMP device.
+	fetchSwitchConnections func(context.Context, config.SwitchConfig, map[string]int) ([]scanner.SwitchConnection, error)
 
 	// jobMu guards job, which holds the most recent background scan. Only one
 	// scan runs at a time.
@@ -42,10 +45,11 @@ type Handler struct {
 // NewHandler creates a new API handler
 func NewHandler(store *storage.Storage, cfg *config.Config) *Handler {
 	return &Handler{
-		store:   store,
-		cfg:     cfg,
-		scanner: scanner.New(cfg.Scanning.MinScanInterval, cfg.Scanning.EnableServiceDetection, cfg.Scanning.EnablePortScan, cfg.Scanning.PortScanRange),
-		scanCtx: context.Background(),
+		store:                  store,
+		cfg:                    cfg,
+		scanner:                scanner.New(cfg.Scanning.MinScanInterval, cfg.Scanning.EnableServiceDetection, cfg.Scanning.EnablePortScan, cfg.Scanning.PortScanRange),
+		scanCtx:                context.Background(),
+		fetchSwitchConnections: scanner.FetchSwitchConnections,
 	}
 }
 

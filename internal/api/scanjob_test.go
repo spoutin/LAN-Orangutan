@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -9,9 +10,132 @@ import (
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/scanner"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
+
+func TestScanJob_SwitchesPollSequentiallyAndPropagateKnownVLAN(t *testing.T) {
+	store := newScanJobTestStore(t)
+	if err := store.UpdateDevice(&types.Device{IP: "192.168.1.10", MAC: "AA:BB:CC:DD:EE:01", SwitchVLAN: 30}); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+	cfg := switchTestConfig("edge-a", "edge-b")
+	h := NewHandler(store, cfg)
+	var calls []string
+	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, vlanByMAC map[string]int) ([]scanner.SwitchConnection, error) {
+		calls = append(calls, switchCfg.ID)
+		if got := vlanByMAC["AA:BB:CC:DD:EE:01"]; got != 30 {
+			t.Fatalf("vlanByMAC for known device = %d, want 30", got)
+		}
+		return []scanner.SwitchConnection{{MAC: "aa:bb:cc:dd:ee:01", SwitchName: switchCfg.ID, SwitchHost: switchCfg.Host, Port: "gi1/10", VLAN: 30}}, nil
+	}
+
+	job := runSwitchScanJob(t, h)
+	if got, want := calls, []string{"edge-a", "edge-b"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("switch calls = %v, want %v", got, want)
+	}
+	for _, name := range []string{"edge-a", "edge-b"} {
+		summary := switchSummary(t, job, name+" SNMP")
+		if summary.Status != "scanned" || summary.DeviceCount != 1 {
+			t.Errorf("%s summary = %+v, want scanned with one connection", name, summary)
+		}
+	}
+	if device := store.GetDevice("192.168.1.10"); device == nil || device.SwitchName != "edge-b" || device.SwitchPort != "gi1/10" {
+		t.Errorf("stored switch telemetry = %+v, want edge-b gi1/10", device)
+	}
+}
+
+func TestScanJob_SwitchFailureIsIsolated(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := switchTestConfig("unreachable", "edge-b")
+	h := NewHandler(store, cfg)
+	var calls []string
+	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
+		calls = append(calls, switchCfg.ID)
+		if switchCfg.ID == "unreachable" {
+			return nil, errors.New("authentication password leaked")
+		}
+		return nil, nil
+	}
+
+	job := runSwitchScanJob(t, h)
+	if got, want := calls, []string{"unreachable", "edge-b"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("switch calls = %v, want %v", got, want)
+	}
+	failed := switchSummary(t, job, "unreachable SNMP")
+	if failed.Status != "failed" || failed.Error == "" || failed.Error == "authentication password leaked" {
+		t.Errorf("failed summary = %+v, want sanitized error", failed)
+	}
+	if success := switchSummary(t, job, "edge-b SNMP"); success.Status != "scanned" {
+		t.Errorf("edge-b summary = %+v, want scanned", success)
+	}
+}
+
+func TestScanJob_SwitchesDisabledDoesNotPoll(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := switchTestConfig("edge-a")
+	cfg.Switches.Enable = false
+	h := NewHandler(store, cfg)
+	calls := 0
+	h.fetchSwitchConnections = func(context.Context, config.SwitchConfig, map[string]int) ([]scanner.SwitchConnection, error) {
+		calls++
+		return nil, nil
+	}
+
+	job := runSwitchScanJob(t, h)
+	if calls != 0 {
+		t.Errorf("switch fetch calls = %d, want 0", calls)
+	}
+	for _, result := range job.results {
+		if result.Network == "edge-a SNMP" {
+			t.Errorf("disabled switch should not create a summary: %+v", result)
+		}
+	}
+}
+
+func newScanJobTestStore(t *testing.T) *storage.Storage {
+	t.Helper()
+	store, err := storage.New(filepath.Join(t.TempDir(), "devices.json"), filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	return store
+}
+
+func switchTestConfig(names ...string) *config.Config {
+	cfg := config.Default()
+	cfg.OpenWrt.Enable = false
+	cfg.OPNsense.Enable = false
+	cfg.UniFi.Enable = false
+	cfg.Switches.Enable = true
+	cfg.Switches.Names = names
+	cfg.Switches.Configs = make(map[string]config.SwitchConfig, len(names))
+	for _, name := range names {
+		cfg.Switches.Configs[name] = config.SwitchConfig{ID: name, Host: name + ".example.test"}
+	}
+	return cfg
+}
+
+func runSwitchScanJob(t *testing.T, h *Handler) *scanJob {
+	t.Helper()
+	job := &scanJob{id: "switch-test", startedAt: time.Now(), status: "running"}
+	job.run(context.Background(), h)
+	return job
+}
+
+func switchSummary(t *testing.T, job *scanJob, network string) networkScanSummary {
+	t.Helper()
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	for _, result := range job.results {
+		if result.Network == network {
+			return result
+		}
+	}
+	t.Fatalf("missing %s summary in %+v", network, job.results)
+	return networkScanSummary{}
+}
 
 func TestScanJob_UniFiIntegration(t *testing.T) {
 	// Mock UniFi OS Server

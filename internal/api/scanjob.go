@@ -417,6 +417,47 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		}
 	}
 
+	if ctx.Err() == nil && h.cfg.Switches.Enable {
+		vlanByMAC := make(map[string]int)
+		for _, device := range h.store.GetDevices() {
+			// Reuse only an already observed VLAN. A zero value remains unknown
+			// so the scanner can apply its unambiguous forwarding-table fallback.
+			if device.MAC != "" && device.SwitchVLAN > 0 {
+				vlanByMAC[device.MAC] = device.SwitchVLAN
+			}
+		}
+		for _, name := range h.cfg.Switches.Names {
+			switchCfg, ok := h.cfg.Switches.Configs[name]
+			if !ok {
+				continue
+			}
+			connections, err := h.fetchSwitchConnections(ctx, switchCfg, vlanByMAC)
+			if err != nil {
+				// SNMP failures can include transport details. Keep user-visible
+				// summaries and logs credential-safe.
+				fmt.Printf("Switch %s SNMP poll failed\n", switchCfg.ID)
+				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP polling failed"}, 0)
+				continue
+			}
+			storageConnections := make([]storage.SwitchConnection, len(connections))
+			for i, connection := range connections {
+				storageConnections[i] = storage.SwitchConnection{
+					MAC: connection.MAC, SwitchName: connection.SwitchName, SwitchHost: connection.SwitchHost,
+					Port: connection.Port, VLAN: connection.VLAN, LinkState: connection.LinkState,
+					LinkSpeed: connection.LinkSpeed, Duplex: connection.Duplex, PoEWatts: connection.PoEWatts,
+					UpdatedAt: connection.UpdatedAt,
+				}
+			}
+			if err := h.store.MergeSwitchConnections(storageConnections, switchCfg.ID); err != nil {
+				fmt.Printf("Switch %s SNMP merge failed\n", switchCfg.ID)
+				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP result storage failed"}, 0)
+				continue
+			}
+			fmt.Printf("Switch %s SNMP resolved %d connections\n", switchCfg.ID, len(connections))
+			j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "scanned", DeviceCount: len(connections)}, len(connections))
+		}
+	}
+
 	// Wait for any asynchronous port scanning (Stage 2) to complete before finishing the job
 	j.portScanWG.Wait()
 
