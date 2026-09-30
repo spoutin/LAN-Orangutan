@@ -1121,7 +1121,15 @@ td[data-copy]:not([data-copy=""]) {
 .col-label      { display: none; }
 .col-group      { display: none; }
 
-.ssid-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ssid-cell { overflow: hidden; }
+
+.connection-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+    min-width: 0;
+}
 
 .ssid-badge {
     display: inline-flex;
@@ -1138,6 +1146,28 @@ td[data-copy]:not([data-copy=""]) {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
+}
+
+.switch-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    max-width: 100%;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.switch-badge svg {
+    flex: 0 0 auto;
+    color: var(--accent);
+}
+
+.switch-badge span {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Resizable Table Columns */

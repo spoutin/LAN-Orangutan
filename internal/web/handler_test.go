@@ -600,6 +600,7 @@ func TestIndexPageRendersSwitchConnection(t *testing.T) {
 		IP:              "192.168.1.60",
 		MAC:             "aa:bb:cc:dd:ee:60",
 		Hostname:        "wired-device",
+		SSID:            "Iot",
 		SwitchName:      "switchy",
 		SwitchHost:      "10.0.0.2",
 		SwitchPort:      "gi1/23",
@@ -623,6 +624,12 @@ func TestIndexPageRendersSwitchConnection(t *testing.T) {
 
 	body := rec.Body.String()
 	for _, expected := range []string{
+		`>Connection <span class="sort-icon">↕</span></th>`,
+		`class="connection-stack"`,
+		`class="ssid-badge"`,
+		`📶 Iot`,
+		`class="switch-badge"`,
+		`switchy &middot; gi1/23`,
 		`data-switch-name="switchy"`,
 		`data-switch-host="10.0.0.2"`,
 		`data-switch-port="gi1/23"`,
