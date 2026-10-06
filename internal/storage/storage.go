@@ -331,7 +331,7 @@ func (s *Storage) scanDevice(scanner interface {
 	Scan(dest ...interface{}) error
 }) (*types.Device, error) {
 	var d types.Device
-	var webUIVal, probedVal, notifyOnSeenVal int
+	var webUIVal, probedVal, notifyOnSeenVal, ansibleManagedVal int
 	var risksStr, addressHistoryStr string
 	var leaseExpiresVal, switchUpdatedAtVal sql.NullTime
 	var switchPoEWattsVal sql.NullFloat64
@@ -339,7 +339,7 @@ func (s *Storage) scanDevice(scanner interface {
 		&d.IP, &d.MAC, &d.Hostname, &d.Vendor, &d.Type, &webUIVal, &risksStr, &d.Label, &d.Notes, &d.Group,
 		&d.CustomHostname, &d.CustomWebURL, &d.CustomType, &d.WebPort, &d.WebScheme, &probedVal, &d.Assignment,
 		&d.NetworkName, &d.FirstSeen, &d.LastSeen, &d.ResponseTime, &addressHistoryStr, &d.LinkedMAC,
-		&notifyOnSeenVal,
+		&notifyOnSeenVal, &ansibleManagedVal,
 		&d.SSID, &d.APName, &d.RadioBand, &d.Channel, &d.WiFiStandard, &d.Signal, &d.SignalQuality,
 		&d.RxRate, &d.TxRate, &d.RxBytes, &d.TxBytes, &d.AssociationUptime, &d.UniFiModel, &d.VLAN,
 		&d.RouterSource, &d.RouterInterface, &leaseExpiresVal, &d.LeaseLifetime, &d.RouterNotes,
@@ -351,6 +351,7 @@ func (s *Storage) scanDevice(scanner interface {
 	d.WebUI = webUIVal != 0
 	d.Probed = probedVal != 0
 	d.NotifyOnSeen = notifyOnSeenVal != 0
+	d.AnsibleManaged = ansibleManagedVal != 0
 	if leaseExpiresVal.Valid {
 		d.LeaseExpires = leaseExpiresVal.Time
 	}
@@ -382,6 +383,7 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
 			d.linked_mac,
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
+			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
@@ -508,6 +510,7 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
 			d.linked_mac,
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
+			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
@@ -538,6 +541,7 @@ func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
 			d.linked_mac,
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
+			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
@@ -593,6 +597,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			device.FirstSeen = existing.FirstSeen
 		}
 		device.NotifyOnSeen = existing.NotifyOnSeen
+		device.AnsibleManaged = existing.AnsibleManaged
 		if device.SSID == "" {
 			device.SSID = existing.SSID
 		}
@@ -688,7 +693,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 			assignment, network_name, first_seen, last_seen, response_time, address_history,
-			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen,
+			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen, ansible_managed,
 			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -697,7 +702,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, 0, ?, ?, ?,
+			?, 0, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -728,6 +733,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			is_online = excluded.is_online,
 			linked_mac = excluded.linked_mac,
 			notify_on_seen = excluded.notify_on_seen,
+			ansible_managed = excluded.ansible_managed,
 			ssid = excluded.ssid,
 			ap_name = excluded.ap_name,
 			radio_band = excluded.radio_band,
@@ -760,7 +766,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		device.Label, device.Notes, device.Group, device.CustomHostname, device.CustomWebURL, device.CustomType,
 		device.WebPort, device.WebScheme, boolToInt(device.Probed), device.Assignment, device.NetworkName,
 		device.FirstSeen, device.LastSeen, device.ResponseTime, string(historyJSON), isOnline, device.LastSeen,
-		device.LinkedMAC, boolToInt(device.NotifyOnSeen),
+		device.LinkedMAC, boolToInt(device.NotifyOnSeen), boolToInt(device.AnsibleManaged),
 		device.SSID, device.APName, device.RadioBand, device.Channel, device.WiFiStandard, device.Signal, device.SignalQuality,
 		device.RxRate, device.TxRate, device.RxBytes, device.TxBytes, device.AssociationUptime, device.UniFiModel, device.VLAN,
 		device.RouterSource, device.RouterInterface, leaseExpiresVal, device.LeaseLifetime, device.RouterNotes,
@@ -769,7 +775,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 }
 
 // UpdateDeviceFields updates specific fields of a device
-func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac *string, notifyOnSeen *bool) error {
+func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac *string, notifyOnSeen, ansibleManaged *bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -824,6 +830,10 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 				parentFields = append(parentFields, `notify_on_seen = ?`)
 				parentArgs = append(parentArgs, boolToInt(*notifyOnSeen))
 			}
+			if ansibleManaged != nil {
+				parentFields = append(parentFields, `ansible_managed = ?`)
+				parentArgs = append(parentArgs, boolToInt(*ansibleManaged))
+			}
 
 			if len(parentFields) > 0 {
 				parentQuery += joinStrings(parentFields, ", ") + ` WHERE ip = ?`
@@ -832,7 +842,7 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 			}
 
 			// Clear customizations on the child so it cleanly inherits them from the parent
-			childQuery := `UPDATE devices SET label = '', notes = '', "group" = '', custom_hostname = '', custom_web_url = '', custom_type = '', notify_on_seen = 0`
+			childQuery := `UPDATE devices SET label = '', notes = '', "group" = '', custom_hostname = '', custom_web_url = '', custom_type = '', notify_on_seen = 0, ansible_managed = 0`
 			var childArgs []interface{}
 			if linkedMac != nil {
 				childQuery += `, linked_mac = ?`
@@ -881,6 +891,10 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 	if notifyOnSeen != nil {
 		fields = append(fields, `notify_on_seen = ?`)
 		args = append(args, boolToInt(*notifyOnSeen))
+	}
+	if ansibleManaged != nil {
+		fields = append(fields, `ansible_managed = ?`)
+		args = append(args, boolToInt(*ansibleManaged))
 	}
 
 	if len(fields) == 0 {
@@ -933,7 +947,7 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
-		       linked_mac, notify_on_seen,
+		       linked_mac, notify_on_seen, ansible_managed,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -965,7 +979,7 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
-		       linked_mac, notify_on_seen,
+		       linked_mac, notify_on_seen, ansible_managed,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -1074,6 +1088,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			if d.RouterNotes == "" {
 				d.RouterNotes = old.RouterNotes
 			}
+			d.NotifyOnSeen = old.NotifyOnSeen
+			d.AnsibleManaged = old.AnsibleManaged
 
 			if !oldIPActive {
 				// Relocation: Old IP is offline, so migrate and delete
@@ -1111,7 +1127,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 			assignment, network_name, first_seen, last_seen, response_time, address_history,
-			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen,
+			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen, ansible_managed,
 			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -1120,7 +1136,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, 0, ?, ?, ?,
+			?, 0, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -1130,7 +1146,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		d.Label, d.Notes, d.Group, d.CustomHostname, d.CustomWebURL, d.CustomType,
 		d.WebPort, d.WebScheme, boolToInt(d.Probed), d.Assignment, d.NetworkName,
 		d.FirstSeen, d.LastSeen, d.ResponseTime, string(historyJSON), isOnline, d.LastSeen,
-		d.LinkedMAC, boolToInt(d.NotifyOnSeen),
+		d.LinkedMAC, boolToInt(d.NotifyOnSeen), boolToInt(d.AnsibleManaged),
 		d.SSID, d.APName, d.RadioBand, d.Channel, d.WiFiStandard, d.Signal, d.SignalQuality,
 		d.RxRate, d.TxRate, d.RxBytes, d.TxBytes, d.AssociationUptime, d.UniFiModel, d.VLAN,
 		d.RouterSource, d.RouterInterface, leaseExpiresVal, d.LeaseLifetime, d.RouterNotes,
@@ -1273,27 +1289,32 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 			       assignment, network_name, first_seen, last_seen, response_time, address_history,
-			       is_online, last_presence_change, notify_on_seen
+			       is_online, last_presence_change, notify_on_seen, ansible_managed
 			FROM devices WHERE ip = ?
 		`, d.IP)
 
 		var existing types.Device
 		var webUIVal, probedVal int
 		var risksStr, addressHistoryStr string
-		var isOnlineVal, notifyOnSeenVal int
+		var isOnlineVal, notifyOnSeenVal, ansibleManagedVal int
 		var lastPresenceChange time.Time
 
 		err := row.Scan(
 			&existing.IP, &existing.MAC, &existing.Hostname, &existing.Vendor, &existing.Type, &webUIVal, &risksStr, &existing.Label, &existing.Notes, &existing.Group,
 			&existing.CustomHostname, &existing.CustomWebURL, &existing.CustomType, &existing.WebPort, &existing.WebScheme, &probedVal, &existing.Assignment,
 			&existing.NetworkName, &existing.FirstSeen, &existing.LastSeen, &existing.ResponseTime, &addressHistoryStr,
-			&isOnlineVal, &lastPresenceChange, &notifyOnSeenVal,
+			&isOnlineVal, &lastPresenceChange, &notifyOnSeenVal, &ansibleManagedVal,
 		)
 
 		if err == nil {
 			existing.WebUI = webUIVal != 0
 			existing.Probed = probedVal != 0
 			existing.NotifyOnSeen = notifyOnSeenVal != 0
+			existing.AnsibleManaged = ansibleManagedVal != 0
+			if !existing.Probed && d.AnsibleManaged {
+				existing.AnsibleManaged = true
+				_, _ = tx.Exec("UPDATE devices SET ansible_managed = 1 WHERE ip = ?", existing.IP)
+			}
 			_ = json.Unmarshal([]byte(risksStr), &existing.Risks)
 			_ = json.Unmarshal([]byte(addressHistoryStr), &existing.AddressHistory)
 
@@ -1989,11 +2010,11 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 		}
 
 		row := tx.QueryRow(`
-			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
-			       assignment, network_name, first_seen, last_seen, response_time, address_history,
-			       linked_mac, notify_on_seen,
-			       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       assignment, network_name, first_seen, last_seen, response_time, address_history,
+		       linked_mac, notify_on_seen, ansible_managed,
+		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 			       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
@@ -2152,7 +2173,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 					       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 					       assignment, network_name, first_seen, last_seen, response_time, address_history,
-					       linked_mac, notify_on_seen,
+					       linked_mac, notify_on_seen, ansible_managed,
 					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -2170,7 +2191,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 					       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 					       assignment, network_name, first_seen, last_seen, response_time, address_history,
-					       linked_mac, notify_on_seen,
+					       linked_mac, notify_on_seen, ansible_managed,
 					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -2187,11 +2208,11 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 
 		if existing == nil && c.IP != "" {
 			row := tx.QueryRow(`
-				SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-				       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
-				       assignment, network_name, first_seen, last_seen, response_time, address_history,
-				       linked_mac, notify_on_seen,
-				       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       assignment, network_name, first_seen, last_seen, response_time, address_history,
+		       linked_mac, notify_on_seen, ansible_managed,
+		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 				       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at

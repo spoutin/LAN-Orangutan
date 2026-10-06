@@ -100,6 +100,12 @@ func EnrichWithServices(ctx context.Context, devices []types.Device) {
 				d.WebPort = webPortDetected
 				d.WebScheme = webSchemeDetected
 			}
+			for _, p := range ports {
+				if p == 22 {
+					d.AnsibleManaged = true
+					break
+				}
+			}
 			d.Risks = risksFromPorts(ports)
 			d.Probed = true
 		}(&devices[i])

@@ -102,6 +102,14 @@ func TestEnrichWithServices_SetsWebUI(t *testing.T) {
 	}
 }
 
+func TestEnrichWithServices_SetsAnsibleManagedForSSH(t *testing.T) {
+	devices := []types.Device{{IP: "10.0.0.15", Hostname: "myserver", OpenPorts: []int{22, 80}}}
+	EnrichWithServices(context.Background(), devices)
+	if !devices[0].AnsibleManaged {
+		t.Error("expected AnsibleManaged true when port 22 is in OpenPorts")
+	}
+}
+
 // TestProbeServices_NothingListening confirms a probe against closed ports
 // returns nothing and does not hang.
 func TestProbeServices_NothingListening(t *testing.T) {

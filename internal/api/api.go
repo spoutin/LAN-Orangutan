@@ -217,6 +217,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			CustomType     *string `json:"custom_type"`
 			LinkedMAC      *string `json:"linked_mac"`
 			NotifyOnSeen   *bool   `json:"notify_on_seen"`
+			AnsibleManaged *bool   `json:"ansible_managed"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			h.error(w, http.StatusBadRequest, "invalid JSON")
@@ -233,7 +234,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC, req.NotifyOnSeen); err != nil {
+		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC, req.NotifyOnSeen, req.AnsibleManaged); err != nil {
 			h.error(w, http.StatusNotFound, err.Error())
 			return
 		}

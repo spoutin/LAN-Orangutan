@@ -469,7 +469,7 @@ func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
 	// Customize parent device settings
 	labelVal := "My Parent S10"
 	notesVal := "Owner: John Doe"
-	if err := s.UpdateDeviceFields(parentIP, &labelVal, &notesVal, nil, nil, nil, nil, nil, nil); err != nil {
+	if err := s.UpdateDeviceFields(parentIP, &labelVal, &notesVal, nil, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -483,7 +483,7 @@ func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
 	}
 
 	// Link Child Device to Parent Device using parentMAC
-	if err := s.UpdateDeviceFields(childIP, nil, nil, nil, nil, nil, nil, &parentMAC, nil); err != nil {
+	if err := s.UpdateDeviceFields(childIP, nil, nil, nil, nil, nil, nil, &parentMAC, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -677,6 +677,38 @@ func TestUpdateDevicePersistsUniFiVLAN(t *testing.T) {
 	stored := s.GetDevice(device.IP)
 	if stored == nil || stored.VLAN != 42 {
 		t.Fatalf("stored device = %+v, want VLAN 42", stored)
+	}
+}
+
+func TestUpdateDevicePersistsAnsibleManaged(t *testing.T) {
+	s := newTestStorage(t)
+	device := &types.Device{IP: "192.168.1.240", MAC: "00:11:22:33:44:77", AnsibleManaged: true}
+	if err := s.UpdateDevice(device); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	stored := s.GetDevice(device.IP)
+	if stored == nil || !stored.AnsibleManaged {
+		t.Fatalf("stored device = %+v, want AnsibleManaged true", stored)
+	}
+
+	// Update without touching AnsibleManaged, verify it is preserved
+	if err := s.UpdateDevice(&types.Device{IP: "192.168.1.240", MAC: "00:11:22:33:44:77", Hostname: "server1"}); err != nil {
+		t.Fatalf("UpdateDevice second pass: %v", err)
+	}
+	stored = s.GetDevice("192.168.1.240")
+	if stored == nil || !stored.AnsibleManaged {
+		t.Fatalf("stored device = %+v, want AnsibleManaged preserved as true", stored)
+	}
+
+	// Now toggle off via UpdateDeviceFields
+	ansibleOff := false
+	if err := s.UpdateDeviceFields("192.168.1.240", nil, nil, nil, nil, nil, nil, nil, nil, &ansibleOff); err != nil {
+		t.Fatalf("UpdateDeviceFields: %v", err)
+	}
+	stored = s.GetDevice("192.168.1.240")
+	if stored == nil || stored.AnsibleManaged {
+		t.Fatalf("stored device = %+v, want AnsibleManaged false after toggle", stored)
 	}
 }
 

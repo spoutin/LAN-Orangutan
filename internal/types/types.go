@@ -50,6 +50,9 @@ type Device struct {
 	// NotifyOnSeen specifies if a Slack notification should be sent each time the device comes online.
 	NotifyOnSeen bool `json:"notify_on_seen"`
 
+	// AnsibleManaged specifies whether this host is managed by Ansible.
+	AnsibleManaged bool `json:"ansible_managed"`
+
 	// LinkedChildren lists the display labels of child devices linked to this device.
 	LinkedChildren []string `json:"linked_children,omitempty"`
 

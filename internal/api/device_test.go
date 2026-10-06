@@ -48,6 +48,7 @@ func TestDevice_PUT_UpdateEndpoint(t *testing.T) {
 		"custom_type":     customType,
 		"notes":           notes,
 		"custom_web_url":  customURL,
+		"ansible_managed": true,
 	})
 
 	rec := httptest.NewRecorder()
@@ -80,5 +81,8 @@ func TestDevice_PUT_UpdateEndpoint(t *testing.T) {
 	}
 	if updated.CustomWebURL != customURL {
 		t.Errorf("CustomWebURL = %q, want %q", updated.CustomWebURL, customURL)
+	}
+	if !updated.AnsibleManaged {
+		t.Errorf("AnsibleManaged = false, want true")
 	}
 }

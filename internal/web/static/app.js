@@ -417,6 +417,7 @@ async function editDevice(ip) {
             notes: row.dataset.notes || '',
             linkedMAC: row.dataset.linkedMac || '',
             notifyOnSeen: row.dataset.notifyOnSeen === '1',
+            ansibleManaged: row.dataset.ansibleManaged === 'true' || row.dataset.ansibleManaged === '1',
             linkedChildren: row.dataset.linkedChildren ? row.dataset.linkedChildren.split(', ') : []
         };
     } else {
@@ -440,6 +441,7 @@ async function editDevice(ip) {
                         notes: '',
                         linkedMAC: '',
                         notifyOnSeen: false,
+                        ansibleManaged: false,
                         linkedChildren: []
                     };
                 } else {
@@ -460,6 +462,7 @@ async function editDevice(ip) {
                             notes: dev.notes || '',
                             linkedMAC: dev.linked_mac || '',
                             notifyOnSeen: !!dev.notify_on_seen,
+                            ansibleManaged: !!dev.ansible_managed,
                             linkedChildren: dev.linked_children || []
                         };
                     }
@@ -511,6 +514,10 @@ async function editDevice(ip) {
     const notifyOnSeenBox = document.getElementById('edit-notify-on-seen');
     if (notifyOnSeenBox) {
         notifyOnSeenBox.checked = !!deviceData.notifyOnSeen;
+    }
+    const ansibleManagedBox = document.getElementById('edit-ansible-managed');
+    if (ansibleManagedBox) {
+        ansibleManagedBox.checked = !!deviceData.ansibleManaged;
     }
 
     // Populate searchable parent device options
@@ -748,8 +755,9 @@ async function saveDevice() {
     const notes = document.getElementById('edit-notes').value;
     const linked_mac = document.getElementById('edit-linked-mac')?.value || '';
     const notify_on_seen = document.getElementById('edit-notify-on-seen')?.checked || false;
+    const ansible_managed = document.getElementById('edit-ansible-managed')?.checked || false;
     try {
-        const result = await api('device', { ip, label, custom_hostname, custom_web_url, custom_type, group, notes, linked_mac, notify_on_seen }, 'POST');
+        const result = await api('device', { ip, label, custom_hostname, custom_web_url, custom_type, group, notes, linked_mac, notify_on_seen, ansible_managed }, 'POST');
         if (result.success) {
             showToast('Device updated', 'success');
             closeModal();
