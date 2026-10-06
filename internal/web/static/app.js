@@ -800,6 +800,38 @@ async function toggleNotifyOnSeenMain(ip) {
     }
 }
 
+async function toggleAnsibleManagedMain(ip) {
+    const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
+    if (!row) return;
+
+    const currentVal = row.dataset.ansibleManaged === 'true' || row.dataset.ansibleManaged === '1';
+    const newVal = !currentVal;
+
+    try {
+        const result = await api('device', { ip, ansible_managed: newVal }, 'POST');
+        if (result.success) {
+            showToast(newVal ? 'Ansible automation enabled' : 'Ansible automation disabled', 'success');
+            row.dataset.ansibleManaged = newVal ? 'true' : 'false';
+            const sbAnsible = document.getElementById('sb-ansible-btn');
+            const sbIp = document.getElementById('sb-edit-ip')?.value;
+            if (sbAnsible && sbIp === ip) {
+                sbAnsible.classList.toggle('active', newVal);
+                sbAnsible.innerHTML = newVal ? '🅰️ Ansible: On' : '🅰️ Ansible: Off';
+                sbAnsible.title = newVal ? 'Ansible automation enabled (click to disable)' : 'Ansible automation disabled (click to enable)';
+            }
+            const editCheckbox = document.getElementById('sb-edit-ansible-managed');
+            if (editCheckbox && sbIp === ip) {
+                editCheckbox.checked = newVal;
+            }
+            if (!(await refreshInPlace())) location.reload();
+        } else {
+            showToast(result.error || 'Failed to toggle Ansible setting', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
 async function deleteDevice(ip) {
     if (!confirm(`Delete device ${ip}?`)) return;
     try {
@@ -977,6 +1009,18 @@ function openDeviceSidebar(target) {
         notifyBtn.onclick = function (e) {
             e.stopPropagation();
             if (data.ip) toggleNotifyOnSeenMain(data.ip);
+        };
+    }
+
+    const ansibleBtn = document.getElementById('sb-ansible-btn');
+    if (ansibleBtn) {
+        const isAnsible = data.ansibleManaged === 'true' || data.ansibleManaged === '1' || data.ansibleManaged === true;
+        ansibleBtn.classList.toggle('active', isAnsible);
+        ansibleBtn.innerHTML = isAnsible ? '🅰️ Ansible: On' : '🅰️ Ansible: Off';
+        ansibleBtn.title = isAnsible ? 'Ansible automation enabled (click to disable)' : 'Ansible automation disabled (click to enable)';
+        ansibleBtn.onclick = function (e) {
+            e.stopPropagation();
+            if (data.ip) toggleAnsibleManagedMain(data.ip);
         };
     }
 
@@ -1238,6 +1282,9 @@ function openDeviceSidebar(target) {
 
         const editNotes = document.getElementById('sb-edit-notes');
         if (editNotes) editNotes.value = data.notes || '';
+
+        const editAnsible = document.getElementById('sb-edit-ansible-managed');
+        if (editAnsible) editAnsible.checked = data.ansibleManaged === 'true' || data.ansibleManaged === '1' || data.ansibleManaged === true;
     }
 
     // Show sidebar
@@ -1269,6 +1316,7 @@ async function saveSidebarDevice() {
     const custom_web_url = document.getElementById('sb-edit-custom-web-url')?.value ?? '';
     const custom_type = document.getElementById('sb-edit-custom-type')?.value ?? '';
     const notes = document.getElementById('sb-edit-notes')?.value ?? '';
+    const ansible_managed = document.getElementById('sb-edit-ansible-managed')?.checked || false;
 
     const saveBtn = document.querySelector('#sb-edit-form button[type="submit"]') ||
                     document.querySelector('#sb-edit-form button.btn-primary') ||
@@ -1287,7 +1335,8 @@ async function saveSidebarDevice() {
             custom_hostname,
             custom_web_url,
             custom_type,
-            notes
+            notes,
+            ansible_managed
         };
 
         // Call PUT /api/devices/{ip}
@@ -1338,6 +1387,14 @@ async function saveSidebarDevice() {
             row.dataset.customType = custom_type.toLowerCase();
             row.dataset.customTypeOriginal = custom_type;
             row.dataset.notes = notes;
+            row.dataset.ansibleManaged = ansible_managed ? 'true' : 'false';
+
+            const sbAnsible = document.getElementById('sb-ansible-btn');
+            if (sbAnsible) {
+                sbAnsible.classList.toggle('active', ansible_managed);
+                sbAnsible.innerHTML = ansible_managed ? '🅰️ Ansible: On' : '🅰️ Ansible: Off';
+                sbAnsible.title = ansible_managed ? 'Ansible automation enabled (click to disable)' : 'Ansible automation disabled (click to enable)';
+            }
 
             // Update Hostname cell DOM
             const hostnameCell = row.querySelector('.hostname-cell');
@@ -1360,6 +1417,12 @@ async function saveSidebarDevice() {
                 if (notes) {
                     cellHtml += `
                         <span class="notes-indicator" data-tip="${escapeHtml(notes)}" style="margin-left: 4px; vertical-align: middle;"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>
+                    `;
+                }
+
+                if (ansible_managed) {
+                    cellHtml += `
+                        <span class="ansible-indicator" data-tip="Ansible Managed" style="margin-left: 4px; vertical-align: middle; color: #EE0000;" title="Ansible Managed"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8 16 4-8 4 8"/><path d="M9.5 13h5"/></svg></span>
                     `;
                 }
 

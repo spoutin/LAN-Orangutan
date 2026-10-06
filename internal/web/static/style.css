@@ -3097,6 +3097,13 @@ img.login-logo {
     white-space: nowrap;
 }
 
+#sb-ansible-btn.active {
+    background: rgba(238, 0, 0, 0.15);
+    color: #EE0000;
+    border-color: rgba(238, 0, 0, 0.4);
+    font-weight: 600;
+}
+
 /* Sidebar Scrollable Body */
 .sidebar-scrollable-body {
     flex: 1 1 auto;

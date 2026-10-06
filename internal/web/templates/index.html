@@ -470,6 +470,7 @@ orangutan export out.csv</code></pre>
                         <div class="sidebar-quick-actions">
                             <a id="sb-webui-btn" class="btn btn-sm" target="_blank" rel="noopener">🌐 Web UI</a>
                             <button type="button" id="sb-notify-btn" class="btn btn-sm">🔔 Notify</button>
+                            <button type="button" id="sb-ansible-btn" class="btn btn-sm">🅰️ Ansible</button>
                             <button type="button" id="sb-delete-btn" class="btn btn-sm danger">🗑️ Delete</button>
                         </div>
 
@@ -674,6 +675,13 @@ orangutan export out.csv</code></pre>
                                         <div class="form-group">
                                             <label for="sb-edit-notes">Device Notes</label>
                                             <textarea id="sb-edit-notes" name="notes" class="input" rows="3" placeholder="Add notes about this device..."></textarea>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="checkbox-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; user-select: none;">
+                                                <input type="checkbox" id="sb-edit-ansible-managed" name="ansible_managed" style="width: auto; margin: 0; cursor: pointer;">
+                                                <span>Ansible Managed</span>
+                                            </label>
+                                            <p class="form-help" style="margin-top: 0.25rem;">Include this host in fleet-ansible automation.</p>
                                         </div>
                                         <div class="form-actions" style="margin-top: 1rem;">
                                             <button type="button" class="btn btn-primary" style="width: 100%;" onclick="saveSidebarDevice()">Save Changes</button>
