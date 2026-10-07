@@ -2,6 +2,19 @@ package scanner
 
 import "testing"
 
+func TestPortScanArgumentsSkipDiscoveryAndAllowRetries(t *testing.T) {
+	got := portScanArguments("1-1024", "10.0.0.15")
+	want := []string{"-sV", "-Pn", "-p", "1-1024", "-T4", "-n", "--max-retries", "2", "--host-timeout", "45s", "-oX", "-", "10.0.0.15"}
+	if len(got) != len(want) {
+		t.Fatalf("portScanArguments() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("portScanArguments()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestParsePortScanResultRecordsDetectedSSHPort(t *testing.T) {
 	// An open custom port is SSH only when Nmap's service detection identifies it
 	// as such. Other open ports must remain in the port list without becoming SSH.

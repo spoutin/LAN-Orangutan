@@ -76,6 +76,7 @@ type deepNetworkProgress struct {
 	Network  string `json:"network"`
 	Total    int    `json:"total"`
 	Complete int    `json:"complete"`
+	Active   int    `json:"active"`
 }
 
 // scanProgress is the snapshot of a job returned to the UI.
@@ -139,9 +140,17 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 	}
 	if j.portScanActive || j.mode == scanModeDeep {
 		for _, network := range j.deepNetworkProgress {
-			if network.Total > network.Complete {
+			if network.Active > 0 {
 				p.CurrentNetwork = network.Network
 				break
+			}
+		}
+		if p.CurrentNetwork == "" {
+			for _, network := range j.deepNetworkProgress {
+				if network.Total > network.Complete {
+					p.CurrentNetwork = network.Network
+					break
+				}
 			}
 		}
 	}
@@ -563,10 +572,18 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 }
 
 func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork map[string][]types.Device) {
+	type deepTarget struct {
+		network string
+		device  types.Device
+	}
 	progress := make([]deepNetworkProgress, 0, len(j.networks))
+	queue := make([]deepTarget, 0)
 	for _, network := range j.networks {
 		if targets := targetsByNetwork[network]; len(targets) > 0 {
 			progress = append(progress, deepNetworkProgress{Network: network, Total: len(targets)})
+			for _, target := range targets {
+				queue = append(queue, deepTarget{network: network, device: target})
+			}
 		}
 	}
 	if len(progress) == 0 {
@@ -582,16 +599,26 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 	}
 	j.mu.Unlock()
 
-	for _, network := range j.networks {
-		if ctx.Err() != nil {
-			return
-		}
-		targets := targetsByNetwork[network]
-		if len(targets) == 0 {
-			continue
-		}
-		j.startPortScan(ctx, h, network, targets)
+	jobs := make(chan deepTarget)
+	var wg sync.WaitGroup
+	const concurrency = 3
+	for range concurrency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for target := range jobs {
+				j.scanPortHost(ctx, h, target.network, target.device)
+			}
+		}()
 	}
+	for _, target := range queue {
+		if ctx.Err() != nil {
+			break
+		}
+		jobs <- target
+	}
+	close(jobs)
+	wg.Wait()
 
 	j.mu.Lock()
 	j.portScanActive = false
@@ -747,67 +774,65 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, network string,
 		return
 	}
 
-	// Use a worker pool to scan devices sequentially (max 1 host at once)
-	const concurrency = 1
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-
 	for _, d := range activeDevices {
 		if ctx.Err() != nil {
 			break
 		}
+		j.scanPortHost(ctx, h, network, d)
+	}
+}
 
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(device types.Device) {
-			defer wg.Done()
-			defer func() { <-sem }()
+func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, device types.Device) {
+	j.mu.Lock()
+	for i := range j.deepNetworkProgress {
+		if j.deepNetworkProgress[i].Network == network {
+			j.deepNetworkProgress[i].Active++
+			break
+		}
+	}
+	j.mu.Unlock()
 
-			// Perform targeted port scan
-			ports, sshPorts, err := h.scanner.ScanHostPorts(ctx, device.IP, h.cfg.Scanning.PortScanRange)
-			if err != nil {
-				fmt.Printf("[DEBUG-PORT-SCAN] Failed to scan ports for %s: %v\n", device.IP, err)
-			} else {
-				// Fetch current device from store to preserve customized fields
-				current := h.store.GetDevice(device.IP)
-				if current == nil {
-					current = &device
-				}
-				current.OpenPorts = ports
-				current.DetectedSSHPort = 0
-				if len(sshPorts) > 0 {
-					current.DetectedSSHPort = sshPorts[0]
-				}
+	ports, sshPorts, err := h.scanner.ScanHostPorts(ctx, device.IP, h.cfg.Scanning.PortScanRange)
+	if err != nil {
+		fmt.Printf("[DEBUG-PORT-SCAN] Failed to scan ports for %s: %v\n", device.IP, err)
+	} else {
+		// Fetch current device from store to preserve customized fields
+		current := h.store.GetDevice(device.IP)
+		if current == nil {
+			current = &device
+		}
+		current.OpenPorts = ports
+		current.DetectedSSHPort = 0
+		if len(sshPorts) > 0 {
+			current.DetectedSSHPort = sshPorts[0]
+		}
 
-				// Enrich device with open ports (re-classifies types and finds web servers)
-				tempDevices := []types.Device{*current}
-				scanner.EnrichWithServices(ctx, tempDevices)
-				*current = tempDevices[0]
-				current.Probed = true
+		// Enrich device with open ports (re-classifies types and finds web servers)
+		tempDevices := []types.Device{*current}
+		scanner.EnrichWithServices(ctx, tempDevices)
+		*current = tempDevices[0]
+		current.Probed = true
 
-				// Save back to database
-				_ = h.store.UpdateDevice(current)
-				_ = h.store.UpdateOpenPorts(current.IP, ports)
-			}
-
-			// Increment completion count
-			j.mu.Lock()
-			j.portScanComplete++
-			for i := range j.deepNetworkProgress {
-				if j.deepNetworkProgress[i].Network == network {
-					j.deepNetworkProgress[i].Complete++
-					break
-				}
-			}
-			j.lastPortScanHost = scanHostResult{IP: device.IP, Hostname: device.Hostname, Network: network, OpenPorts: ports}
-			if err != nil {
-				j.lastPortScanHost.Error = err.Error()
-			}
-			j.mu.Unlock()
-		}(d)
+		// Save back to database
+		_ = h.store.UpdateDevice(current)
+		_ = h.store.UpdateOpenPorts(current.IP, ports)
 	}
 
-	wg.Wait()
+	// Increment completion count
+	j.mu.Lock()
+	j.portScanComplete++
+	for i := range j.deepNetworkProgress {
+		if j.deepNetworkProgress[i].Network == network {
+			j.deepNetworkProgress[i].Active--
+			j.deepNetworkProgress[i].Complete++
+			break
+		}
+	}
+	j.lastPortScanHost = scanHostResult{IP: device.IP, Hostname: device.Hostname, Network: network, OpenPorts: ports}
+	if err != nil {
+		j.lastPortScanHost.Error = err.Error()
+	}
+	j.mu.Unlock()
 }
 
 // StartBackgroundCleanup runs a daily task to delete history older than a year.

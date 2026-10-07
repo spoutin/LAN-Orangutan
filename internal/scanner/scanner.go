@@ -454,13 +454,20 @@ func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string
 		return nil, nil, fmt.Errorf("nmap not found")
 	}
 
-	args := []string{"-sV", "-p", portRange, "-T4", "-n", "--min-rate", "1000", "--max-retries", "0", "--host-timeout", "15s", "-oX", "-", ip}
+	args := portScanArguments(portRange, ip)
 	cmd := exec.CommandContext(ctx, "nmap", args...)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, nil, fmt.Errorf("nmap port scan failed: %w", err)
 	}
 	return parsePortScanResult(output)
+}
+
+func portScanArguments(portRange string, ip string) []string {
+	// Stage 1 already established that this host is reachable. Skipping host
+	// discovery avoids false negatives from a separate probe, while retries make
+	// service detection reliable on busy or rate-limited devices.
+	return []string{"-sV", "-Pn", "-p", portRange, "-T4", "-n", "--max-retries", "2", "--host-timeout", "45s", "-oX", "-", ip}
 }
 
 func parsePortScanResult(output []byte) ([]int, []int, error) {

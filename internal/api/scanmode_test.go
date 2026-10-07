@@ -32,8 +32,8 @@ func TestScanProgressReportsLastDeepScanHost(t *testing.T) {
 	if progress.LastPortScanHost.IP != "192.168.1.25" || len(progress.LastPortScanHost.OpenPorts) != 2 {
 		t.Errorf("LastPortScanHost = %+v, want completed NAS scan", progress.LastPortScanHost)
 	}
-	if progress.CurrentNetwork != "192.168.1.0/24" {
-		t.Errorf("CurrentNetwork = %q, want latest deep-scan network", progress.CurrentNetwork)
+	if progress.CurrentNetwork != "10.20.0.0/24" {
+		t.Errorf("CurrentNetwork = %q, want active deep-scan network", progress.CurrentNetwork)
 	}
 }
 
@@ -76,6 +76,24 @@ func TestScanProgressReportsDeepQueueByNetwork(t *testing.T) {
 	}
 	if len(progress.DeepNetworks) != 2 || progress.DeepNetworks[0].Complete != 2 || progress.DeepNetworks[1].Complete != 1 {
 		t.Errorf("DeepNetworks = %+v, want network queue progress", progress.DeepNetworks)
+	}
+}
+
+func TestScanProgressReportsMultipleActiveDeepNetworks(t *testing.T) {
+	job := &scanJob{
+		status:         "running",
+		networks:       []string{"192.168.1.0/24", "10.20.0.0/24"},
+		mode:           scanModeBoth,
+		portScanActive: true,
+		deepNetworkProgress: []deepNetworkProgress{
+			{Network: "192.168.1.0/24", Total: 4, Complete: 1, Active: 1},
+			{Network: "10.20.0.0/24", Total: 4, Complete: 2, Active: 1},
+		},
+	}
+
+	progress := job.snapshot(config.Default(), nil)
+	if progress.DeepNetworks[0].Active != 1 || progress.DeepNetworks[1].Active != 1 {
+		t.Errorf("DeepNetworks = %+v, want both networks active", progress.DeepNetworks)
 	}
 }
 

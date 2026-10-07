@@ -2573,9 +2573,10 @@ function renderLiveProgressCard(progress) {
         const phaseTitle = isDeep ? 'Stage 2 · Service discovery' : 'Stage 1 · Device discovery';
         const currentTarget = isDeep ? (progress.current_network || 'Preparing service scan') : (progress.current_network_name || progress.current_network || 'Preparing scan');
         const deepChecklist = isDeep && progress.deep_networks?.length ? `<div class="scan-network-checklist">${progress.deep_networks.map(network => {
-            const state = network.complete >= network.total ? 'complete' : network.complete > 0 || network.network === progress.current_network ? 'active' : 'queued';
+            const state = network.complete >= network.total ? 'complete' : network.active > 0 ? 'active' : 'queued';
             const marker = state === 'complete' ? '✓' : state === 'active' ? '●' : '○';
-            return `<div class="scan-network-row ${state}"><span>${marker}</span><strong>${network.network}</strong><em>${network.complete} / ${network.total}</em></div>`;
+            const active = network.active > 0 ? ` · ${network.active} active` : '';
+            return `<div class="scan-network-row ${state}"><span>${marker}</span><strong>${network.network}</strong><em>${network.complete} / ${network.total}${active}</em></div>`;
         }).join('')}</div>` : '';
         let html = `
             <div class="scan-progress-card">
