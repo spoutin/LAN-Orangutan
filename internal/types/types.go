@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+// OpenService describes an open TCP port identified by a deep Nmap scan.
+type OpenService struct {
+	Port    int    `json:"port"`
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
 // Device represents a discovered network device
 type Device struct {
 	IP       string `json:"ip"`
@@ -23,25 +30,26 @@ type Device struct {
 	// Risks lists security concerns found during an opt-in service probe, such as
 	// an exposed unencrypted service. Empty when nothing notable was found or the
 	// probe is off.
-	Risks           []string  `json:"risks,omitempty"`
-	Label           string    `json:"label"`
-	Notes           string    `json:"notes"`
-	Group           string    `json:"group"`
-	CustomHostname  string    `json:"custom_hostname,omitempty"`
-	CustomWebURL    string    `json:"custom_web_url,omitempty"`
-	CustomType      string    `json:"custom_type,omitempty"`
-	WebPort         int       `json:"web_port,omitempty"`
-	WebScheme       string    `json:"web_scheme,omitempty"`
-	Probed          bool      `json:"probed,omitempty"`
-	Assignment      string    `json:"assignment,omitempty"`
-	OpenPorts       []int     `json:"-"`
-	DetectedSSHPort int       `json:"detected_ssh_port,omitempty"`
-	SSHOverride     string    `json:"ssh_override,omitempty"`
-	SSHOverridePort int       `json:"ssh_override_port,omitempty"`
-	NetworkName     string    `json:"network_name,omitempty"`
-	FirstSeen       time.Time `json:"first_seen"`
-	LastSeen        time.Time `json:"last_seen"`
-	ResponseTime    *float64  `json:"response_time,omitempty"`
+	Risks           []string      `json:"risks,omitempty"`
+	Label           string        `json:"label"`
+	Notes           string        `json:"notes"`
+	Group           string        `json:"group"`
+	CustomHostname  string        `json:"custom_hostname,omitempty"`
+	CustomWebURL    string        `json:"custom_web_url,omitempty"`
+	CustomType      string        `json:"custom_type,omitempty"`
+	WebPort         int           `json:"web_port,omitempty"`
+	WebScheme       string        `json:"web_scheme,omitempty"`
+	Probed          bool          `json:"probed,omitempty"`
+	Assignment      string        `json:"assignment,omitempty"`
+	OpenPorts       []int         `json:"-"`
+	OpenServices    []OpenService `json:"open_services,omitempty"`
+	DetectedSSHPort int           `json:"detected_ssh_port,omitempty"`
+	SSHOverride     string        `json:"ssh_override,omitempty"`
+	SSHOverridePort int           `json:"ssh_override_port,omitempty"`
+	NetworkName     string        `json:"network_name,omitempty"`
+	FirstSeen       time.Time     `json:"first_seen"`
+	LastSeen        time.Time     `json:"last_seen"`
+	ResponseTime    *float64      `json:"response_time,omitempty"`
 
 	// AddressHistory lists earlier IPs this device (matched by its MAC) was seen
 	// at, oldest first. Empty for a device that has never changed address.

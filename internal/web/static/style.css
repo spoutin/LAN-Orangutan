@@ -3253,3 +3253,8 @@ img.login-logo {
 .scan-network-row em { font-style: normal; font-variant-numeric: tabular-nums; }
 .scan-network-row.complete { color: var(--success); }
 .scan-network-row.active { color: var(--accent-primary); }
+.open-services-row { align-items: start !important; }
+.open-services-list { display: grid; gap: 0.35rem; width: 100%; }
+.open-service-item { display: grid; grid-template-columns: 3rem minmax(4rem, auto) 1fr; gap: 0.45rem; align-items: baseline; padding: 0.35rem 0.45rem; background: var(--bg-card-hover); border-radius: var(--radius-sm); font-size: 0.78rem; }
+.open-service-item code { color: var(--accent-primary); font-weight: 700; }
+.open-service-item span { color: var(--text-muted); overflow-wrap: anywhere; }

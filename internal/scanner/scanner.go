@@ -54,7 +54,10 @@ type nmapPort struct {
 }
 
 type nmapService struct {
-	Name string `xml:"name,attr"`
+	Name      string `xml:"name,attr"`
+	Product   string `xml:"product,attr"`
+	Version   string `xml:"version,attr"`
+	ExtraInfo string `xml:"extrainfo,attr"`
 }
 
 type nmapPortState struct {
@@ -449,16 +452,16 @@ func getInterfaceForCIDR(ctx context.Context, cidr string) string {
 }
 
 // ScanHostPorts performs a high-speed targeted port scan on a single IP address.
-func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string) ([]int, []int, error) {
+func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string) ([]int, []int, []types.OpenService, error) {
 	if _, err := exec.LookPath("nmap"); err != nil {
-		return nil, nil, fmt.Errorf("nmap not found")
+		return nil, nil, nil, fmt.Errorf("nmap not found")
 	}
 
 	args := portScanArguments(portRange, ip)
 	cmd := exec.CommandContext(ctx, "nmap", args...)
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, nil, fmt.Errorf("nmap port scan failed: %w", err)
+		return nil, nil, nil, fmt.Errorf("nmap port scan failed: %w", err)
 	}
 	return parsePortScanResult(output)
 }
@@ -470,18 +473,21 @@ func portScanArguments(portRange string, ip string) []string {
 	return []string{"-sV", "-Pn", "-p", portRange, "-T4", "-n", "--max-retries", "2", "--host-timeout", "180s", "-oX", "-", ip}
 }
 
-func parsePortScanResult(output []byte) ([]int, []int, error) {
+func parsePortScanResult(output []byte) ([]int, []int, []types.OpenService, error) {
 	var result nmapRun
 	if err := xml.Unmarshal(output, &result); err != nil {
-		return nil, nil, fmt.Errorf("failed to parse nmap output: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to parse nmap output: %w", err)
 	}
 
 	var openPorts []int
 	var sshPorts []int
+	var services []types.OpenService
 	if len(result.Hosts) > 0 {
 		for _, port := range result.Hosts[0].Ports.Ports {
 			if port.State.State == "open" {
 				openPorts = append(openPorts, port.PortID)
+				version := strings.TrimSpace(strings.Join([]string{port.Service.Product, port.Service.Version, port.Service.ExtraInfo}, " "))
+				services = append(services, types.OpenService{Port: port.PortID, Name: port.Service.Name, Version: version})
 				if port.Service.Name == "ssh" {
 					sshPorts = append(sshPorts, port.PortID)
 				}
@@ -489,5 +495,5 @@ func parsePortScanResult(output []byte) ([]int, []int, error) {
 		}
 	}
 
-	return openPorts, sshPorts, nil
+	return openPorts, sshPorts, services, nil
 }

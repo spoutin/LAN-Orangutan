@@ -533,28 +533,33 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 }
 
 func (s *Storage) loadOpenPorts(device *types.Device) error {
-	var portsJSON string
-	if err := s.db.QueryRow("SELECT ports FROM device_open_ports WHERE ip = ?", device.IP).Scan(&portsJSON); err != nil {
+	var portsJSON, servicesJSON string
+	if err := s.db.QueryRow("SELECT ports, services FROM device_open_ports WHERE ip = ?", device.IP).Scan(&portsJSON, &servicesJSON); err != nil {
 		if err == sql.ErrNoRows {
 			return nil
 		}
 		return err
 	}
-	return json.Unmarshal([]byte(portsJSON), &device.OpenPorts)
+	_ = json.Unmarshal([]byte(portsJSON), &device.OpenPorts)
+	return json.Unmarshal([]byte(servicesJSON), &device.OpenServices)
 }
 
 // UpdateOpenPorts saves the complete result of a targeted deep scan.
-func (s *Storage) UpdateOpenPorts(ip string, ports []int) error {
+func (s *Storage) UpdateOpenPorts(ip string, ports []int, services []types.OpenService) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	portsJSON, err := json.Marshal(ports)
 	if err != nil {
 		return err
 	}
+	servicesJSON, err := json.Marshal(services)
+	if err != nil {
+		return err
+	}
 	_, err = s.db.Exec(`
-		INSERT INTO device_open_ports (ip, ports) VALUES (?, ?)
-		ON CONFLICT(ip) DO UPDATE SET ports = excluded.ports
-	`, ip, string(portsJSON))
+		INSERT INTO device_open_ports (ip, ports, services) VALUES (?, ?, ?)
+		ON CONFLICT(ip) DO UPDATE SET ports = excluded.ports, services = excluded.services
+	`, ip, string(portsJSON), string(servicesJSON))
 	return err
 }
 

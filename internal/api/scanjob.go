@@ -792,7 +792,7 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 	}
 	j.mu.Unlock()
 
-	ports, sshPorts, err := h.scanner.ScanHostPorts(ctx, device.IP, h.cfg.Scanning.PortScanRange)
+	ports, sshPorts, services, err := h.scanner.ScanHostPorts(ctx, device.IP, h.cfg.Scanning.PortScanRange)
 	if err != nil {
 		fmt.Printf("[DEBUG-PORT-SCAN] Failed to scan ports for %s: %v\n", device.IP, err)
 	} else {
@@ -802,6 +802,7 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 			current = &device
 		}
 		current.OpenPorts = ports
+		current.OpenServices = services
 		current.DetectedSSHPort = 0
 		if len(sshPorts) > 0 {
 			current.DetectedSSHPort = sshPorts[0]
@@ -815,7 +816,7 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 
 		// Save back to database
 		_ = h.store.UpdateDevice(current)
-		_ = h.store.UpdateOpenPorts(current.IP, ports)
+		_ = h.store.UpdateOpenPorts(current.IP, ports, services)
 	}
 
 	// Increment completion count

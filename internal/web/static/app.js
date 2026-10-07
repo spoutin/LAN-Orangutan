@@ -1266,6 +1266,33 @@ function openDeviceSidebar(target) {
         const portsEl = document.getElementById('sb-open-ports');
         if (portsEl) portsEl.textContent = data.openPorts || 'None detected';
 
+		const servicesEl = document.getElementById('sb-open-services');
+		if (servicesEl) {
+			let services = [];
+			try { services = JSON.parse(data.openServices || '[]'); } catch (_) {}
+			if (services.length) {
+				servicesEl.replaceChildren(...services.map(service => {
+					const item = document.createElement('div');
+					item.className = 'open-service-item';
+					const port = document.createElement('code');
+					port.textContent = service.port;
+					const name = document.createElement('strong');
+					name.textContent = service.name || 'unknown';
+					item.append(port, name);
+					if (service.version) {
+						const version = document.createElement('span');
+						version.textContent = service.version;
+						item.append(version);
+					}
+					return item;
+				}));
+			} else if (data.openPorts) {
+				servicesEl.textContent = data.openPorts.split(',').map(port => `${port.trim()} · service unknown`).join(', ');
+			} else {
+				servicesEl.textContent = 'Not scanned yet';
+			}
+		}
+
 		const sshEl = document.getElementById('sb-ssh');
 		if (sshEl) {
 			const override = data.sshOverride || '';

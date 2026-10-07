@@ -328,6 +328,7 @@ orangutan export out.csv</code></pre>
                                     data-linked-children="{{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}"
                                     data-web-url="{{.WebURL}}"
                                      data-open-ports="{{range $i, $p := .OpenPorts}}{{if $i}}, {{end}}{{$p}}{{end}}"
+									 data-open-services='[{{range $i, $service := .OpenServices}}{{if $i}},{{end}}{"port":{{$service.Port}},"name":"{{$service.Name}}","version":"{{$service.Version}}"}{{end}}]'
 									 data-detected-ssh-port="{{.DetectedSSHPort}}"
 									 data-ssh-override="{{.SSHOverride}}"
 									 data-ssh-override-port="{{.SSHOverridePort}}"
@@ -627,6 +628,10 @@ orangutan export out.csv</code></pre>
                                             <span class="spec-label">Open Ports:</span>
                                             <span class="spec-val" id="sb-open-ports">—</span>
                                         </li>
+									<li class="open-services-row">
+										<span class="spec-label">Open Services:</span>
+										<div class="open-services-list" id="sb-open-services">Not scanned yet</div>
+									</li>
 									<li>
 										<span class="spec-label">SSH:</span>
 										<span class="spec-val" id="sb-ssh">—</span>

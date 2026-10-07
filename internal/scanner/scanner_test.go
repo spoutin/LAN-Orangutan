@@ -20,12 +20,12 @@ func TestParsePortScanResultRecordsDetectedSSHPort(t *testing.T) {
 	// as such. Other open ports must remain in the port list without becoming SSH.
 	xmlOutput := []byte(`<?xml version="1.0"?>
 <nmaprun><host><ports>
-  <port protocol="tcp" portid="2222"><state state="open"/><service name="ssh"/></port>
-  <port protocol="tcp" portid="8080"><state state="open"/><service name="http-proxy"/></port>
+  <port protocol="tcp" portid="2222"><state state="open"/><service name="ssh" product="OpenSSH" version="9.2p1" extrainfo="Debian"/></port>
+  <port protocol="tcp" portid="8080"><state state="open"/><service name="http-proxy" product="nginx"/></port>
   <port protocol="tcp" portid="23"><state state="closed"/></port>
 </ports></host></nmaprun>`)
 
-	ports, sshPorts, err := parsePortScanResult(xmlOutput)
+	ports, sshPorts, services, err := parsePortScanResult(xmlOutput)
 	if err != nil {
 		t.Fatalf("parsePortScanResult() error = %v", err)
 	}
@@ -34,5 +34,8 @@ func TestParsePortScanResultRecordsDetectedSSHPort(t *testing.T) {
 	}
 	if len(sshPorts) != 1 || sshPorts[0] != 2222 {
 		t.Errorf("SSH ports = %v, want [2222]", sshPorts)
+	}
+	if len(services) != 2 || services[0].Name != "ssh" || services[0].Version != "OpenSSH 9.2p1 Debian" {
+		t.Errorf("services = %+v, want parsed Nmap service details", services)
 	}
 }

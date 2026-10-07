@@ -717,12 +717,16 @@ func TestUpdateOpenPortsPersistsDeepScanResults(t *testing.T) {
 	if err := s.UpdateDevice(&types.Device{IP: "192.168.1.250", Hostname: "server"}); err != nil {
 		t.Fatalf("UpdateDevice: %v", err)
 	}
-	if err := s.UpdateOpenPorts("192.168.1.250", []int{22, 443, 2222}); err != nil {
+	services := []types.OpenService{{Port: 22, Name: "ssh", Version: "OpenSSH 9.2p1"}, {Port: 443, Name: "https"}}
+	if err := s.UpdateOpenPorts("192.168.1.250", []int{22, 443, 2222}, services); err != nil {
 		t.Fatalf("UpdateOpenPorts: %v", err)
 	}
 	got := s.GetDevice("192.168.1.250")
 	if len(got.OpenPorts) != 3 || got.OpenPorts[0] != 22 || got.OpenPorts[1] != 443 || got.OpenPorts[2] != 2222 {
 		t.Errorf("OpenPorts = %v, want [22 443 2222]", got.OpenPorts)
+	}
+	if len(got.OpenServices) != 2 || got.OpenServices[0].Name != "ssh" || got.OpenServices[0].Version != "OpenSSH 9.2p1" {
+		t.Errorf("OpenServices = %+v, want persisted service details", got.OpenServices)
 	}
 }
 
