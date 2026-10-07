@@ -321,7 +321,10 @@ orangutan export out.csv</code></pre>
                                     data-notify-on-seen="{{if .NotifyOnSeen}}1{{else}}0{{end}}"
                                     data-linked-children="{{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}"
                                     data-web-url="{{.WebURL}}"
-                                    data-open-ports="{{range $i, $p := .OpenPorts}}{{if $i}}, {{end}}{{$p}}{{end}}"
+                                     data-open-ports="{{range $i, $p := .OpenPorts}}{{if $i}}, {{end}}{{$p}}{{end}}"
+									 data-detected-ssh-port="{{.DetectedSSHPort}}"
+									 data-ssh-override="{{.SSHOverride}}"
+									 data-ssh-override-port="{{.SSHOverridePort}}"
                                     data-ssid="{{.SSID}}"
                                     data-ap-name="{{.APName}}"
                                     data-radio-band="{{.RadioBand}}"
@@ -364,9 +367,10 @@ orangutan export out.csv</code></pre>
                                              </span>
                                          {{else if .Hostname}}
                                              {{.Hostname}}
-                                         {{else}}
-                                             <span style="color:var(--text-muted)">-</span>
-                                         {{end}}
+                                          {{else}}
+                                              <span style="color:var(--text-muted)">-</span>
+                                          {{end}}
+									{{if hasSSH .Device}}<span class="ssh-indicator" data-tip="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}" aria-label="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4"/><path d="M12 16h7"/></svg>{{if ne (sshPort .Device) 22}}<span class="ssh-port">:{{sshPort .Device}}</span>{{end}}</span>{{end}}
                                          {{if .Notes}}
                                              <span class="notes-indicator" data-tip="{{.Notes}}" style="margin-left: 4px; vertical-align: middle;"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>
                                          {{end}}
@@ -617,6 +621,10 @@ orangutan export out.csv</code></pre>
                                             <span class="spec-label">Open Ports:</span>
                                             <span class="spec-val" id="sb-open-ports">—</span>
                                         </li>
+									<li>
+										<span class="spec-label">SSH:</span>
+										<span class="spec-val" id="sb-ssh">—</span>
+									</li>
                                         <li>
                                             <span class="spec-label">First Seen:</span>
                                             <span class="spec-val" id="sb-first-seen">—</span>
@@ -645,7 +653,19 @@ orangutan export out.csv</code></pre>
                                     <form id="sb-edit-form" onsubmit="event.preventDefault(); saveSidebarDevice();">
                                         <input type="hidden" id="sb-edit-ip" name="ip">
                                         
-                                        <div class="form-group">
+                                         <div class="form-group">
+										<label for="sb-edit-ssh-override">SSH Availability</label>
+										<select id="sb-edit-ssh-override" name="ssh_override" class="select" onchange="updateSSHPortControl()">
+											<option value="">Auto-detect</option>
+											<option value="available">SSH available</option>
+											<option value="unavailable">SSH unavailable</option>
+										</select>
+									</div>
+									<div class="form-group" id="sb-edit-ssh-port-group">
+										<label for="sb-edit-ssh-port">SSH Port</label>
+										<input type="number" id="sb-edit-ssh-port" name="ssh_override_port" class="input" min="1" max="65535" placeholder="22">
+									</div>
+									<div class="form-group">
                                             <label for="sb-edit-label">Friendly Label</label>
                                             <input type="text" id="sb-edit-label" name="label" class="input" placeholder="e.g., Living Room TV">
                                         </div>

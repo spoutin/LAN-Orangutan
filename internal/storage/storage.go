@@ -337,7 +337,7 @@ func (s *Storage) scanDevice(scanner interface {
 	var switchPoEWattsVal sql.NullFloat64
 	err := scanner.Scan(
 		&d.IP, &d.MAC, &d.Hostname, &d.Vendor, &d.Type, &webUIVal, &risksStr, &d.Label, &d.Notes, &d.Group,
-		&d.CustomHostname, &d.CustomWebURL, &d.CustomType, &d.WebPort, &d.WebScheme, &probedVal, &d.Assignment,
+		&d.CustomHostname, &d.CustomWebURL, &d.CustomType, &d.WebPort, &d.WebScheme, &probedVal, &d.DetectedSSHPort, &d.SSHOverride, &d.SSHOverridePort, &d.Assignment,
 		&d.NetworkName, &d.FirstSeen, &d.LastSeen, &d.ResponseTime, &addressHistoryStr, &d.LinkedMAC,
 		&notifyOnSeenVal, &ansibleManagedVal,
 		&d.SSID, &d.APName, &d.RadioBand, &d.Channel, &d.WiFiStandard, &d.Signal, &d.SignalQuality,
@@ -380,7 +380,7 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			COALESCE(NULLIF(p.custom_hostname, ''), d.custom_hostname) AS custom_hostname,
 			COALESCE(NULLIF(p.custom_web_url, ''), d.custom_web_url) AS custom_web_url,
 			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
-			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
+			d.web_port, d.web_scheme, d.probed, d.detected_ssh_port, COALESCE(p.ssh_override, d.ssh_override), COALESCE(p.ssh_override_port, d.ssh_override_port), d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
 			d.linked_mac,
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
 			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
@@ -507,7 +507,7 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 			COALESCE(NULLIF(p.custom_hostname, ''), d.custom_hostname) AS custom_hostname,
 			COALESCE(NULLIF(p.custom_web_url, ''), d.custom_web_url) AS custom_web_url,
 			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
-			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
+			d.web_port, d.web_scheme, d.probed, d.detected_ssh_port, COALESCE(p.ssh_override, d.ssh_override), COALESCE(p.ssh_override_port, d.ssh_override_port), d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
 			d.linked_mac,
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
 			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
@@ -538,7 +538,7 @@ func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 			COALESCE(NULLIF(p.custom_hostname, ''), d.custom_hostname) AS custom_hostname,
 			COALESCE(NULLIF(p.custom_web_url, ''), d.custom_web_url) AS custom_web_url,
 			COALESCE(NULLIF(p.custom_type, ''), d.custom_type) AS custom_type,
-			d.web_port, d.web_scheme, d.probed, d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
+			d.web_port, d.web_scheme, d.probed, d.detected_ssh_port, COALESCE(p.ssh_override, d.ssh_override), COALESCE(p.ssh_override_port, d.ssh_override_port), d.assignment, d.network_name, d.first_seen, d.last_seen, d.response_time, d.address_history,
 			d.linked_mac,
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
 			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
@@ -598,6 +598,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		}
 		device.NotifyOnSeen = existing.NotifyOnSeen
 		device.AnsibleManaged = existing.AnsibleManaged
+		device.SSHOverride = existing.SSHOverride
+		device.SSHOverridePort = existing.SSHOverridePort
 		if device.SSID == "" {
 			device.SSID = existing.SSID
 		}
@@ -691,7 +693,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 	_, err := s.db.Exec(`
 		INSERT INTO devices (
 			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 			assignment, network_name, first_seen, last_seen, response_time, address_history,
 			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen, ansible_managed,
 			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
@@ -700,7 +702,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, 0, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
@@ -724,6 +726,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			web_port = excluded.web_port,
 			web_scheme = excluded.web_scheme,
 			probed = excluded.probed,
+			detected_ssh_port = excluded.detected_ssh_port,
 			assignment = excluded.assignment,
 			network_name = excluded.network_name,
 			first_seen = excluded.first_seen,
@@ -764,7 +767,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			switch_updated_at = excluded.switch_updated_at
 	`, device.IP, device.MAC, device.Hostname, device.Vendor, device.Type, boolToInt(device.WebUI), string(risksJSON),
 		device.Label, device.Notes, device.Group, device.CustomHostname, device.CustomWebURL, device.CustomType,
-		device.WebPort, device.WebScheme, boolToInt(device.Probed), device.Assignment, device.NetworkName,
+		device.WebPort, device.WebScheme, boolToInt(device.Probed), device.DetectedSSHPort, device.SSHOverride, device.SSHOverridePort, device.Assignment, device.NetworkName,
 		device.FirstSeen, device.LastSeen, device.ResponseTime, string(historyJSON), isOnline, device.LastSeen,
 		device.LinkedMAC, boolToInt(device.NotifyOnSeen), boolToInt(device.AnsibleManaged),
 		device.SSID, device.APName, device.RadioBand, device.Channel, device.WiFiStandard, device.Signal, device.SignalQuality,
@@ -775,7 +778,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 }
 
 // UpdateDeviceFields updates specific fields of a device
-func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac *string, notifyOnSeen, ansibleManaged *bool) error {
+func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac, sshOverride *string, notifyOnSeen, ansibleManaged *bool, sshOverridePort *int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -834,6 +837,14 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 				parentFields = append(parentFields, `ansible_managed = ?`)
 				parentArgs = append(parentArgs, boolToInt(*ansibleManaged))
 			}
+			if sshOverride != nil {
+				parentFields = append(parentFields, `ssh_override = ?`)
+				parentArgs = append(parentArgs, *sshOverride)
+			}
+			if sshOverridePort != nil {
+				parentFields = append(parentFields, `ssh_override_port = ?`)
+				parentArgs = append(parentArgs, *sshOverridePort)
+			}
 
 			if len(parentFields) > 0 {
 				parentQuery += joinStrings(parentFields, ", ") + ` WHERE ip = ?`
@@ -842,7 +853,7 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 			}
 
 			// Clear customizations on the child so it cleanly inherits them from the parent
-			childQuery := `UPDATE devices SET label = '', notes = '', "group" = '', custom_hostname = '', custom_web_url = '', custom_type = '', notify_on_seen = 0, ansible_managed = 0`
+			childQuery := `UPDATE devices SET label = '', notes = '', "group" = '', custom_hostname = '', custom_web_url = '', custom_type = '', notify_on_seen = 0, ansible_managed = 0, ssh_override = '', ssh_override_port = 0`
 			var childArgs []interface{}
 			if linkedMac != nil {
 				childQuery += `, linked_mac = ?`
@@ -896,6 +907,14 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 		fields = append(fields, `ansible_managed = ?`)
 		args = append(args, boolToInt(*ansibleManaged))
 	}
+	if sshOverride != nil {
+		fields = append(fields, `ssh_override = ?`)
+		args = append(args, *sshOverride)
+	}
+	if sshOverridePort != nil {
+		fields = append(fields, `ssh_override_port = ?`)
+		args = append(args, *sshOverridePort)
+	}
 
 	if len(fields) == 0 {
 		return nil
@@ -945,7 +964,7 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 	wantV4 := isIPv4(excludeIP)
 	rows, err := tx.Query(`
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
@@ -977,7 +996,7 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 	}
 	row := tx.QueryRow(`
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
@@ -1125,7 +1144,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 	_, err := tx.Exec(`
 		INSERT INTO devices (
 			ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 			assignment, network_name, first_seen, last_seen, response_time, address_history,
 			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen, ansible_managed,
 			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
@@ -1134,7 +1153,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, 0, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
@@ -1144,7 +1163,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		)
 	`, d.IP, d.MAC, d.Hostname, d.Vendor, d.Type, boolToInt(d.WebUI), string(risksJSON),
 		d.Label, d.Notes, d.Group, d.CustomHostname, d.CustomWebURL, d.CustomType,
-		d.WebPort, d.WebScheme, boolToInt(d.Probed), d.Assignment, d.NetworkName,
+		d.WebPort, d.WebScheme, boolToInt(d.Probed), d.DetectedSSHPort, d.SSHOverride, d.SSHOverridePort, d.Assignment, d.NetworkName,
 		d.FirstSeen, d.LastSeen, d.ResponseTime, string(historyJSON), isOnline, d.LastSeen,
 		d.LinkedMAC, boolToInt(d.NotifyOnSeen), boolToInt(d.AnsibleManaged),
 		d.SSID, d.APName, d.RadioBand, d.Channel, d.WiFiStandard, d.Signal, d.SignalQuality,
@@ -1185,7 +1204,7 @@ func (s *Storage) pruneEphemeralIPv6() error {
 
 	rows, err := s.db.Query(`
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
@@ -1957,7 +1976,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 
 	rows, err := tx.Query(`
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+				       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
@@ -2011,7 +2030,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 
 		row := tx.QueryRow(`
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+				       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
@@ -2171,7 +2190,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 			if c.IP != "" {
 				row := tx.QueryRow(`
 					SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-					       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 					       assignment, network_name, first_seen, last_seen, response_time, address_history,
 					       linked_mac, notify_on_seen, ansible_managed,
 					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
@@ -2189,7 +2208,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 			if existing == nil {
 				row := tx.QueryRow(`
 					SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-					       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+					       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 					       assignment, network_name, first_seen, last_seen, response_time, address_history,
 					       linked_mac, notify_on_seen, ansible_managed,
 					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
@@ -2209,7 +2228,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 		if existing == nil && c.IP != "" {
 			row := tx.QueryRow(`
 		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
-		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
+			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,

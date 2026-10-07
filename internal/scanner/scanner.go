@@ -50,6 +50,11 @@ type nmapPort struct {
 	PortID   int           `xml:"portid,attr"`
 	Protocol string        `xml:"protocol,attr"`
 	State    nmapPortState `xml:"state"`
+	Service  nmapService   `xml:"service"`
+}
+
+type nmapService struct {
+	Name string `xml:"name,attr"`
 }
 
 type nmapPortState struct {
@@ -444,31 +449,38 @@ func getInterfaceForCIDR(ctx context.Context, cidr string) string {
 }
 
 // ScanHostPorts performs a high-speed targeted port scan on a single IP address.
-func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string) ([]int, error) {
+func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string) ([]int, []int, error) {
 	if _, err := exec.LookPath("nmap"); err != nil {
-		return nil, fmt.Errorf("nmap not found")
+		return nil, nil, fmt.Errorf("nmap not found")
 	}
 
-	args := []string{"-p", portRange, "-T4", "-n", "--min-rate", "1000", "--max-retries", "0", "--host-timeout", "15s", "-oX", "-", ip}
+	args := []string{"-sV", "-p", portRange, "-T4", "-n", "--min-rate", "1000", "--max-retries", "0", "--host-timeout", "15s", "-oX", "-", ip}
 	cmd := exec.CommandContext(ctx, "nmap", args...)
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("nmap port scan failed: %w", err)
+		return nil, nil, fmt.Errorf("nmap port scan failed: %w", err)
 	}
+	return parsePortScanResult(output)
+}
 
+func parsePortScanResult(output []byte) ([]int, []int, error) {
 	var result nmapRun
 	if err := xml.Unmarshal(output, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse nmap output: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse nmap output: %w", err)
 	}
 
 	var openPorts []int
+	var sshPorts []int
 	if len(result.Hosts) > 0 {
 		for _, port := range result.Hosts[0].Ports.Ports {
 			if port.State.State == "open" {
 				openPorts = append(openPorts, port.PortID)
+				if port.Service.Name == "ssh" {
+					sshPorts = append(sshPorts, port.PortID)
+				}
 			}
 		}
 	}
 
-	return openPorts, nil
+	return openPorts, sshPorts, nil
 }

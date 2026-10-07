@@ -418,6 +418,9 @@ async function editDevice(ip) {
             linkedMAC: row.dataset.linkedMac || '',
             notifyOnSeen: row.dataset.notifyOnSeen === '1',
             ansibleManaged: row.dataset.ansibleManaged === 'true' || row.dataset.ansibleManaged === '1',
+			sshOverride: row.dataset.sshOverride || '',
+			sshOverridePort: parseInt(row.dataset.sshOverridePort, 10) || 0,
+			detectedSshPort: parseInt(row.dataset.detectedSshPort, 10) || 0,
             linkedChildren: row.dataset.linkedChildren ? row.dataset.linkedChildren.split(', ') : []
         };
     } else {
@@ -463,6 +466,9 @@ async function editDevice(ip) {
                             linkedMAC: dev.linked_mac || '',
                             notifyOnSeen: !!dev.notify_on_seen,
                             ansibleManaged: !!dev.ansible_managed,
+							sshOverride: dev.ssh_override || '',
+							sshOverridePort: dev.ssh_override_port || 0,
+							detectedSshPort: dev.detected_ssh_port || 0,
                             linkedChildren: dev.linked_children || []
                         };
                     }
@@ -1251,6 +1257,13 @@ function openDeviceSidebar(target) {
         const portsEl = document.getElementById('sb-open-ports');
         if (portsEl) portsEl.textContent = data.openPorts || 'None detected';
 
+		const sshEl = document.getElementById('sb-ssh');
+		if (sshEl) {
+			const override = data.sshOverride || '';
+			const port = override === 'available' ? Number(data.sshOverridePort) : Number(data.detectedSshPort);
+			sshEl.textContent = override === 'unavailable' ? 'Unavailable (manual)' : port > 0 ? `Available on port ${port}${override === 'available' ? ' (manual)' : ' (detected)'}` : 'Not detected';
+		}
+
         const firstSeenEl = document.getElementById('sb-first-seen');
         if (firstSeenEl) firstSeenEl.textContent = data.firstseen || '—';
 
@@ -1285,6 +1298,12 @@ function openDeviceSidebar(target) {
 
         const editAnsible = document.getElementById('sb-edit-ansible-managed');
         if (editAnsible) editAnsible.checked = data.ansibleManaged === 'true' || data.ansibleManaged === '1' || data.ansibleManaged === true;
+
+		const editSSHOverride = document.getElementById('sb-edit-ssh-override');
+		if (editSSHOverride) editSSHOverride.value = data.sshOverride || '';
+		const editSSHPort = document.getElementById('sb-edit-ssh-port');
+		if (editSSHPort) editSSHPort.value = data.sshOverridePort || '';
+		updateSSHPortControl();
     }
 
     // Show sidebar
@@ -1296,6 +1315,12 @@ function closeDeviceSidebar() {
     const sidebar = document.getElementById('device-sidebar');
     if (sidebar) sidebar.classList.add('hidden');
     document.querySelectorAll('.device-row.selected-row').forEach(r => r.classList.remove('selected-row'));
+}
+
+function updateSSHPortControl() {
+	const override = document.getElementById('sb-edit-ssh-override')?.value;
+	const group = document.getElementById('sb-edit-ssh-port-group');
+	if (group) group.style.display = override === 'available' ? '' : 'none';
 }
 
 function viewSidebarPresenceHistory() {
@@ -1317,6 +1342,14 @@ async function saveSidebarDevice() {
     const custom_type = document.getElementById('sb-edit-custom-type')?.value ?? '';
     const notes = document.getElementById('sb-edit-notes')?.value ?? '';
     const ansible_managed = document.getElementById('sb-edit-ansible-managed')?.checked || false;
+	const ssh_override = document.getElementById('sb-edit-ssh-override')?.value ?? '';
+	const sshPortInput = document.getElementById('sb-edit-ssh-port');
+	const ssh_override_port = ssh_override === 'available' ? Number(sshPortInput?.value) : 0;
+	if (ssh_override === 'available' && (!Number.isInteger(ssh_override_port) || ssh_override_port < 1 || ssh_override_port > 65535)) {
+		showToast('SSH port must be between 1 and 65535', 'warning');
+		sshPortInput?.focus();
+		return;
+	}
 
     const saveBtn = document.querySelector('#sb-edit-form button[type="submit"]') ||
                     document.querySelector('#sb-edit-form button.btn-primary') ||
@@ -1336,7 +1369,9 @@ async function saveSidebarDevice() {
             custom_web_url,
             custom_type,
             notes,
-            ansible_managed
+			ansible_managed,
+			ssh_override,
+			ssh_override_port
         };
 
         // Call PUT /api/devices/{ip}
@@ -1388,6 +1423,8 @@ async function saveSidebarDevice() {
             row.dataset.customTypeOriginal = custom_type;
             row.dataset.notes = notes;
             row.dataset.ansibleManaged = ansible_managed ? 'true' : 'false';
+			row.dataset.sshOverride = ssh_override;
+			row.dataset.sshOverridePort = String(ssh_override_port);
 
             const sbAnsible = document.getElementById('sb-ansible-btn');
             if (sbAnsible) {

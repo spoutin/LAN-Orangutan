@@ -3218,3 +3218,16 @@ img.login-logo {
 .signal-meter-fill.danger {
     background: var(--danger);
 }
+.ssh-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    margin-left: 0.35rem;
+    color: var(--accent);
+    vertical-align: middle;
+}
+
+.ssh-port {
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+}

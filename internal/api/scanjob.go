@@ -630,7 +630,7 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 			defer func() { <-sem }()
 
 			// Perform targeted port scan
-			ports, err := h.scanner.ScanHostPorts(ctx, device.IP, h.cfg.Scanning.PortScanRange)
+			ports, sshPorts, err := h.scanner.ScanHostPorts(ctx, device.IP, h.cfg.Scanning.PortScanRange)
 			if err != nil {
 				fmt.Printf("[DEBUG-PORT-SCAN] Failed to scan ports for %s: %v\n", device.IP, err)
 			} else {
@@ -640,6 +640,10 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 					current = &device
 				}
 				current.OpenPorts = ports
+				current.DetectedSSHPort = 0
+				if len(sshPorts) > 0 {
+					current.DetectedSSHPort = sshPorts[0]
+				}
 
 				// Enrich device with open ports (re-classifies types and finds web servers)
 				tempDevices := []types.Device{*current}
@@ -648,7 +652,7 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 				current.Probed = true
 
 				// Save back to database
-				_, _, _ = h.store.MergeDevices([]types.Device{*current})
+				_ = h.store.UpdateDevice(current)
 			}
 
 			// Increment completion count

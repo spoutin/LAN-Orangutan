@@ -122,6 +122,14 @@ func NewHandler(store *storage.Storage, cfg *config.Config, authn *auth.Authenti
 		"timeAgo":  timeAgo,
 		"lower":    strings.ToLower,
 		"typeIcon": typeIcon,
+		"hasSSH": func(device *types.Device) bool {
+			_, available := device.EffectiveSSH()
+			return available
+		},
+		"sshPort": func(device *types.Device) int {
+			port, _ := device.EffectiveSSH()
+			return port
+		},
 	}
 
 	tmpl := template.Must(template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html"))

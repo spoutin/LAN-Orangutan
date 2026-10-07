@@ -208,16 +208,18 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost, http.MethodPut:
 		var req struct {
-			IP             string  `json:"ip"`
-			Label          *string `json:"label"`
-			Notes          *string `json:"notes"`
-			Group          *string `json:"group"`
-			CustomHostname *string `json:"custom_hostname"`
-			CustomWebURL   *string `json:"custom_web_url"`
-			CustomType     *string `json:"custom_type"`
-			LinkedMAC      *string `json:"linked_mac"`
-			NotifyOnSeen   *bool   `json:"notify_on_seen"`
-			AnsibleManaged *bool   `json:"ansible_managed"`
+			IP              string  `json:"ip"`
+			Label           *string `json:"label"`
+			Notes           *string `json:"notes"`
+			Group           *string `json:"group"`
+			CustomHostname  *string `json:"custom_hostname"`
+			CustomWebURL    *string `json:"custom_web_url"`
+			CustomType      *string `json:"custom_type"`
+			LinkedMAC       *string `json:"linked_mac"`
+			NotifyOnSeen    *bool   `json:"notify_on_seen"`
+			AnsibleManaged  *bool   `json:"ansible_managed"`
+			SSHOverride     *string `json:"ssh_override"`
+			SSHOverridePort *int    `json:"ssh_override_port"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			h.error(w, http.StatusBadRequest, "invalid JSON")
@@ -234,7 +236,18 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC, req.NotifyOnSeen, req.AnsibleManaged); err != nil {
+		if req.SSHOverride != nil {
+			if *req.SSHOverride != types.SSHOverrideAuto && *req.SSHOverride != types.SSHOverrideAvailable && *req.SSHOverride != types.SSHOverrideUnavailable {
+				h.error(w, http.StatusBadRequest, "ssh_override must be auto, available, or unavailable")
+				return
+			}
+			if *req.SSHOverride == types.SSHOverrideAvailable && (req.SSHOverridePort == nil || *req.SSHOverridePort < 1 || *req.SSHOverridePort > 65535) {
+				h.error(w, http.StatusBadRequest, "ssh_override_port must be between 1 and 65535 when SSH is available")
+				return
+			}
+		}
+
+		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC, req.SSHOverride, req.NotifyOnSeen, req.AnsibleManaged, req.SSHOverridePort); err != nil {
 			h.error(w, http.StatusNotFound, err.Error())
 			return
 		}
