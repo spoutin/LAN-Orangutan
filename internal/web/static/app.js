@@ -233,9 +233,9 @@ async function followScan() {
     }
 }
 
-async function runScan(target) {
+async function runScan(target, mode = 'quick') {
     try {
-        await api(`scan/start?network=${encodeURIComponent(target)}`, {}, 'POST');
+        await api(`scan/start?network=${encodeURIComponent(target)}&mode=${encodeURIComponent(mode)}`, {}, 'POST');
         await refreshInPlace();
         await followScan();
     } catch (e) {
@@ -262,12 +262,31 @@ async function resumeScanIfRunning() {
 resumeScanIfRunning();
 
 async function scanNetwork(cidr) {
-    await runScan(cidr);
+    await runScan(cidr, 'quick');
 }
 
 async function scanAllNetworks() {
-    await runScan('all');
+    await runScan('all', 'quick');
 }
+
+async function startScan(target, mode = 'quick') {
+    await runScan(target, mode);
+}
+
+function toggleScanMenu(button) {
+    const menu = button.parentElement?.querySelector('.scan-mode-menu');
+    if (!menu) return;
+    document.querySelectorAll('.scan-mode-menu.show').forEach(openMenu => {
+        if (openMenu !== menu) openMenu.classList.remove('show');
+    });
+    menu.classList.toggle('show');
+}
+
+document.addEventListener('click', event => {
+    if (!event.target.closest('.scan-split-button')) {
+        document.querySelectorAll('.scan-mode-menu.show').forEach(menu => menu.classList.remove('show'));
+    }
+});
 
 // Device filtering
 // Filter set by clicking a summary chip ("flagged" / "moved"), or null.
@@ -2595,7 +2614,15 @@ function renderLiveProgressCard(progress) {
         card.innerHTML = `
             <div style="text-align: center; color: var(--text-muted); padding: 1.5rem 0;">
                 <p>Scanner is currently idle</p>
-                <button class="btn btn-primary" style="margin-top: 1rem;" onclick="startScan('all')">Run Manual Scan</button>
+                <div class="scan-split-button" style="margin-top: 1rem;">
+                    <button class="btn btn-primary" onclick="startScan('all', 'quick')">Quick Scan</button>
+                    <button class="btn btn-primary scan-split-toggle" onclick="toggleScanMenu(this)" aria-label="Choose scan type">⌄</button>
+                    <div class="scan-mode-menu">
+                        <button type="button" onclick="startScan('all', 'quick')">Quick scan</button>
+                        <button type="button" onclick="startScan('all', 'deep')">Deep scan</button>
+                        <button type="button" onclick="startScan('all', 'both')">Both stages</button>
+                    </div>
+                </div>
             </div>
         `;
     }

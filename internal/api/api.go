@@ -307,7 +307,6 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 		h.error(w, http.StatusBadRequest, "network parameter required")
 		return
 	}
-
 	// "all" scans every detected network, matching the CLI's behaviour
 	if strings.EqualFold(cidr, "all") {
 		h.scanAllNetworks(w, r)
@@ -496,6 +495,14 @@ func (h *Handler) handleScanStart(w http.ResponseWriter, r *http.Request) {
 		h.error(w, http.StatusBadRequest, "network parameter required")
 		return
 	}
+	mode := r.URL.Query().Get("mode")
+	if mode == "" {
+		mode = scanModeQuick
+	}
+	if mode != scanModeQuick && mode != scanModeDeep && mode != scanModeBoth {
+		h.error(w, http.StatusBadRequest, "mode must be quick, deep, or both")
+		return
+	}
 
 	networks, err := h.resolveScanTargets(cidr)
 	if err != nil {
@@ -516,7 +523,7 @@ func (h *Handler) handleScanStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.job = h.startScanJob(networks, false)
+	h.job = h.startScanJob(networks, false, mode)
 	h.success(w, h.job.snapshot(h.cfg, h.store))
 }
 

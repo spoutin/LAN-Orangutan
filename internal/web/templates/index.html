@@ -91,10 +91,18 @@ orangutan export out.csv</code></pre>
                         <span>Scanning...</span>
                     </button>
                     {{else}}
-                    <button class="btn-scan-all" onclick="scanAllNetworks()" title="Scan all networks">
+                    <div class="scan-split-button">
+                    <button class="btn-scan-all" onclick="startScan('all', 'quick')" title="Quick scan all networks">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
                         <span>Scan All</span>
                     </button>
+					<button class="btn-scan-all scan-split-toggle" onclick="toggleScanMenu(this)" aria-label="Choose scan type">⌄</button>
+					<div class="scan-mode-menu">
+						<button type="button" onclick="startScan('all', 'quick')">Quick scan</button>
+						<button type="button" onclick="startScan('all', 'deep')">Deep scan</button>
+						<button type="button" onclick="startScan('all', 'both')">Both stages</button>
+					</div>
+					</div>
                     {{end}}
                 </div>
                 
@@ -135,9 +143,17 @@ orangutan export out.csv</code></pre>
                             {{if .DeviceCount}}
                             <span class="sidebar-device-count" title="{{.DeviceCount}} devices online">{{.DeviceCount}}</span>
                             {{end}}
-                            <button class="btn-scan-action" onclick="scanNetwork('{{.CIDR}}')" title="Scan {{.FriendlyName}}">
+							<div class="scan-split-button">
+							<button class="btn-scan-action" onclick="startScan('{{.CIDR}}', 'quick')" title="Quick scan {{.FriendlyName}}">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                             </button>
+								<button class="btn-scan-action scan-split-toggle" onclick="toggleScanMenu(this)" aria-label="Choose scan type">⌄</button>
+								<div class="scan-mode-menu">
+									<button type="button" onclick="startScan('{{.CIDR}}', 'quick')">Quick scan</button>
+									<button type="button" onclick="startScan('{{.CIDR}}', 'deep')">Deep scan</button>
+									<button type="button" onclick="startScan('{{.CIDR}}', 'both')">Both stages</button>
+								</div>
+							</div>
                         </div>
                     </div>
                     {{end}}{{end}}

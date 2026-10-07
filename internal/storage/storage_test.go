@@ -712,6 +712,20 @@ func TestUpdateDevicePersistsAnsibleManaged(t *testing.T) {
 	}
 }
 
+func TestUpdateOpenPortsPersistsDeepScanResults(t *testing.T) {
+	s := newTestStorage(t)
+	if err := s.UpdateDevice(&types.Device{IP: "192.168.1.250", Hostname: "server"}); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+	if err := s.UpdateOpenPorts("192.168.1.250", []int{22, 443, 2222}); err != nil {
+		t.Fatalf("UpdateOpenPorts: %v", err)
+	}
+	got := s.GetDevice("192.168.1.250")
+	if len(got.OpenPorts) != 3 || got.OpenPorts[0] != 22 || got.OpenPorts[1] != 443 || got.OpenPorts[2] != 2222 {
+		t.Errorf("OpenPorts = %v, want [22 443 2222]", got.OpenPorts)
+	}
+}
+
 func TestUpdateDevicePreservesUniFiVLANWhenOmitted(t *testing.T) {
 	s := newTestStorage(t)
 	if err := s.UpdateDevice(&types.Device{IP: "192.168.1.231", MAC: "00:11:22:33:44:56", VLAN: 42}); err != nil {

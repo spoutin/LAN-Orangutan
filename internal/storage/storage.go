@@ -403,6 +403,10 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			result[d.IP] = d
 		}
 	}
+	rows.Close()
+	for _, device := range result {
+		_ = s.loadOpenPorts(device)
+	}
 
 	// Build child mappings to populate LinkedChildren list on parents dynamically
 	childrenMap := make(map[string][]string)
@@ -523,8 +527,35 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 	if err != nil {
 		return nil
 	}
+	_ = s.loadOpenPorts(d)
 	s.populateDeviceChildrenLocked(d)
 	return d
+}
+
+func (s *Storage) loadOpenPorts(device *types.Device) error {
+	var portsJSON string
+	if err := s.db.QueryRow("SELECT ports FROM device_open_ports WHERE ip = ?", device.IP).Scan(&portsJSON); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return err
+	}
+	return json.Unmarshal([]byte(portsJSON), &device.OpenPorts)
+}
+
+// UpdateOpenPorts saves the complete result of a targeted deep scan.
+func (s *Storage) UpdateOpenPorts(ip string, ports []int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	portsJSON, err := json.Marshal(ports)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO device_open_ports (ip, ports) VALUES (?, ?)
+		ON CONFLICT(ip) DO UPDATE SET ports = excluded.ports
+	`, ip, string(portsJSON))
+	return err
 }
 
 // GetDeviceLocked returns a device while holding a lock

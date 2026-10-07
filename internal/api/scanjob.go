@@ -17,6 +17,12 @@ import (
 // there is therefore no timing history to estimate progress from.
 const percentUnknown = -1
 
+const (
+	scanModeQuick = "quick"
+	scanModeDeep  = "deep"
+	scanModeBoth  = "both"
+)
+
 // scanJob tracks a scan running in the background. Scans of large networks take
 // minutes, which is far too long to hold an HTTP request open, so the scan runs
 // detached and the UI polls for progress.
@@ -42,6 +48,7 @@ type scanJob struct {
 	// the user clicked. Set once at creation. The UI uses it to stay quiet for
 	// automatic scans instead of popping the progress overlay on its own.
 	automatic bool
+	mode      string
 
 	// Stage 2 port scanning telemetry
 	portScanActive   bool
@@ -74,7 +81,8 @@ type scanProgress struct {
 	// Automatic is true for a scan the background scanner started. The UI does
 	// not show its progress overlay for these, so an automatic scan never pops
 	// a dialog with a Cancel button on its own.
-	Automatic bool `json:"automatic"`
+	Automatic bool   `json:"automatic"`
+	Mode      string `json:"mode"`
 
 	// Stage 2 port scanning progress fields
 	PortScanActive   bool `json:"port_scan_active"`
@@ -101,6 +109,7 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 		Percent:          percentUnknown,
 		Error:            j.err,
 		Automatic:        j.automatic,
+		Mode:             j.mode,
 		PortScanActive:   j.portScanActive,
 		PortScanTotal:    j.portScanTotal,
 		PortScanComplete: j.portScanComplete,
@@ -164,7 +173,7 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 // startScanJob begins scanning the given networks in the background. The caller
 // must hold h.jobMu. automatic marks a scan the background scanner started, so
 // the UI can stay quiet for it.
-func (h *Handler) startScanJob(networks []string, automatic bool) *scanJob {
+func (h *Handler) startScanJob(networks []string, automatic bool, mode string) *scanJob {
 	// Descend from h.scanCtx (the server's shutdown context) rather than
 	// context.Background(), so cancelling it at shutdown cancels a running scan.
 	ctx, cancel := context.WithCancel(h.scanCtx)
@@ -177,6 +186,7 @@ func (h *Handler) startScanJob(networks []string, automatic bool) *scanJob {
 		startedAt: time.Now(),
 		results:   make([]networkScanSummary, 0, len(networks)),
 		automatic: automatic,
+		mode:      mode,
 	}
 
 	h.store.ClearCompletedNetworks()
@@ -215,6 +225,16 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		success := status == "done"
 		_ = h.store.RecordScanHistory(networkName, success, errStr, j.startedAt, dur)
 	}()
+
+	if j.mode == scanModeDeep {
+		j.runDeepScan(ctx, h)
+		if ctx.Err() != nil {
+			j.finish("cancelled", "")
+		} else {
+			j.finish("done", "")
+		}
+		return
+	}
 
 	for i, cidr := range j.networks {
 		if ctx.Err() != nil {
@@ -265,7 +285,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		}
 
 		// Launch asynchronous port scan (Stage 2) on discovered active devices
-		if h.cfg.Scanning.EnablePortScan && h.cfg.Scanning.PortScanRange != "" {
+		if j.mode == scanModeBoth && h.cfg.Scanning.PortScanRange != "" && (!j.automatic || h.cfg.Scanning.EnablePortScan) {
 			shouldPortScan := false
 			if !j.automatic {
 				// Keep manual scans immediate
@@ -489,6 +509,42 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	}
 }
 
+// runDeepScan probes currently online inventory records without rediscovering
+// the network. This gives users an explicit Stage 2-only operation.
+func (j *scanJob) runDeepScan(ctx context.Context, h *Handler) {
+	devices := h.store.GetDevices()
+	interval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
+	for i, cidr := range j.networks {
+		if ctx.Err() != nil {
+			return
+		}
+		j.beginNetwork(cidr, i+1, 0)
+		h.store.SetCurrentScanningNetwork(cidr)
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			j.addResult(networkScanSummary{Network: cidr, Status: "failed", Error: err.Error()}, 0)
+			continue
+		}
+		var targets []types.Device
+		for _, device := range devices {
+			ip := net.ParseIP(device.IP)
+			if ip != nil && network.Contains(ip) && device.IsOnline(interval) {
+				targets = append(targets, *device)
+			}
+		}
+		j.addResult(networkScanSummary{Network: cidr, Status: "scanned", DeviceCount: len(targets)}, len(targets))
+		if len(targets) == 0 {
+			continue
+		}
+		j.portScanWG.Add(1)
+		go func(targets []types.Device) {
+			defer j.portScanWG.Done()
+			j.startPortScan(ctx, h, targets)
+		}(targets)
+	}
+	j.portScanWG.Wait()
+}
+
 // beginNetwork records that the job has started scanning a network.
 func (j *scanJob) beginNetwork(cidr string, index int, estimate float64) {
 	j.mu.Lock()
@@ -592,7 +648,7 @@ func (h *Handler) runBackgroundScan() {
 	if h.job != nil && h.job.isRunning() {
 		return
 	}
-	h.job = h.startScanJob(networks, true)
+	h.job = h.startScanJob(networks, true, scanModeBoth)
 }
 
 // startPortScan runs a targeted high-speed port scan on a list of discovered active devices.
@@ -653,6 +709,7 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 
 				// Save back to database
 				_ = h.store.UpdateDevice(current)
+				_ = h.store.UpdateOpenPorts(current.IP, ports)
 			}
 
 			// Increment completion count

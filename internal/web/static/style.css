@@ -3231,3 +3231,46 @@ img.login-logo {
     font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
 }
+.scan-split-button {
+    position: relative;
+    display: inline-flex;
+}
+
+.scan-split-toggle {
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+    margin-left: 1px;
+}
+
+.scan-mode-menu {
+    display: none;
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 0.25rem);
+    right: 0;
+    min-width: 10rem;
+    padding: 0.3rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 0.4rem;
+    box-shadow: 0 0.5rem 1.25rem rgba(0, 0, 0, 0.2);
+}
+
+.scan-mode-menu.show {
+    display: grid;
+    gap: 0.15rem;
+}
+
+.scan-mode-menu button {
+    border: 0;
+    border-radius: 0.25rem;
+    padding: 0.45rem 0.6rem;
+    color: var(--text);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+}
+
+.scan-mode-menu button:hover {
+    background: var(--bg-card-hover);
+}
