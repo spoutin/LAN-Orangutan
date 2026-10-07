@@ -137,7 +137,7 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 
 	if j.portScanActive || j.mode == scanModeDeep {
 		p.Stage = scanModeDeep
-		if j.portScanComplete > 0 && !j.portScanStartedAt.IsZero() && j.portScanTotal > j.portScanComplete {
+		if p.Remaining == nil && j.portScanComplete > 0 && !j.portScanStartedAt.IsZero() && j.portScanTotal > j.portScanComplete {
 			averagePerHost := time.Since(j.portScanStartedAt).Seconds() / float64(j.portScanComplete)
 			remaining := averagePerHost * float64(j.portScanTotal-j.portScanComplete)
 			p.Remaining = &remaining
@@ -196,8 +196,6 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 	}
 	p.Percent = (float64(j.networkIndex-1) + fraction) / float64(len(j.networks)) * 100
 
-	remaining := (1 - fraction) * j.estimatedSeconds
-	p.Remaining = &remaining
 	return p
 }
 

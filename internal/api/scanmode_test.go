@@ -40,6 +40,7 @@ func TestScanProgressUsesTotalJobETA(t *testing.T) {
 		mode:                  scanModeQuick,
 		networkIndex:          1,
 		networkStartedAt:      time.Now().Add(-10 * time.Second),
+		estimatedSeconds:      30,
 		estimatedTotalSeconds: 90,
 	}
 
