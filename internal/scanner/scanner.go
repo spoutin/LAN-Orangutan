@@ -467,7 +467,7 @@ func portScanArguments(portRange string, ip string) []string {
 	// Stage 1 already established that this host is reachable. Skipping host
 	// discovery avoids false negatives from a separate probe, while retries make
 	// service detection reliable on busy or rate-limited devices.
-	return []string{"-sV", "-Pn", "-p", portRange, "-T4", "-n", "--max-retries", "2", "--host-timeout", "45s", "-oX", "-", ip}
+	return []string{"-sV", "-Pn", "-p", portRange, "-T4", "-n", "--max-retries", "2", "--host-timeout", "180s", "-oX", "-", ip}
 }
 
 func parsePortScanResult(output []byte) ([]int, []int, error) {
