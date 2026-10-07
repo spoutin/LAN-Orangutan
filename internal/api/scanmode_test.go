@@ -32,6 +32,26 @@ func TestScanProgressReportsLastDeepScanHost(t *testing.T) {
 	}
 }
 
+func TestScanProgressUsesTotalJobETA(t *testing.T) {
+	job := &scanJob{
+		status:                "running",
+		startedAt:             time.Now().Add(-10 * time.Second),
+		networks:              []string{"192.168.1.0/24", "10.0.0.0/24"},
+		mode:                  scanModeQuick,
+		networkIndex:          1,
+		networkStartedAt:      time.Now().Add(-10 * time.Second),
+		estimatedTotalSeconds: 90,
+	}
+
+	progress := job.snapshot(config.Default(), nil)
+	if progress.Remaining == nil {
+		t.Fatal("Remaining = nil, want total job estimate")
+	}
+	if *progress.Remaining < 78 || *progress.Remaining > 82 {
+		t.Errorf("Remaining = %.1f, want about 80 seconds for the full job", *progress.Remaining)
+	}
+}
+
 func TestScanStartRejectsUnknownMode(t *testing.T) {
 	store, err := storage.New(filepath.Join(t.TempDir(), "devices.json"), filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {

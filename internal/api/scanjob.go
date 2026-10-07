@@ -40,9 +40,10 @@ type scanJob struct {
 	networkStartedAt time.Time
 	// estimatedSeconds is how long the current network took to scan last time,
 	// or 0 when it has never been scanned before.
-	estimatedSeconds float64
-	results          []networkScanSummary
-	err              string
+	estimatedSeconds      float64
+	estimatedTotalSeconds float64
+	results               []networkScanSummary
+	err                   string
 
 	// automatic marks a scan the background scanner started, as opposed to one
 	// the user clicked. Set once at creation. The UI uses it to stay quiet for
@@ -126,6 +127,14 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 		PortScanTotal:    j.portScanTotal,
 		PortScanComplete: j.portScanComplete,
 	}
+	if j.estimatedTotalSeconds > 0 {
+		remaining := j.estimatedTotalSeconds - time.Since(j.startedAt).Seconds()
+		if remaining < 0 {
+			remaining = 0
+		}
+		p.Remaining = &remaining
+	}
+
 	if j.portScanActive || j.mode == scanModeDeep {
 		p.Stage = scanModeDeep
 		if j.portScanComplete > 0 && !j.portScanStartedAt.IsZero() && j.portScanTotal > j.portScanComplete {
@@ -209,6 +218,13 @@ func (h *Handler) startScanJob(networks []string, automatic bool, mode string) *
 		results:   make([]networkScanSummary, 0, len(networks)),
 		automatic: automatic,
 		mode:      mode,
+	}
+	for _, network := range networks {
+		estimate := h.store.GetLastDuration(network)
+		if estimate <= 0 {
+			estimate = 30
+		}
+		job.estimatedTotalSeconds += estimate
 	}
 
 	h.store.ClearCompletedNetworks()

@@ -273,20 +273,10 @@ async function startScan(target, mode = 'quick') {
     await runScan(target, mode);
 }
 
-function toggleScanMenu(button) {
-    const menu = button.parentElement?.querySelector('.scan-mode-menu');
-    if (!menu) return;
-    document.querySelectorAll('.scan-mode-menu.show').forEach(openMenu => {
-        if (openMenu !== menu) openMenu.classList.remove('show');
-    });
-    menu.classList.toggle('show');
+async function startSelectedScan(button) {
+    const mode = button.parentElement?.querySelector('.scan-mode-select')?.value || 'quick';
+    await startScan(button.dataset.network || 'all', mode);
 }
-
-document.addEventListener('click', event => {
-    if (!event.target.closest('.scan-split-button')) {
-        document.querySelectorAll('.scan-mode-menu.show').forEach(menu => menu.classList.remove('show'));
-    }
-});
 
 // Device filtering
 // Filter set by clicking a summary chip ("flagged" / "moved"), or null.
@@ -2586,7 +2576,7 @@ function renderLiveProgressCard(progress) {
             <div class="scan-progress-card">
               <div class="scan-progress-topline">
                 <span class="scan-phase-badge">${phaseTitle}</span>
-                <span class="scan-eta">ETA ${eta}</span>
+                <span class="scan-eta">ETA <span id="scan-eta-live" data-seconds="${progress.remaining ?? ''}">${eta}</span></span>
               </div>
               <div class="scan-progress-title">${isDeep ? 'Inspecting services' : 'Scanning'} <strong>${currentTarget}</strong></div>
               <div class="scan-progress-detail">${isDeep ? `${progress.port_scan_complete} of ${progress.port_scan_total} known hosts checked` : `Network ${progress.network_index || 1} of ${progress.network_count}`}</div>
@@ -2595,7 +2585,7 @@ function renderLiveProgressCard(progress) {
               </div>
               <div class="scan-progress-footer">
                 <span>${isDeep ? `${portPct.toFixed(0)}% of service scan` : networkPct == null ? 'Measuring current scan speed...' : `${networkPct.toFixed(0)}% of full scan`}</span>
-                <span>${formatSeconds(progress.elapsed)} elapsed</span>
+                <span><span id="scan-elapsed-live" data-seconds="${progress.elapsed}">${formatSeconds(progress.elapsed)}</span> elapsed</span>
               </div>`;
         if (progress.last_port_scan_host?.ip) {
             const host = progress.last_port_scan_host;
@@ -2606,22 +2596,34 @@ function renderLiveProgressCard(progress) {
 
         card.innerHTML = html;
         card.style.display = 'block';
+        startProgressClock();
     } else {
         card.innerHTML = `
             <div style="text-align: center; color: var(--text-muted); padding: 1.5rem 0;">
                 <p>Scanner is currently idle</p>
-                <div class="scan-split-button" style="margin-top: 1rem;">
-                    <button class="btn btn-primary" onclick="startScan('all', 'quick')">Quick Scan</button>
-                    <button class="btn btn-primary scan-split-toggle" onclick="toggleScanMenu(this)" aria-label="Choose scan type">⌄</button>
-                    <div class="scan-mode-menu">
-                        <button type="button" onclick="startScan('all', 'quick')">Quick scan</button>
-                        <button type="button" onclick="startScan('all', 'deep')">Deep scan</button>
-                        <button type="button" onclick="startScan('all', 'both')">Both stages</button>
-                    </div>
+                <div class="scan-control" style="margin-top: 1rem;">
+                    <select class="scan-mode-select" aria-label="Scan type"><option value="quick">Quick scan</option><option value="deep">Deep scan</option><option value="both">Both stages</option></select>
+                    <button class="btn btn-primary" data-network="all" onclick="startSelectedScan(this)">Run scan</button>
                 </div>
             </div>
         `;
     }
+}
+
+let progressClock = null;
+
+function startProgressClock() {
+    if (progressClock) clearInterval(progressClock);
+    const updatedAt = Date.now();
+    const elapsedEl = document.getElementById('scan-elapsed-live');
+    const etaEl = document.getElementById('scan-eta-live');
+    const elapsedBase = Number(elapsedEl?.dataset.seconds);
+    const etaBase = Number(etaEl?.dataset.seconds);
+    progressClock = setInterval(() => {
+        const elapsedSinceUpdate = (Date.now() - updatedAt) / 1000;
+        if (elapsedEl && Number.isFinite(elapsedBase)) elapsedEl.textContent = formatSeconds(elapsedBase + elapsedSinceUpdate);
+        if (etaEl && Number.isFinite(etaBase)) etaEl.textContent = formatSeconds(Math.max(0, etaBase - elapsedSinceUpdate));
+    }, 1000);
 }
 
 function renderScanHistory(history) {
