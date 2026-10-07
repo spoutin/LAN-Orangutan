@@ -1266,31 +1266,13 @@ function openDeviceSidebar(target) {
         const portsEl = document.getElementById('sb-open-ports');
         if (portsEl) portsEl.textContent = data.openPorts || 'None detected';
 
-		const servicesEl = document.getElementById('sb-open-services');
-		if (servicesEl) {
+		const servicesSummary = document.getElementById('sb-open-services-summary');
+		const servicesButton = document.getElementById('sb-services-btn');
+		if (servicesSummary) {
 			let services = [];
 			try { services = JSON.parse(data.openServices || '[]'); } catch (_) {}
-			if (services.length) {
-				servicesEl.replaceChildren(...services.map(service => {
-					const item = document.createElement('div');
-					item.className = 'open-service-item';
-					const port = document.createElement('code');
-					port.textContent = service.port;
-					const name = document.createElement('strong');
-					name.textContent = service.name || 'unknown';
-					item.append(port, name);
-					if (service.version) {
-						const version = document.createElement('span');
-						version.textContent = service.version;
-						item.append(version);
-					}
-					return item;
-				}));
-			} else if (data.openPorts) {
-				servicesEl.textContent = data.openPorts.split(',').map(port => `${port.trim()} · service unknown`).join(', ');
-			} else {
-				servicesEl.textContent = 'Not scanned yet';
-			}
+			servicesSummary.textContent = services.length ? `${services.length} detected` : data.openPorts ? `${data.openPorts.split(',').length} detected` : 'Not scanned yet';
+			if (servicesButton) servicesButton.style.display = services.length || data.openPorts ? '' : 'none';
 		}
 
 		const sshEl = document.getElementById('sb-ssh');
@@ -1345,6 +1327,42 @@ function openDeviceSidebar(target) {
     // Show sidebar
     const sidebar = document.getElementById('device-sidebar');
     if (sidebar) sidebar.classList.remove('hidden');
+}
+
+function openServiceDetails() {
+	const row = document.querySelector('.device-row.selected-row');
+	if (!row) return;
+	let services = [];
+	try { services = JSON.parse(row.dataset.openServices || '[]'); } catch (_) {}
+	const ports = row.dataset.openPorts ? row.dataset.openPorts.split(',').map(port => port.trim()).filter(Boolean) : [];
+	const title = row.dataset.customHostnameOriginal || row.dataset.hostnameDisplay || row.dataset.hostname || row.dataset.ip;
+	document.getElementById('service-details-title').textContent = 'Open Services';
+	document.getElementById('service-details-subtitle').textContent = `${title} · ${row.dataset.ip}`;
+	const body = document.getElementById('service-details-body');
+	body.replaceChildren();
+	if (!ports.length) {
+		body.textContent = 'No deep scan results are available for this device.';
+	} else {
+		const table = document.createElement('table');
+		table.className = 'service-details-table';
+		table.innerHTML = '<thead><tr><th>Port</th><th>Service</th><th>Version / Details</th></tr></thead>';
+		const tbody = document.createElement('tbody');
+		const byPort = new Map(services.map(service => [String(service.port), service]));
+		ports.forEach(port => {
+			const service = byPort.get(port) || {};
+			const tr = document.createElement('tr');
+			[port, service.name || 'Unknown', service.version || 'No version information'].forEach(value => {
+				const td = document.createElement('td'); td.textContent = value; tr.append(td);
+			});
+			tbody.append(tr);
+		});
+		table.append(tbody); body.append(table);
+	}
+	document.getElementById('service-details-modal').style.display = 'flex';
+}
+
+function closeServiceDetails() {
+	document.getElementById('service-details-modal').style.display = 'none';
 }
 
 function closeDeviceSidebar() {

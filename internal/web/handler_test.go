@@ -593,6 +593,26 @@ func TestIndexPageRendersWithTelemetry(t *testing.T) {
 	}
 }
 
+func TestIndexPageRendersServiceDetailsModal(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	dev := types.Device{IP: "192.168.1.60", Hostname: "nas", FirstSeen: time.Now(), LastSeen: time.Now()}
+	if err := h.store.UpdateDevice(&dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+	if err := h.store.UpdateOpenPorts(dev.IP, []int{22, 443}, []types.OpenService{{Port: 22, Name: "ssh", Version: "OpenSSH 9.2p1"}, {Port: 443, Name: "https"}}); err != nil {
+		t.Fatalf("UpdateOpenPorts: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rec.Body.String()
+	for _, expected := range []string{"service-details-modal", "View services", `data-open-services='[{"port":22`, "Open services"} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("expected body to contain %q", expected)
+		}
+	}
+}
+
 func TestIndexPageRendersSwitchConnection(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 	poeWatts := 8.2

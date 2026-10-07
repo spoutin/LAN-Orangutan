@@ -628,10 +628,11 @@ orangutan export out.csv</code></pre>
                                             <span class="spec-label">Open Ports:</span>
                                             <span class="spec-val" id="sb-open-ports">—</span>
                                         </li>
-									<li class="open-services-row">
-										<span class="spec-label">Open Services:</span>
-										<div class="open-services-list" id="sb-open-services">Not scanned yet</div>
+									<li>
+										<span class="spec-label">Open services:</span>
+										<span class="spec-val" id="sb-open-services-summary">Not scanned yet</span>
 									</li>
+									<button type="button" class="btn sb-services-button" id="sb-services-btn" onclick="openServiceDetails()">View services</button>
 									<li>
 										<span class="spec-label">SSH:</span>
 										<span class="spec-val" id="sb-ssh">—</span>
@@ -888,6 +889,17 @@ orangutan export out.csv</code></pre>
     </div>
 
     <div id="toast" class="toast"></div>
+
+	<div id="service-details-modal" class="modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="service-details-title">
+		<div class="modal-content service-details-modal-content">
+			<div class="modal-header">
+				<div><h3 id="service-details-title">Open Services</h3><p id="service-details-subtitle" class="service-details-subtitle"></p></div>
+				<button class="modal-close" onclick="closeServiceDetails()" aria-label="Close">×</button>
+			</div>
+			<div class="modal-body service-details-body" id="service-details-body"></div>
+			<div class="modal-footer"><button class="btn btn-primary" onclick="closeServiceDetails()">Close</button></div>
+		</div>
+	</div>
 
     <footer class="footer">
         <p>LAN Orangutan &bull; <a href="https://github.com/spoutin/LAN-Orangutan" target="_blank">GitHub</a></p>
