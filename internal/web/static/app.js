@@ -2576,37 +2576,33 @@ function renderLiveProgressCard(progress) {
     if (!card) return;
 
     if (progress.status === 'running') {
-        let pct = progress.percent;
-        if (pct < 0) pct = 0;
+        const isDeep = progress.stage === 'deep';
+        const networkPct = progress.percent >= 0 ? progress.percent : null;
+        const portPct = progress.port_scan_total > 0 ? (progress.port_scan_complete / progress.port_scan_total) * 100 : 0;
+        const eta = progress.remaining != null ? formatSeconds(progress.remaining) : 'Estimating...';
+        const phaseTitle = isDeep ? 'Stage 2 · Service discovery' : 'Stage 1 · Device discovery';
+        const currentTarget = progress.current_network_name || progress.current_network || 'Preparing scan';
         let html = `
-            <div class="progress-header" style="display: flex; justify-content: space-between; align-items: center;">
-                <h3>Scanning ${progress.current_network_name || progress.current_network || ''}</h3>
-                <span class="badge badge-running" style="background: var(--accent); color: white; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: bold; animation: pulse 1.5s infinite;">Running</span>
-            </div>
-            <div class="scan-bar" style="margin: 1rem 0; height: 12px; background: var(--bg-card-hover); border-radius: 6px; overflow: hidden;">
-                <div class="scan-bar-fill" style="width: ${pct}%; height: 100%; background: var(--accent); transition: width 0.4s ease;"></div>
-            </div>
-            <div class="progress-meta" style="display: flex; justify-content: space-between; font-size: 0.9rem; color: var(--text-muted);">
-                <span>Network ${progress.network_index} of ${progress.network_count}</span>
-                <span>${pct.toFixed(0)}% Complete</span>
-            </div>
-        `;
-
-        if (progress.port_scan_active) {
-            let portPct = (progress.port_scan_complete / progress.port_scan_total) * 100;
-            if (isNaN(portPct)) portPct = 0;
-            html += `
-                <div class="port-progress" style="margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem;">
-                    <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.5rem;">
-                        <span>Port Prober (Stage 2)</span>
-                        <span>${progress.port_scan_complete}/${progress.port_scan_total} hosts done (${portPct.toFixed(0)}%)</span>
-                    </div>
-                    <div class="scan-bar" style="height: 6px; background: var(--bg-card-hover); border-radius: 3px; overflow: hidden;">
-                        <div class="scan-bar-fill" style="width: ${portPct}%; height: 100%; background: var(--accent); transition: width 0.4s ease;"></div>
-                    </div>
-                </div>
-            `;
+            <div class="scan-progress-card">
+              <div class="scan-progress-topline">
+                <span class="scan-phase-badge">${phaseTitle}</span>
+                <span class="scan-eta">ETA ${eta}</span>
+              </div>
+              <div class="scan-progress-title">${isDeep ? 'Inspecting services' : 'Scanning'} <strong>${currentTarget}</strong></div>
+              <div class="scan-progress-detail">${isDeep ? `${progress.port_scan_complete} of ${progress.port_scan_total} known hosts checked` : `Network ${progress.network_index || 1} of ${progress.network_count}`}</div>
+              <div class="scan-progress-track">
+                <div class="scan-progress-fill" style="width: ${isDeep ? portPct : (networkPct ?? 0)}%"></div>
+              </div>
+              <div class="scan-progress-footer">
+                <span>${isDeep ? `${portPct.toFixed(0)}% of service scan` : networkPct == null ? 'Measuring current scan speed...' : `${networkPct.toFixed(0)}% of full scan`}</span>
+                <span>${formatSeconds(progress.elapsed)} elapsed</span>
+              </div>`;
+        if (progress.last_port_scan_host?.ip) {
+            const host = progress.last_port_scan_host;
+            const ports = host.error ? host.error : host.open_ports?.length ? `Open: ${host.open_ports.join(', ')}` : 'No open ports found';
+            html += `<div class="scan-latest-result"><span>Latest result</span><strong>${host.hostname || host.ip}</strong><code>${host.ip}</code><em>${ports}</em></div>`;
         }
+        html += `</div>`;
 
         card.innerHTML = html;
         card.style.display = 'block';

@@ -5,10 +5,32 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 )
+
+func TestScanProgressReportsLastDeepScanHost(t *testing.T) {
+	job := &scanJob{
+		status:           "running",
+		startedAt:        time.Now().Add(-10 * time.Second),
+		networks:         []string{"192.168.1.0/24"},
+		mode:             scanModeDeep,
+		portScanActive:   true,
+		portScanTotal:    4,
+		portScanComplete: 2,
+		lastPortScanHost: scanHostResult{IP: "192.168.1.25", Hostname: "nas", OpenPorts: []int{22, 443}},
+	}
+
+	progress := job.snapshot(config.Default(), nil)
+	if progress.Stage != "deep" {
+		t.Errorf("Stage = %q, want deep", progress.Stage)
+	}
+	if progress.LastPortScanHost.IP != "192.168.1.25" || len(progress.LastPortScanHost.OpenPorts) != 2 {
+		t.Errorf("LastPortScanHost = %+v, want completed NAS scan", progress.LastPortScanHost)
+	}
+}
 
 func TestScanStartRejectsUnknownMode(t *testing.T) {
 	store, err := storage.New(filepath.Join(t.TempDir(), "devices.json"), filepath.Join(t.TempDir(), "state.json"))

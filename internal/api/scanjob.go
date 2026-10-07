@@ -51,13 +51,22 @@ type scanJob struct {
 	mode      string
 
 	// Stage 2 port scanning telemetry
-	portScanActive   bool
-	portScanTotal    int
-	portScanComplete int
-	portScanWG       sync.WaitGroup
+	portScanActive    bool
+	portScanTotal     int
+	portScanComplete  int
+	portScanWG        sync.WaitGroup
+	lastPortScanHost  scanHostResult
+	portScanStartedAt time.Time
 
 	accumulatedNew  []string
 	accumulatedSeen []string
+}
+
+type scanHostResult struct {
+	IP        string `json:"ip"`
+	Hostname  string `json:"hostname,omitempty"`
+	OpenPorts []int  `json:"open_ports"`
+	Error     string `json:"error,omitempty"`
 }
 
 // scanProgress is the snapshot of a job returned to the UI.
@@ -81,8 +90,10 @@ type scanProgress struct {
 	// Automatic is true for a scan the background scanner started. The UI does
 	// not show its progress overlay for these, so an automatic scan never pops
 	// a dialog with a Cancel button on its own.
-	Automatic bool   `json:"automatic"`
-	Mode      string `json:"mode"`
+	Automatic        bool           `json:"automatic"`
+	Mode             string         `json:"mode"`
+	Stage            string         `json:"stage"`
+	LastPortScanHost scanHostResult `json:"last_port_scan_host"`
 
 	// Stage 2 port scanning progress fields
 	PortScanActive   bool `json:"port_scan_active"`
@@ -110,9 +121,20 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 		Error:            j.err,
 		Automatic:        j.automatic,
 		Mode:             j.mode,
+		LastPortScanHost: j.lastPortScanHost,
 		PortScanActive:   j.portScanActive,
 		PortScanTotal:    j.portScanTotal,
 		PortScanComplete: j.portScanComplete,
+	}
+	if j.portScanActive || j.mode == scanModeDeep {
+		p.Stage = scanModeDeep
+		if j.portScanComplete > 0 && !j.portScanStartedAt.IsZero() && j.portScanTotal > j.portScanComplete {
+			averagePerHost := time.Since(j.portScanStartedAt).Seconds() / float64(j.portScanComplete)
+			remaining := averagePerHost * float64(j.portScanTotal-j.portScanComplete)
+			p.Remaining = &remaining
+		}
+	} else {
+		p.Stage = scanModeQuick
 	}
 
 	if j.currentNetwork != "" && cfg != nil {
@@ -666,6 +688,9 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 
 	j.mu.Lock()
 	j.portScanActive = true
+	if j.portScanStartedAt.IsZero() {
+		j.portScanStartedAt = time.Now()
+	}
 	j.portScanTotal += len(activeDevices)
 	j.mu.Unlock()
 
@@ -715,6 +740,10 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 			// Increment completion count
 			j.mu.Lock()
 			j.portScanComplete++
+			j.lastPortScanHost = scanHostResult{IP: device.IP, Hostname: device.Hostname, OpenPorts: ports}
+			if err != nil {
+				j.lastPortScanHost.Error = err.Error()
+			}
 			if j.portScanComplete >= j.portScanTotal {
 				j.portScanActive = false
 			}

@@ -3234,12 +3234,26 @@ img.login-logo {
 .scan-split-button {
     position: relative;
     display: inline-flex;
+    align-items: stretch;
+    border-radius: var(--radius-sm);
+    overflow: visible;
+}
+
+.scan-split-button > :first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
 }
 
 .scan-split-toggle {
-    padding-left: 0.45rem;
-    padding-right: 0.45rem;
-    margin-left: 1px;
+    width: 1.9rem;
+    padding: 0;
+    margin-left: 0;
+    border-left: 1px solid currentColor !important;
+    border-top-left-radius: 0 !important;
+    border-bottom-left-radius: 0 !important;
+    border-top-right-radius: var(--radius-sm) !important;
+    border-bottom-right-radius: var(--radius-sm) !important;
+    opacity: 0.85;
 }
 
 .scan-mode-menu {
@@ -3274,3 +3288,14 @@ img.login-logo {
 .scan-mode-menu button:hover {
     background: var(--bg-card-hover);
 }
+
+.scan-progress-card { display: grid; gap: 0.65rem; }
+.scan-progress-topline, .scan-progress-footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; font-size: 0.78rem; color: var(--text-muted); }
+.scan-phase-badge { color: var(--accent-primary); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+.scan-progress-title { font-size: 1.05rem; }
+.scan-progress-detail { font-size: 0.85rem; color: var(--text-muted); }
+.scan-progress-track { height: 0.55rem; overflow: hidden; background: var(--bg-card-hover); border-radius: 999px; }
+.scan-progress-fill { height: 100%; background: var(--accent-primary); border-radius: inherit; transition: width 0.4s ease; }
+.scan-latest-result { display: grid; grid-template-columns: auto 1fr auto; gap: 0.35rem 0.75rem; align-items: center; padding: 0.7rem; background: var(--bg-card-hover); border-left: 3px solid var(--accent-primary); border-radius: var(--radius-sm); font-size: 0.82rem; }
+.scan-latest-result > span { grid-column: 1 / -1; color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.scan-latest-result code, .scan-latest-result em { color: var(--text-muted); font-style: normal; }
