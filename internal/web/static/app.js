@@ -2571,14 +2571,19 @@ function renderLiveProgressCard(progress) {
         const portPct = progress.port_scan_total > 0 ? (progress.port_scan_complete / progress.port_scan_total) * 100 : 0;
         const eta = progress.remaining != null ? formatSeconds(progress.remaining) : 'Estimating...';
         const phaseTitle = isDeep ? 'Stage 2 · Service discovery' : 'Stage 1 · Device discovery';
-        const currentTarget = progress.current_network_name || progress.current_network || 'Preparing scan';
+        const currentTarget = isDeep ? (progress.current_network || 'Preparing service scan') : (progress.current_network_name || progress.current_network || 'Preparing scan');
+        const deepChecklist = isDeep && progress.deep_networks?.length ? `<div class="scan-network-checklist">${progress.deep_networks.map(network => {
+            const state = network.complete >= network.total ? 'complete' : network.complete > 0 || network.network === progress.current_network ? 'active' : 'queued';
+            const marker = state === 'complete' ? '✓' : state === 'active' ? '●' : '○';
+            return `<div class="scan-network-row ${state}"><span>${marker}</span><strong>${network.network}</strong><em>${network.complete} / ${network.total}</em></div>`;
+        }).join('')}</div>` : '';
         let html = `
             <div class="scan-progress-card">
               <div class="scan-progress-topline">
                 <span class="scan-phase-badge">${phaseTitle}</span>
                 <span class="scan-eta">ETA <span id="scan-eta-live" data-seconds="${progress.remaining ?? ''}">${eta}</span></span>
               </div>
-              <div class="scan-progress-title">${isDeep ? 'Inspecting services' : 'Scanning'} <strong>${currentTarget}</strong></div>
+              <div class="scan-progress-title">${isDeep ? 'Service scan across selected networks' : 'Scanning'}${isDeep ? '' : ` <strong>${currentTarget}</strong>`}</div>
               <div class="scan-progress-detail">${isDeep ? `${progress.port_scan_complete} of ${progress.port_scan_total} known hosts checked` : `Network ${progress.network_index || 1} of ${progress.network_count}`}</div>
               <div class="scan-progress-track">
                 <div class="scan-progress-fill" style="width: ${isDeep ? portPct : (networkPct ?? 0)}%"></div>
@@ -2586,7 +2591,7 @@ function renderLiveProgressCard(progress) {
               <div class="scan-progress-footer">
                 <span>${isDeep ? `${portPct.toFixed(0)}% of service scan` : networkPct == null ? 'Measuring current scan speed...' : `${networkPct.toFixed(0)}% of full scan`}</span>
                 <span><span id="scan-elapsed-live" data-seconds="${progress.elapsed}">${formatSeconds(progress.elapsed)}</span> elapsed</span>
-              </div>`;
+              </div>${deepChecklist}`;
         if (progress.last_port_scan_host?.ip) {
             const host = progress.last_port_scan_host;
             const ports = host.error ? host.error : host.open_ports?.length ? `Open: ${host.open_ports.join(', ')}` : 'No open ports found';

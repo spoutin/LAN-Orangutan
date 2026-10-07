@@ -52,12 +52,13 @@ type scanJob struct {
 	mode      string
 
 	// Stage 2 port scanning telemetry
-	portScanActive    bool
-	portScanTotal     int
-	portScanComplete  int
-	portScanWG        sync.WaitGroup
-	lastPortScanHost  scanHostResult
-	portScanStartedAt time.Time
+	portScanActive      bool
+	portScanTotal       int
+	portScanComplete    int
+	portScanWG          sync.WaitGroup
+	lastPortScanHost    scanHostResult
+	portScanStartedAt   time.Time
+	deepNetworkProgress []deepNetworkProgress
 
 	accumulatedNew  []string
 	accumulatedSeen []string
@@ -66,8 +67,15 @@ type scanJob struct {
 type scanHostResult struct {
 	IP        string `json:"ip"`
 	Hostname  string `json:"hostname,omitempty"`
+	Network   string `json:"network,omitempty"`
 	OpenPorts []int  `json:"open_ports"`
 	Error     string `json:"error,omitempty"`
+}
+
+type deepNetworkProgress struct {
+	Network  string `json:"network"`
+	Total    int    `json:"total"`
+	Complete int    `json:"complete"`
 }
 
 // scanProgress is the snapshot of a job returned to the UI.
@@ -91,10 +99,11 @@ type scanProgress struct {
 	// Automatic is true for a scan the background scanner started. The UI does
 	// not show its progress overlay for these, so an automatic scan never pops
 	// a dialog with a Cancel button on its own.
-	Automatic        bool           `json:"automatic"`
-	Mode             string         `json:"mode"`
-	Stage            string         `json:"stage"`
-	LastPortScanHost scanHostResult `json:"last_port_scan_host"`
+	Automatic        bool                  `json:"automatic"`
+	Mode             string                `json:"mode"`
+	Stage            string                `json:"stage"`
+	LastPortScanHost scanHostResult        `json:"last_port_scan_host"`
+	DeepNetworks     []deepNetworkProgress `json:"deep_networks"`
 
 	// Stage 2 port scanning progress fields
 	PortScanActive   bool `json:"port_scan_active"`
@@ -126,6 +135,15 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 		PortScanActive:   j.portScanActive,
 		PortScanTotal:    j.portScanTotal,
 		PortScanComplete: j.portScanComplete,
+		DeepNetworks:     append([]deepNetworkProgress(nil), j.deepNetworkProgress...),
+	}
+	if j.portScanActive || j.mode == scanModeDeep {
+		for _, network := range j.deepNetworkProgress {
+			if network.Total > network.Complete {
+				p.CurrentNetwork = network.Network
+				break
+			}
+		}
 	}
 	if j.estimatedTotalSeconds > 0 {
 		remaining := j.estimatedTotalSeconds - time.Since(j.startedAt).Seconds()
@@ -137,7 +155,7 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 
 	if j.portScanActive || j.mode == scanModeDeep {
 		p.Stage = scanModeDeep
-		if p.Remaining == nil && j.portScanComplete > 0 && !j.portScanStartedAt.IsZero() && j.portScanTotal > j.portScanComplete {
+		if j.portScanComplete > 0 && !j.portScanStartedAt.IsZero() && j.portScanTotal > j.portScanComplete {
 			averagePerHost := time.Since(j.portScanStartedAt).Seconds() / float64(j.portScanComplete)
 			remaining := averagePerHost * float64(j.portScanTotal-j.portScanComplete)
 			p.Remaining = &remaining
@@ -242,6 +260,7 @@ func (h *Handler) startScanJob(networks []string, automatic bool, mode string) *
 // hide results from the others.
 func (j *scanJob) run(ctx context.Context, h *Handler) {
 	activeIPsMap := make(map[string]bool)
+	deepTargets := make(map[string][]types.Device)
 
 	defer h.store.SetScanRunning(false)
 
@@ -320,7 +339,8 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			}
 		}
 
-		// Launch asynchronous port scan (Stage 2) on discovered active devices
+		// Stage 2 begins after discovery has covered every requested network, so
+		// each result and progress indicator has one unambiguous network context.
 		if j.mode == scanModeBoth && h.cfg.Scanning.PortScanRange != "" && (!j.automatic || h.cfg.Scanning.EnablePortScan) {
 			shouldPortScan := false
 			if !j.automatic {
@@ -345,13 +365,13 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			}
 
 			if shouldPortScan {
-				j.portScanWG.Add(1)
-				go func(devices []types.Device) {
-					defer j.portScanWG.Done()
-					j.startPortScan(ctx, h, devices)
-				}(result.Devices)
+				deepTargets[cidr] = append(deepTargets[cidr], result.Devices...)
 			}
 		}
+	}
+
+	if len(deepTargets) > 0 && ctx.Err() == nil {
+		j.runDeepQueue(ctx, h, deepTargets)
 	}
 
 	// Supplemental discovery, once for the whole job: IPv6 neighbors (an IPv6
@@ -522,9 +542,6 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		}
 	}
 
-	// Wait for any asynchronous port scanning (Stage 2) to complete before finishing the job
-	j.portScanWG.Wait()
-
 	if ctx.Err() == nil {
 		var activeIPs []string
 		for ip := range activeIPsMap {
@@ -545,11 +562,48 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	}
 }
 
+func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork map[string][]types.Device) {
+	progress := make([]deepNetworkProgress, 0, len(j.networks))
+	for _, network := range j.networks {
+		if targets := targetsByNetwork[network]; len(targets) > 0 {
+			progress = append(progress, deepNetworkProgress{Network: network, Total: len(targets)})
+		}
+	}
+	if len(progress) == 0 {
+		return
+	}
+
+	j.mu.Lock()
+	j.portScanActive = true
+	j.portScanStartedAt = time.Now()
+	j.deepNetworkProgress = progress
+	for _, network := range progress {
+		j.portScanTotal += network.Total
+	}
+	j.mu.Unlock()
+
+	for _, network := range j.networks {
+		if ctx.Err() != nil {
+			return
+		}
+		targets := targetsByNetwork[network]
+		if len(targets) == 0 {
+			continue
+		}
+		j.startPortScan(ctx, h, network, targets)
+	}
+
+	j.mu.Lock()
+	j.portScanActive = false
+	j.mu.Unlock()
+}
+
 // runDeepScan probes currently online inventory records without rediscovering
 // the network. This gives users an explicit Stage 2-only operation.
 func (j *scanJob) runDeepScan(ctx context.Context, h *Handler) {
 	devices := h.store.GetDevices()
 	interval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
+	targetsByNetwork := make(map[string][]types.Device)
 	for i, cidr := range j.networks {
 		if ctx.Err() != nil {
 			return
@@ -569,16 +623,9 @@ func (j *scanJob) runDeepScan(ctx context.Context, h *Handler) {
 			}
 		}
 		j.addResult(networkScanSummary{Network: cidr, Status: "scanned", DeviceCount: len(targets)}, len(targets))
-		if len(targets) == 0 {
-			continue
-		}
-		j.portScanWG.Add(1)
-		go func(targets []types.Device) {
-			defer j.portScanWG.Done()
-			j.startPortScan(ctx, h, targets)
-		}(targets)
+		targetsByNetwork[cidr] = targets
 	}
-	j.portScanWG.Wait()
+	j.runDeepQueue(ctx, h, targetsByNetwork)
 }
 
 // beginNetwork records that the job has started scanning a network.
@@ -688,7 +735,7 @@ func (h *Handler) runBackgroundScan() {
 }
 
 // startPortScan runs a targeted high-speed port scan on a list of discovered active devices.
-func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types.Device) {
+func (j *scanJob) startPortScan(ctx context.Context, h *Handler, network string, devices []types.Device) {
 	var activeDevices []types.Device
 	for _, d := range devices {
 		if d.IP != "" {
@@ -699,14 +746,6 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 	if len(activeDevices) == 0 {
 		return
 	}
-
-	j.mu.Lock()
-	j.portScanActive = true
-	if j.portScanStartedAt.IsZero() {
-		j.portScanStartedAt = time.Now()
-	}
-	j.portScanTotal += len(activeDevices)
-	j.mu.Unlock()
 
 	// Use a worker pool to scan devices sequentially (max 1 host at once)
 	const concurrency = 1
@@ -754,12 +793,15 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, devices []types
 			// Increment completion count
 			j.mu.Lock()
 			j.portScanComplete++
-			j.lastPortScanHost = scanHostResult{IP: device.IP, Hostname: device.Hostname, OpenPorts: ports}
+			for i := range j.deepNetworkProgress {
+				if j.deepNetworkProgress[i].Network == network {
+					j.deepNetworkProgress[i].Complete++
+					break
+				}
+			}
+			j.lastPortScanHost = scanHostResult{IP: device.IP, Hostname: device.Hostname, Network: network, OpenPorts: ports}
 			if err != nil {
 				j.lastPortScanHost.Error = err.Error()
-			}
-			if j.portScanComplete >= j.portScanTotal {
-				j.portScanActive = false
 			}
 			j.mu.Unlock()
 		}(d)

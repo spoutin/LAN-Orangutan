@@ -3247,3 +3247,9 @@ img.login-logo {
 .scan-latest-result { display: grid; grid-template-columns: auto 1fr auto; gap: 0.35rem 0.75rem; align-items: center; padding: 0.7rem; background: var(--bg-card-hover); border-left: 3px solid var(--accent-primary); border-radius: var(--radius-sm); font-size: 0.82rem; }
 .scan-latest-result > span { grid-column: 1 / -1; color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
 .scan-latest-result code, .scan-latest-result em { color: var(--text-muted); font-style: normal; }
+.scan-network-checklist { display: grid; gap: 0.3rem; padding-top: 0.2rem; }
+.scan-network-row { display: grid; grid-template-columns: 1rem 1fr auto; gap: 0.4rem; align-items: center; font-size: 0.8rem; color: var(--text-muted); }
+.scan-network-row strong { font-weight: 500; }
+.scan-network-row em { font-style: normal; font-variant-numeric: tabular-nums; }
+.scan-network-row.complete { color: var(--success); }
+.scan-network-row.active { color: var(--accent-primary); }

@@ -13,14 +13,16 @@ import (
 
 func TestScanProgressReportsLastDeepScanHost(t *testing.T) {
 	job := &scanJob{
-		status:           "running",
-		startedAt:        time.Now().Add(-10 * time.Second),
-		networks:         []string{"192.168.1.0/24"},
-		mode:             scanModeDeep,
-		portScanActive:   true,
-		portScanTotal:    4,
-		portScanComplete: 2,
-		lastPortScanHost: scanHostResult{IP: "192.168.1.25", Hostname: "nas", OpenPorts: []int{22, 443}},
+		status:              "running",
+		startedAt:           time.Now().Add(-10 * time.Second),
+		networks:            []string{"192.168.1.0/24"},
+		mode:                scanModeDeep,
+		portScanActive:      true,
+		portScanTotal:       4,
+		portScanComplete:    2,
+		currentNetwork:      "10.20.0.0/24",
+		lastPortScanHost:    scanHostResult{IP: "192.168.1.25", Hostname: "nas", Network: "192.168.1.0/24", OpenPorts: []int{22, 443}},
+		deepNetworkProgress: []deepNetworkProgress{{Network: "192.168.1.0/24", Total: 4, Complete: 2}},
 	}
 
 	progress := job.snapshot(config.Default(), nil)
@@ -29,6 +31,9 @@ func TestScanProgressReportsLastDeepScanHost(t *testing.T) {
 	}
 	if progress.LastPortScanHost.IP != "192.168.1.25" || len(progress.LastPortScanHost.OpenPorts) != 2 {
 		t.Errorf("LastPortScanHost = %+v, want completed NAS scan", progress.LastPortScanHost)
+	}
+	if progress.CurrentNetwork != "192.168.1.0/24" {
+		t.Errorf("CurrentNetwork = %q, want latest deep-scan network", progress.CurrentNetwork)
 	}
 }
 
@@ -50,6 +55,27 @@ func TestScanProgressUsesTotalJobETA(t *testing.T) {
 	}
 	if *progress.Remaining < 78 || *progress.Remaining > 82 {
 		t.Errorf("Remaining = %.1f, want about 80 seconds for the full job", *progress.Remaining)
+	}
+}
+
+func TestScanProgressReportsDeepQueueByNetwork(t *testing.T) {
+	job := &scanJob{
+		status:              "running",
+		startedAt:           time.Now().Add(-30 * time.Second),
+		networks:            []string{"192.168.1.0/24", "10.20.0.0/24"},
+		mode:                scanModeBoth,
+		portScanActive:      true,
+		portScanTotal:       6,
+		portScanComplete:    3,
+		deepNetworkProgress: []deepNetworkProgress{{Network: "192.168.1.0/24", Total: 2, Complete: 2}, {Network: "10.20.0.0/24", Total: 4, Complete: 1}},
+	}
+
+	progress := job.snapshot(config.Default(), nil)
+	if progress.CurrentNetwork != "10.20.0.0/24" {
+		t.Errorf("CurrentNetwork = %q, want active deep-scan network", progress.CurrentNetwork)
+	}
+	if len(progress.DeepNetworks) != 2 || progress.DeepNetworks[0].Complete != 2 || progress.DeepNetworks[1].Complete != 1 {
+		t.Errorf("DeepNetworks = %+v, want network queue progress", progress.DeepNetworks)
 	}
 }
 
