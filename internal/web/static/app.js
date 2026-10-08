@@ -1327,6 +1327,7 @@ function openDeviceSidebar(target) {
     // Show sidebar
     const sidebar = document.getElementById('device-sidebar');
     if (sidebar) sidebar.classList.remove('hidden');
+    initializeSidebarSaveState();
 }
 
 function openServiceDetails() {
@@ -1369,6 +1370,54 @@ function closeDeviceSidebar() {
     const sidebar = document.getElementById('device-sidebar');
     if (sidebar) sidebar.classList.add('hidden');
     document.querySelectorAll('.device-row.selected-row').forEach(r => r.classList.remove('selected-row'));
+	resetSidebarSaveState();
+}
+
+let sidebarSaveBaseline = '';
+let sidebarInlineSaveVisible = false;
+let sidebarSaveObserver;
+
+function sidebarFormState() {
+	const form = document.getElementById('sb-edit-form');
+	if (!form) return '';
+	return Array.from(new FormData(form).entries()).map(([name, value]) => `${name}=${value}`).join('&');
+}
+
+function sidebarHasUnsavedChanges() {
+	return sidebarSaveBaseline !== '' && sidebarFormState() !== sidebarSaveBaseline;
+}
+
+function updateSidebarSaveBar() {
+	const bar = document.getElementById('sb-save-bar');
+	if (bar) bar.classList.toggle('hidden', !sidebarHasUnsavedChanges() || sidebarInlineSaveVisible);
+}
+
+function resetSidebarSaveState() {
+	sidebarSaveBaseline = '';
+	sidebarInlineSaveVisible = false;
+	sidebarSaveObserver?.disconnect();
+	sidebarSaveObserver = undefined;
+	updateSidebarSaveBar();
+}
+
+function initializeSidebarSaveState() {
+	resetSidebarSaveState();
+	sidebarSaveBaseline = sidebarFormState();
+	const form = document.getElementById('sb-edit-form');
+	if (form) {
+		form.oninput = updateSidebarSaveBar;
+		form.onchange = updateSidebarSaveBar;
+	}
+	const inlineSave = document.getElementById('sb-inline-save');
+	const scrollRoot = document.querySelector('.sidebar-scrollable-body');
+	if (inlineSave && scrollRoot) {
+		sidebarSaveObserver = new IntersectionObserver(([entry]) => {
+			sidebarInlineSaveVisible = entry.isIntersecting;
+			updateSidebarSaveBar();
+		}, { root: scrollRoot, threshold: 0.95 });
+		sidebarSaveObserver.observe(inlineSave);
+	}
+	updateSidebarSaveBar();
 }
 
 function updateSSHPortControl() {
@@ -1405,16 +1454,11 @@ async function saveSidebarDevice() {
 		return;
 	}
 
-    const saveBtn = document.querySelector('#sb-edit-form button[type="submit"]') ||
-                    document.querySelector('#sb-edit-form button.btn-primary') ||
-                    document.querySelector('#sb-edit-form button[onclick*="saveSidebarDevice"]');
-    const originalBtnText = saveBtn ? saveBtn.innerHTML : 'Save Changes';
+    const saveButtons = Array.from(document.querySelectorAll('#sb-inline-save, #sb-floating-save'));
+    const originalBtnText = 'Save Changes';
 
     try {
-        if (saveBtn) {
-            saveBtn.disabled = true;
-            saveBtn.textContent = 'Saving...';
-        }
+        saveButtons.forEach(button => { button.disabled = true; button.textContent = 'Saving...'; });
 
         const payload = {
             ip,
@@ -1505,18 +1549,6 @@ async function saveSidebarDevice() {
                     cellHtml = '<span style="color:var(--text-muted)">-</span>';
                 }
 
-                if (notes) {
-                    cellHtml += `
-                        <span class="notes-indicator" data-tip="${escapeHtml(notes)}" style="margin-left: 4px; vertical-align: middle;"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>
-                    `;
-                }
-
-                if (ansible_managed) {
-                    cellHtml += `
-                        <span class="ansible-indicator" data-tip="Ansible Managed" style="margin-left: 4px; vertical-align: middle; color: #EE0000;" title="Ansible Managed"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8 16 4-8 4 8"/><path d="M9.5 13h5"/></svg></span>
-                    `;
-                }
-
                 // Preserve linked children badge if present
                 const childrenBadge = hostnameCell.querySelector('.linked-children-badge');
                 if (childrenBadge) {
@@ -1525,6 +1557,17 @@ async function saveSidebarDevice() {
 
                 hostnameCell.innerHTML = cellHtml;
                 hostnameCell.setAttribute('data-copy', custom_hostname || originalHostname);
+            }
+
+            const indicators = row.querySelector('.device-indicators');
+            if (indicators) {
+                const sshIndicator = indicators.querySelector('.ssh-indicator')?.outerHTML || '';
+                indicators.innerHTML = sshIndicator + (notes ? `
+                    <span class="notes-indicator" data-tip="${escapeHtml(notes)}"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2 2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>
+                ` : '');
+                if (ansible_managed) {
+                    indicators.innerHTML += `<span class="ansible-indicator" data-tip="Ansible Managed" title="Ansible Managed"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8 16 4-8 4 8"/><path d="M9.5 13h5"/></svg></span>`;
+                }
             }
 
             // Update Actions Web UI button if needed
@@ -1579,24 +1622,16 @@ async function saveSidebarDevice() {
         }
 
         // Brief "Saved!" badge on the button
-        if (saveBtn) {
-            saveBtn.textContent = 'Saved! ✓';
-            setTimeout(() => {
-                if (saveBtn) {
-                    saveBtn.innerHTML = originalBtnText;
-                    saveBtn.disabled = false;
-                }
-            }, 1500);
-        }
+        sidebarSaveBaseline = sidebarFormState();
+        updateSidebarSaveBar();
+        saveButtons.forEach(button => { button.textContent = 'Saved! ✓'; });
+        setTimeout(() => saveButtons.forEach(button => { button.textContent = originalBtnText; button.disabled = false; }), 1500);
 
         showToast('Device updated', 'success');
     } catch (err) {
         console.error('Failed to save device:', err);
         showToast('Failed to save changes: ' + err.message, 'error');
-        if (saveBtn) {
-            saveBtn.innerHTML = originalBtnText;
-            saveBtn.disabled = false;
-        }
+        saveButtons.forEach(button => { button.textContent = originalBtnText; button.disabled = false; });
     }
 }
 

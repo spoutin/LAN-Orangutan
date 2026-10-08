@@ -1213,6 +1213,17 @@ td[data-copy]:not([data-copy=""]) {
     white-space: nowrap;
 }
 
+.device-indicators {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+
+.device-indicators .ansible-indicator {
+    color: #EE0000;
+}
+
 .table th {
     background: var(--bg-tertiary);
     font-weight: 600;
@@ -3113,6 +3124,22 @@ img.login-logo {
     display: flex;
     flex-direction: column;
     gap: 0.85rem;
+}
+
+.sidebar-save-bar {
+    flex-shrink: 0;
+    padding: 0.75rem 1.15rem;
+    border-top: 1px solid var(--border);
+    background: var(--bg-card);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.sidebar-save-bar.hidden {
+    display: none;
+}
+
+.sidebar-save-bar .btn {
+    width: 100%;
 }
 
 /* Sidebar Cards */

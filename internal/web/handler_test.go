@@ -613,6 +613,55 @@ func TestIndexPageRendersServiceDetailsModal(t *testing.T) {
 	}
 }
 
+func TestIndexPageKeepsDeviceIndicatorsOutOfHostnameCell(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	dev := types.Device{
+		IP:              "192.168.1.61",
+		Hostname:        "a-hostname-that-is-long-enough-to-need-the-full-column",
+		NetworkName:     "Home",
+		Notes:           "Managed by the family",
+		AnsibleManaged:  true,
+		DetectedSSHPort: 2222,
+		FirstSeen:       time.Now(),
+		LastSeen:        time.Now(),
+	}
+	if err := h.store.UpdateDevice(&dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rec.Body.String()
+
+	hostnameStart := strings.Index(body, `<td class="col-hostname hostname-cell"`)
+	networkStart := strings.Index(body, `<td class="col-network network-cell"`)
+	connectionStart := strings.Index(body, `<td class="col-ssid ssid-cell"`)
+	if hostnameStart < 0 || networkStart < 0 || connectionStart < 0 {
+		t.Fatal("expected hostname, network, and connection cells")
+	}
+	if strings.Contains(body[hostnameStart:networkStart], "ssh-indicator") || strings.Contains(body[hostnameStart:networkStart], "notes-indicator") || strings.Contains(body[hostnameStart:networkStart], "ansible-indicator") {
+		t.Error("device status indicators should not consume hostname column space")
+	}
+	for _, indicator := range []string{"ssh-indicator", "notes-indicator", "ansible-indicator"} {
+		if !strings.Contains(body[networkStart:connectionStart], indicator) {
+			t.Errorf("network cell should contain %q", indicator)
+		}
+	}
+}
+
+func TestIndexPageRendersDirtySidebarSaveBar(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rec.Body.String()
+	for _, expected := range []string{"id=\"sb-save-bar\"", "id=\"sb-floating-save\"", "Save Changes"} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("expected device sidebar to contain %q", expected)
+		}
+	}
+}
+
 func TestIndexPageRendersSwitchConnection(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 	poeWatts := 8.2

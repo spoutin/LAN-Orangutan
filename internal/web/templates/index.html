@@ -377,13 +377,6 @@ orangutan export out.csv</code></pre>
                                           {{else}}
                                               <span style="color:var(--text-muted)">-</span>
                                           {{end}}
-									{{if hasSSH .Device}}<span class="ssh-indicator" data-tip="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}" aria-label="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4"/><path d="M12 16h7"/></svg>{{if ne (sshPort .Device) 22}}<span class="ssh-port">:{{sshPort .Device}}</span>{{end}}</span>{{end}}
-                                         {{if .Notes}}
-                                             <span class="notes-indicator" data-tip="{{.Notes}}" style="margin-left: 4px; vertical-align: middle;"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>
-                                         {{end}}
-                                         {{if .AnsibleManaged}}
-                                             <span class="ansible-indicator" data-tip="Ansible Managed" style="margin-left: 4px; vertical-align: middle; color: #EE0000;" title="Ansible Managed"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8 16 4-8 4 8"/><path d="M9.5 13h5"/></svg></span>
-                                         {{end}}
                                         {{if .LinkedChildren}}
                                             <div class="linked-children-badge" data-tip="Linked aliases: {{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 3px; display: flex; align-items: center; gap: 4px;">
                                                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--success);"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
@@ -403,7 +396,7 @@ orangutan export out.csv</code></pre>
                                             {{end}}
                                             
                                             <!-- Children Network Badges -->
-                                            {{range .LinkedChildrenDetails}}
+                                             {{range .LinkedChildrenDetails}}
                                                 {{if .NetworkName}}
                                                     <span class="network-badge child-network-badge"
                                                           style="{{if not .IsOnline}}opacity: 0.5; border: 1px dashed var(--border); background: transparent;{{end}}"
@@ -411,8 +404,13 @@ orangutan export out.csv</code></pre>
                                                         {{.NetworkName}}
                                                     </span>
                                                 {{end}}
-                                            {{end}}
-                                        </div>
+                                             {{end}}
+										<div class="device-indicators" aria-label="Device capabilities and notes">
+											{{if hasSSH .Device}}<span class="ssh-indicator" data-tip="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}" aria-label="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4"/><path d="M12 16h7"/></svg>{{if ne (sshPort .Device) 22}}<span class="ssh-port">:{{sshPort .Device}}</span>{{end}}</span>{{end}}
+											{{if .Notes}}<span class="notes-indicator" data-tip="{{.Notes}}"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0-2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>{{end}}
+											{{if .AnsibleManaged}}<span class="ansible-indicator" data-tip="Ansible Managed" title="Ansible Managed"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8 16 4-8 4 8"/><path d="M9.5 13h5"/></svg></span>{{end}}
+										</div>
+                                         </div>
                                     </td>
                                     <td class="col-ssid ssid-cell" data-label="SSID">
                                         {{if or .SSID .SwitchPort}}
@@ -716,11 +714,14 @@ orangutan export out.csv</code></pre>
                                             <p class="form-help" style="margin-top: 0.25rem;">Include this host in fleet-ansible automation.</p>
                                         </div>
                                         <div class="form-actions" style="margin-top: 1rem;">
-                                            <button type="button" class="btn btn-primary" style="width: 100%;" onclick="saveSidebarDevice()">Save Changes</button>
+                                            <button type="button" id="sb-inline-save" class="btn btn-primary" style="width: 100%;" onclick="saveSidebarDevice()">Save Changes</button>
                                         </div>
                                     </form>
                                 </div>
                             </div>
+                        </div>
+                        <div id="sb-save-bar" class="sidebar-save-bar hidden">
+                            <button type="button" id="sb-floating-save" class="btn btn-primary" onclick="saveSidebarDevice()">Save Changes</button>
                         </div>
                     </aside>
                 </div>
