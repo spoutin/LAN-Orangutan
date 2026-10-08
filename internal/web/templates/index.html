@@ -722,10 +722,6 @@ orangutan export out.csv</code></pre>
                         </div>
                     </aside>
                 </div>
-                <div id="sb-save-bar" class="sidebar-save-bar hidden">
-                    <button type="button" id="sb-floating-save" class="btn btn-primary" onclick="saveSidebarDevice()">Save Changes</button>
-                </div>
-
                 {{/* Everything above is a snapshot from the last scan, not a
                      live view. State when that was, so "last seen" times are
                      read in the right context. */}}
@@ -906,6 +902,10 @@ orangutan export out.csv</code></pre>
         <p>LAN Orangutan &bull; <a href="https://github.com/spoutin/LAN-Orangutan" target="_blank">GitHub</a></p>
         <p style="margin-top:0.5rem;font-size:0.8rem;">Press <kbd class="kbd">/</kbd> to search &bull; <kbd class="kbd">R</kbd> to refresh &bull; <kbd class="kbd">T</kbd> to toggle theme</p>
     </footer>
+
+    <div id="sb-save-bar" class="sidebar-save-bar hidden">
+        <button type="button" id="sb-floating-save" class="btn btn-primary" onclick="saveSidebarDevice()">Save Changes</button>
+    </div>
 
     <button type="button" id="scroll-top" class="scroll-top" aria-label="Back to top">
         <svg class="scroll-top-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15l8-8 8 8"/></svg>

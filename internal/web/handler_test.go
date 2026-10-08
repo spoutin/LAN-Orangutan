@@ -663,21 +663,25 @@ func TestIndexPageRendersDirtySidebarSaveBar(t *testing.T) {
 	}
 }
 
-func TestIndexPageRendersFloatingSaveOutsideDeviceSidebar(t *testing.T) {
+func TestIndexPageRendersFloatingSaveAsPageOverlay(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 
 	rec := httptest.NewRecorder()
 	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := rec.Body.String()
-	sidebarStart := strings.Index(body, `id="device-sidebar"`)
-	sidebarEndOffset := strings.Index(body[sidebarStart:], `</aside>`)
+	bodyEnd := strings.Index(body, `</body>`)
 	saveBar := strings.Index(body, `id="sb-save-bar"`)
-	if sidebarStart < 0 || sidebarEndOffset < 0 || saveBar < 0 {
-		t.Fatal("expected device sidebar and floating save bar")
+	if bodyEnd < 0 || saveBar < 0 {
+		t.Fatal("expected page body and floating save bar")
 	}
-	sidebarEnd := sidebarStart + sidebarEndOffset
-	if saveBar < sidebarEnd {
-		t.Error("floating save bar must not be nested inside the animated device sidebar")
+	footerStart := strings.LastIndex(body[:bodyEnd], `<footer`)
+	footerEndOffset := strings.Index(body[footerStart:bodyEnd], `</footer>`)
+	if footerStart < 0 || footerEndOffset < 0 {
+		t.Fatal("expected page footer")
+	}
+	footerEnd := footerStart + footerEndOffset + len(`</footer>`)
+	if saveBar < footerEnd {
+		t.Error("floating save bar must be rendered after the page footer, outside filtered content containers")
 	}
 }
 
