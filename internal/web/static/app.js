@@ -215,6 +215,7 @@ async function refreshAfterScan() {
 // server, not in the page, so this is used both by the page that starts one and
 // by any page loaded while one is already in progress.
 async function followScan() {
+    const refreshedNetworks = new Set();
     while (true) {
         await new Promise(r => setTimeout(r, SCAN_POLL_MS));
         const progress = (await api('scan/progress')).data;
@@ -228,8 +229,11 @@ async function followScan() {
             }
             return;
         }
-        // Refresh the sidebar and dashboard live while the scan is running!
-        await refreshInPlace();
+        const completedNetworks = window.scanRefresh.completedNetworkKeys(progress);
+        if (completedNetworks.some(key => !refreshedNetworks.has(key))) {
+            completedNetworks.forEach(key => refreshedNetworks.add(key));
+            await refreshInPlace();
+        }
     }
 }
 
