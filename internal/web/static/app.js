@@ -1377,6 +1377,11 @@ let sidebarSaveBaseline = '';
 let sidebarInlineSaveVisible = false;
 let sidebarSaveObserver;
 
+function elementIsInViewport(element) {
+	const rect = element.getBoundingClientRect();
+	return rect.top >= 0 && rect.bottom <= window.innerHeight;
+}
+
 function sidebarFormState() {
 	const form = document.getElementById('sb-edit-form');
 	if (!form) return '';
@@ -1390,7 +1395,9 @@ function sidebarHasUnsavedChanges() {
 function updateSidebarSaveBar() {
 	const bar = document.getElementById('sb-save-bar');
 	if (!bar) return;
-	bar.classList.toggle('hidden', !sidebarHasUnsavedChanges() || sidebarInlineSaveVisible);
+	const inlineSave = document.getElementById('sb-inline-save');
+	const inlineSaveVisible = sidebarInlineSaveVisible && inlineSave && elementIsInViewport(inlineSave);
+	bar.classList.toggle('hidden', !sidebarHasUnsavedChanges() || inlineSaveVisible);
 	syncSidebarSaveBarPosition();
 }
 
@@ -1432,6 +1439,7 @@ function initializeSidebarSaveState() {
 }
 
 window.addEventListener('resize', syncSidebarSaveBarPosition);
+window.addEventListener('scroll', updateSidebarSaveBar, { passive: true });
 
 function updateSSHPortControl() {
 	const override = document.getElementById('sb-edit-ssh-override')?.value;
