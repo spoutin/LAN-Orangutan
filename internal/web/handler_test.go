@@ -663,6 +663,19 @@ func TestIndexPageRendersDirtySidebarSaveBar(t *testing.T) {
 	}
 }
 
+func TestIndexPageRendersCompactStateColumnAndSortReset(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rec.Body.String()
+	for _, expected := range []string{`data-sort="status"`, "State", `id="reset-device-sort"`, "Reset sort"} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("expected device table to contain %q", expected)
+		}
+	}
+}
+
 func TestIndexPageRendersFloatingSaveAsPageOverlay(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 

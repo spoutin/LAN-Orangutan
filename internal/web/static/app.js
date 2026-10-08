@@ -1852,6 +1852,19 @@ function toggleDropdown(id) {
 // Table sorting
 let sortColumn = null;
 let sortAsc = true;
+let defaultDeviceOrder = [];
+
+function captureDefaultDeviceOrder() {
+    defaultDeviceOrder = Array.from(document.querySelectorAll('#devices-tbody .device-row')).map(row => row.dataset.ip);
+}
+
+function restoreDefaultDeviceOrder() {
+    const tbody = document.getElementById('devices-tbody');
+    if (!tbody) return;
+    const rows = new Map(Array.from(tbody.querySelectorAll('.device-row')).map(row => [row.dataset.ip, row]));
+    defaultDeviceOrder.forEach(ip => rows.get(ip) && tbody.appendChild(rows.get(ip)));
+    rows.forEach((row, ip) => { if (!defaultDeviceOrder.includes(ip)) tbody.appendChild(row); });
+}
 
 // compareRows orders two device rows by the active column and direction. Split
 // out so the sort can be re-applied after an auto-refresh without re-toggling
@@ -1927,6 +1940,7 @@ function updateSortIndicator() {
             if (icon) icon.textContent = '↕';
         }
     });
+    document.getElementById('reset-device-sort')?.classList.toggle('hidden', !sortColumn);
 }
 
 function sortTable(column) {
@@ -1939,6 +1953,15 @@ function sortTable(column) {
     applyCurrentSort();
     updateSortIndicator();
 }
+
+function resetDeviceSort() {
+    sortColumn = null;
+    sortAsc = true;
+    restoreDefaultDeviceOrder();
+    updateSortIndicator();
+}
+
+captureDefaultDeviceOrder();
 
 // Auto-refresh
 //

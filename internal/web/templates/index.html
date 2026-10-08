@@ -275,14 +275,17 @@ orangutan export out.csv</code></pre>
             <div class="table-container">
                 <div class="table-toolbar">
                     <span class="table-info" id="device-count">Showing {{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}</span>
-                    <span class="table-scanned" id="scan-time-top"><span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span></span>{{end}}</span>
+                    <div class="table-toolbar-actions">
+                        <button type="button" id="reset-device-sort" class="btn btn-small reset-sort hidden" onclick="resetDeviceSort()">Reset sort</button>
+                        <span class="table-scanned" id="scan-time-top"><span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span></span>{{end}}</span>
+                    </div>
                 </div>
                 <div class="devices-view-layout">
                     <div class="table-wrapper">
                         <table class="table" id="devices-table">
                             <thead>
                                 <tr>
-                                    <th class="col-status" data-sort="status" onclick="sortTable('status')">Status <span class="sort-icon">↕</span></th>
+                                    <th class="col-status" data-sort="status" onclick="sortTable('status')">State <span class="sort-icon">↕</span></th>
                                     <th class="col-ip" data-sort="ip" onclick="sortTable('ip')">IP Address <span class="sort-icon">↕</span></th>
                                     <th class="col-hostname" data-sort="hostname" onclick="sortTable('hostname')">Hostname <span class="sort-icon">↕</span></th>
                                     <th class="col-network" data-sort="network" onclick="sortTable('network')">Network <span class="sort-icon">↕</span></th>

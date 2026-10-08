@@ -1107,9 +1107,9 @@ td[data-copy]:not([data-copy=""]) {
 /* Column widths for the fixed layout (they sum to 100%). When the responsive
    rules further down hide a column, its share is redistributed across the
    rest, so the table always fills its panel exactly. */
-.col-status     { width: 4%; min-width: 45px; }
+.col-status     { width: 6%; min-width: 0; }
 .col-ip         { width: 14%; }
-.col-hostname   { width: 23%; }
+.col-hostname   { width: 21%; }
 .col-network    { width: 11%; }
 .col-ssid       { width: 14%; }
 .col-vendor     { width: 14%; }
@@ -1173,6 +1173,22 @@ td[data-copy]:not([data-copy=""]) {
 /* Resizable Table Columns */
 .table th {
     position: relative;
+}
+
+.table th[data-sort] {
+    position: sticky;
+    top: 64px;
+    z-index: 40;
+}
+
+.table-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.reset-sort.hidden {
+    display: none;
 }
 
 .col-resize-handle {
@@ -2987,7 +3003,7 @@ img.login-logo {
 .table-wrapper {
     flex: 1 1 0%;
     min-width: 0;
-    overflow-x: auto;
+    overflow: visible;
     transition: flex 0.25s ease-in-out;
 }
 
