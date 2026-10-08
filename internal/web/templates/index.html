@@ -277,7 +277,7 @@ orangutan export out.csv</code></pre>
                     <span class="table-info" id="device-count">Showing {{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}</span>
                     <span class="table-scanned" id="scan-time-top"><span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span></span>{{end}}</span>
                 </div>
-                <div class="devices-view-layout">
+                <div id="devices-view-layout" class="devices-view-layout">
                     <div class="table-wrapper">
                         <table class="table" id="devices-table">
                             <thead>

@@ -1985,6 +1985,9 @@ textarea.input {
         display: block;
         min-height: auto;
     }
+    .devices-view-layout.device-sidebar-open {
+        padding-right: 0;
+    }
     .table-wrapper {
         overflow-x: visible;
     }
@@ -2981,6 +2984,10 @@ img.login-logo {
     align-items: stretch;
 }
 
+.devices-view-layout.device-sidebar-open {
+    padding-right: 380px;
+}
+
 .table-wrapper {
     flex: 1 1 0%;
     min-width: 0;
@@ -2990,14 +2997,15 @@ img.login-logo {
 
 .device-sidebar {
     width: 380px;
-    flex: 0 0 380px;
     border-left: 1px solid var(--border);
     background: var(--bg-card);
     display: flex;
     flex-direction: column;
-    position: sticky;
+    position: fixed;
     top: 4.5rem;
-    max-height: calc(100vh - 110px);
+    right: 0;
+    bottom: 0;
+    max-height: none;
     box-shadow: var(--card-shadow);
     transition: transform 0.25s ease-in-out, opacity 0.2s ease;
     opacity: 1;

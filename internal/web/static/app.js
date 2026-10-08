@@ -1327,6 +1327,8 @@ function openDeviceSidebar(target) {
     // Show sidebar
     const sidebar = document.getElementById('device-sidebar');
     if (sidebar) sidebar.classList.remove('hidden');
+	const layout = document.getElementById('devices-view-layout');
+	if (layout) layout.classList.add('device-sidebar-open');
     initializeSidebarSaveState();
 }
 
@@ -1369,6 +1371,8 @@ function closeServiceDetails() {
 function closeDeviceSidebar() {
     const sidebar = document.getElementById('device-sidebar');
     if (sidebar) sidebar.classList.add('hidden');
+	const layout = document.getElementById('devices-view-layout');
+	if (layout) layout.classList.remove('device-sidebar-open');
     document.querySelectorAll('.device-row.selected-row').forEach(r => r.classList.remove('selected-row'));
 	resetSidebarSaveState();
 }
