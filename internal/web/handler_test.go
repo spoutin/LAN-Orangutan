@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -659,6 +660,27 @@ func TestIndexPageRendersDirtySidebarSaveBar(t *testing.T) {
 		if !strings.Contains(body, expected) {
 			t.Errorf("expected device sidebar to contain %q", expected)
 		}
+	}
+}
+
+func TestIndexPageOmitsConfiguredNetworkInterface(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	var rendered bytes.Buffer
+	data := PageData{Networks: []NetworkView{{Network: types.Network{
+		CIDR:         "10.42.0.0/24",
+		Interface:    "eth0",
+		FriendlyName: "Home",
+	}}}}
+	if err := h.templates.ExecuteTemplate(&rendered, "index.html", data); err != nil {
+		t.Fatalf("render index: %v", err)
+	}
+	body := rendered.String()
+
+	if !strings.Contains(body, "10.42.0.0/24") {
+		t.Error("configured network CIDR should remain visible")
+	}
+	if strings.Contains(body, "eth0") {
+		t.Error("configured network interface should not be shown in the sidebar")
 	}
 }
 
