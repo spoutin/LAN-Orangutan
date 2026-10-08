@@ -663,6 +663,24 @@ func TestIndexPageRendersDirtySidebarSaveBar(t *testing.T) {
 	}
 }
 
+func TestIndexPageRendersFloatingSaveOutsideDeviceSidebar(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rec.Body.String()
+	sidebarStart := strings.Index(body, `id="device-sidebar"`)
+	sidebarEndOffset := strings.Index(body[sidebarStart:], `</aside>`)
+	saveBar := strings.Index(body, `id="sb-save-bar"`)
+	if sidebarStart < 0 || sidebarEndOffset < 0 || saveBar < 0 {
+		t.Fatal("expected device sidebar and floating save bar")
+	}
+	sidebarEnd := sidebarStart + sidebarEndOffset
+	if saveBar < sidebarEnd {
+		t.Error("floating save bar must not be nested inside the animated device sidebar")
+	}
+}
+
 func TestIndexPageOmitsConfiguredNetworkInterface(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 	var rendered bytes.Buffer
