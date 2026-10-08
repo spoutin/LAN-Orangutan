@@ -1327,8 +1327,6 @@ function openDeviceSidebar(target) {
     // Show sidebar
     const sidebar = document.getElementById('device-sidebar');
     if (sidebar) sidebar.classList.remove('hidden');
-	const layout = document.getElementById('devices-view-layout');
-	if (layout) layout.classList.add('device-sidebar-open');
     initializeSidebarSaveState();
 }
 
@@ -1371,8 +1369,6 @@ function closeServiceDetails() {
 function closeDeviceSidebar() {
     const sidebar = document.getElementById('device-sidebar');
     if (sidebar) sidebar.classList.add('hidden');
-	const layout = document.getElementById('devices-view-layout');
-	if (layout) layout.classList.remove('device-sidebar-open');
     document.querySelectorAll('.device-row.selected-row').forEach(r => r.classList.remove('selected-row'));
 	resetSidebarSaveState();
 }
@@ -1393,7 +1389,18 @@ function sidebarHasUnsavedChanges() {
 
 function updateSidebarSaveBar() {
 	const bar = document.getElementById('sb-save-bar');
-	if (bar) bar.classList.toggle('hidden', !sidebarHasUnsavedChanges() || sidebarInlineSaveVisible);
+	if (!bar) return;
+	bar.classList.toggle('hidden', !sidebarHasUnsavedChanges() || sidebarInlineSaveVisible);
+	syncSidebarSaveBarPosition();
+}
+
+function syncSidebarSaveBarPosition() {
+	const sidebar = document.getElementById('device-sidebar');
+	const bar = document.getElementById('sb-save-bar');
+	if (!sidebar || !bar || window.matchMedia('(max-width: 768px)').matches) return;
+	const sidebarRect = sidebar.getBoundingClientRect();
+	bar.style.setProperty('--sidebar-save-right', `${window.innerWidth - sidebarRect.right + 18}px`);
+	bar.style.setProperty('--sidebar-save-width', `${sidebarRect.width - 36}px`);
 }
 
 function resetSidebarSaveState() {
@@ -1423,6 +1430,8 @@ function initializeSidebarSaveState() {
 	}
 	updateSidebarSaveBar();
 }
+
+window.addEventListener('resize', syncSidebarSaveBarPosition);
 
 function updateSSHPortControl() {
 	const override = document.getElementById('sb-edit-ssh-override')?.value;

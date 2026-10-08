@@ -663,17 +663,6 @@ func TestIndexPageRendersDirtySidebarSaveBar(t *testing.T) {
 	}
 }
 
-func TestIndexPageRendersViewportDeviceDrawerLayout(t *testing.T) {
-	h, _ := newTestHandler(t, "")
-
-	rec := httptest.NewRecorder()
-	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	body := rec.Body.String()
-	if !strings.Contains(body, `id="devices-view-layout"`) {
-		t.Error("device view should provide the layout container that reserves drawer space")
-	}
-}
-
 func TestIndexPageOmitsConfiguredNetworkInterface(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 	var rendered bytes.Buffer

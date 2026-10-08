@@ -2984,10 +2984,6 @@ img.login-logo {
     align-items: stretch;
 }
 
-.devices-view-layout.device-sidebar-open {
-    padding-right: 380px;
-}
-
 .table-wrapper {
     flex: 1 1 0%;
     min-width: 0;
@@ -2997,15 +2993,14 @@ img.login-logo {
 
 .device-sidebar {
     width: 380px;
+    flex: 0 0 380px;
     border-left: 1px solid var(--border);
     background: var(--bg-card);
     display: flex;
     flex-direction: column;
-    position: fixed;
+    position: sticky;
     top: 4.5rem;
-    right: 0;
-    bottom: 0;
-    max-height: none;
+    max-height: calc(100vh - 110px);
     box-shadow: var(--card-shadow);
     transition: transform 0.25s ease-in-out, opacity 0.2s ease;
     opacity: 1;
@@ -3148,6 +3143,19 @@ img.login-logo {
 
 .sidebar-save-bar .btn {
     width: 100%;
+}
+
+@media (min-width: 769px) {
+    .sidebar-save-bar:not(.hidden) {
+        position: fixed;
+        right: var(--sidebar-save-right);
+        bottom: 1rem;
+        width: var(--sidebar-save-width);
+        z-index: 60;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+    }
 }
 
 /* Sidebar Cards */
