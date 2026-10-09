@@ -1390,11 +1390,14 @@ async function rescanSidebarDeviceDeepServices() {
 	const lastDeepScan = document.getElementById('sb-last-deep-scan');
 	const button = document.getElementById('sb-deep-rescan-btn');
 	const previousText = lastDeepScan?.textContent || 'Never';
-	if (lastDeepScan) lastDeepScan.innerHTML = '<svg class="spinner-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg> Scanning services...';
+	if (lastDeepScan) lastDeepScan.innerHTML = '<svg class="spinner-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg> Scanning services...';
 	if (button) button.disabled = true;
 	try {
 		await api(`devices/${encodeURIComponent(ip)}/deep-scan`, {}, 'POST');
 		await followScan();
+		await refreshInPlace();
+		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
+		if (row) openDeviceSidebar(row);
 	} catch (e) {
 		if (lastDeepScan) lastDeepScan.textContent = previousText;
 		showToast('Could not start deep service rescan: ' + e.message, 'error');
