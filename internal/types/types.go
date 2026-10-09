@@ -150,18 +150,15 @@ func (d *Device) IsOnline(scanIntervals ...time.Duration) bool {
 	return time.Since(d.LastSeen) < interval
 }
 
-// IsRecent returns true if the device was seen within the last scan interval + grace buffer (or 5 min default)
+// IsRecent returns true through two scan intervals. Automatic scans can be
+// staggered across networks, so one complete interval is not enough time before
+// a device should be shown as stale.
 func (d *Device) IsRecent(scanIntervals ...time.Duration) bool {
 	interval := 5 * time.Minute
 	if len(scanIntervals) > 0 && scanIntervals[0] > 0 {
 		interval = scanIntervals[0]
 	}
-	// Add 20% grace buffer, minimum of 2 minutes, so it waits for the next scan to finish before turning yellow
-	buffer := interval / 5
-	if buffer < 2*time.Minute {
-		buffer = 2 * time.Minute
-	}
-	return time.Since(d.LastSeen) < interval+buffer
+	return time.Since(d.LastSeen) < 2*interval
 }
 
 // Network represents a detected network interface
