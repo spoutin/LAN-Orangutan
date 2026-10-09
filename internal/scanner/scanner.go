@@ -453,11 +453,17 @@ func getInterfaceForCIDR(ctx context.Context, cidr string) string {
 
 // ScanHostPorts performs a high-speed targeted port scan on a single IP address.
 func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string) ([]int, []int, []types.OpenService, error) {
+	return s.ScanHostPortsWithTiming(ctx, ip, portRange, false)
+}
+
+// ScanHostPortsWithTiming runs a targeted service scan. Nightly scans use the
+// conservative timing profile to keep connection state pressure low.
+func (s *Scanner) ScanHostPortsWithTiming(ctx context.Context, ip string, portRange string, conservative bool) ([]int, []int, []types.OpenService, error) {
 	if _, err := exec.LookPath("nmap"); err != nil {
 		return nil, nil, nil, fmt.Errorf("nmap not found")
 	}
 
-	args := portScanArguments(portRange, ip)
+	args := portScanArgumentsWithTiming(portRange, ip, conservative)
 	cmd := exec.CommandContext(ctx, "nmap", args...)
 	output, err := cmd.Output()
 	if err != nil {
@@ -467,10 +473,18 @@ func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string
 }
 
 func portScanArguments(portRange string, ip string) []string {
+	return portScanArgumentsWithTiming(portRange, ip, false)
+}
+
+func portScanArgumentsWithTiming(portRange string, ip string, conservative bool) []string {
 	// Stage 1 already established that this host is reachable. Skipping host
 	// discovery avoids false negatives from a separate probe, while retries make
 	// service detection reliable on busy or rate-limited devices.
-	return []string{"-sV", "-Pn", "-p", portRange, "-T4", "-n", "--max-retries", "2", "--host-timeout", "180s", "-oX", "-", ip}
+	timing := "-T4"
+	if conservative {
+		timing = "-T2"
+	}
+	return []string{"-sV", "-Pn", "-p", portRange, timing, "-n", "--max-retries", "2", "--host-timeout", "180s", "-oX", "-", ip}
 }
 
 func parsePortScanResult(output []byte) ([]int, []int, []types.OpenService, error) {

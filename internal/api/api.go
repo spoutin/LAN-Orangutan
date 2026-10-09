@@ -28,6 +28,7 @@ type Handler struct {
 	// fetchSwitchConnections is injectable so scan-pipeline tests do not need
 	// an SNMP device.
 	fetchSwitchConnections func(context.Context, config.SwitchConfig, map[string]int) ([]scanner.SwitchConnection, error)
+	sendSlackNotification  func(string, string) error
 
 	// jobMu guards job, which holds the most recent background scan. Only one
 	// scan runs at a time.
@@ -40,6 +41,7 @@ type Handler struct {
 	// scan mid-write.
 	scanCtx context.Context
 	scanWG  sync.WaitGroup
+	now     func() time.Time
 }
 
 // NewHandler creates a new API handler
@@ -50,6 +52,8 @@ func NewHandler(store *storage.Storage, cfg *config.Config) *Handler {
 		scanner:                scanner.New(cfg.Scanning.MinScanInterval, cfg.Scanning.EnableServiceDetection, cfg.Scanning.EnablePortScan, cfg.Scanning.PortScanRange),
 		scanCtx:                context.Background(),
 		fetchSwitchConnections: scanner.FetchSwitchConnections,
+		sendSlackNotification:  notification.SendSlackNotification,
+		now:                    time.Now,
 	}
 }
 
