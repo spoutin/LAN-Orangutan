@@ -112,6 +112,7 @@ type scanProgress struct {
 	LastPortScanHost scanHostResult        `json:"last_port_scan_host"`
 	DeepNetworks     []deepNetworkProgress `json:"deep_networks"`
 	TargetedDeepScan bool                  `json:"targeted_deep_scan"`
+	TargetedDeviceIP string                `json:"targeted_device_ip,omitempty"`
 
 	// Stage 2 port scanning progress fields
 	PortScanActive   bool `json:"port_scan_active"`
@@ -161,6 +162,9 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 				}
 			}
 		}
+	}
+	if len(j.deepDevices) == 1 {
+		p.TargetedDeviceIP = j.deepDevices[0].IP
 	}
 	if j.estimatedTotalSeconds > 0 {
 		remaining := j.estimatedTotalSeconds - time.Since(j.startedAt).Seconds()

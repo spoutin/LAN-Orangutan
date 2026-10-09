@@ -9,6 +9,7 @@ import (
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 func TestScanProgressReportsLastDeepScanHost(t *testing.T) {
@@ -34,6 +35,23 @@ func TestScanProgressReportsLastDeepScanHost(t *testing.T) {
 	}
 	if progress.CurrentNetwork != "10.20.0.0/24" {
 		t.Errorf("CurrentNetwork = %q, want active deep-scan network", progress.CurrentNetwork)
+	}
+}
+
+func TestScanProgressIdentifiesTargetedDeepDevice(t *testing.T) {
+	job := &scanJob{
+		status:      "running",
+		startedAt:   time.Now(),
+		mode:        scanModeDeep,
+		deepDevices: []types.Device{{IP: "10.0.0.15"}},
+	}
+
+	progress := job.snapshot(config.Default(), nil)
+	if !progress.TargetedDeepScan {
+		t.Fatal("TargetedDeepScan = false, want true")
+	}
+	if progress.TargetedDeviceIP != "10.0.0.15" {
+		t.Errorf("TargetedDeviceIP = %q, want 10.0.0.15", progress.TargetedDeviceIP)
 	}
 }
 
