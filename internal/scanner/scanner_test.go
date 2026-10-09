@@ -15,6 +15,19 @@ func TestPortScanArgumentsSkipDiscoveryAndAllowRetries(t *testing.T) {
 	}
 }
 
+func TestNightlyPortScanArgumentsUseConservativeTiming(t *testing.T) {
+	got := portScanArgumentsWithTiming("1-1024", "10.0.0.15", true)
+	for i, arg := range got {
+		if arg == "-T2" {
+			return
+		}
+		if arg == "-T4" {
+			t.Fatalf("argument %d = %q, nightly scans must use -T2", i, arg)
+		}
+	}
+	t.Fatalf("arguments = %v, want -T2", got)
+}
+
 func TestParsePortScanResultRecordsDetectedSSHPort(t *testing.T) {
 	// An open custom port is SSH only when Nmap's service detection identifies it
 	// as such. Other open ports must remain in the port list without becoming SSH.

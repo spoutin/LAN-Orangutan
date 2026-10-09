@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,126 @@ func TestScanJob_SwitchesPollSequentiallyAndPropagateKnownVLAN(t *testing.T) {
 	}
 	if device := store.GetDevice("192.168.1.10"); device == nil || device.SwitchName != "edge-b" || device.SwitchPort != "gi1/10" {
 		t.Errorf("stored switch telemetry = %+v, want edge-b gi1/10", device)
+	}
+}
+
+func TestNextBackgroundNetworkRotatesOneNetworkAtATime(t *testing.T) {
+	networks := []string{"192.168.1.0/24", "10.20.0.0/24", "172.16.0.0/24"}
+	cursor := 0
+	var got []string
+	for range 4 {
+		network, next, ok := nextBackgroundNetwork(networks, cursor)
+		if !ok {
+			t.Fatal("nextBackgroundNetwork() returned no network")
+		}
+		got = append(got, network)
+		cursor = next
+	}
+	want := []string{"192.168.1.0/24", "10.20.0.0/24", "172.16.0.0/24", "192.168.1.0/24"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("network %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestWaitForBackgroundScanWaitsForCompletionBeforeDelay(t *testing.T) {
+	done := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	finished := make(chan bool, 1)
+	go func() {
+		finished <- waitForBackgroundScan(ctx, done, 20*time.Millisecond)
+	}()
+
+	select {
+	case <-finished:
+		t.Fatal("waitForBackgroundScan returned before the scan completed")
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	close(done)
+	select {
+	case ok := <-finished:
+		if !ok {
+			t.Fatal("waitForBackgroundScan returned false after a completed scan")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("waitForBackgroundScan did not finish after completion and delay")
+	}
+}
+
+func TestWaitForBackgroundScanStopsWhenCancelled(t *testing.T) {
+	done := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if waitForBackgroundScan(ctx, done, time.Hour) {
+		t.Fatal("waitForBackgroundScan returned true after cancellation")
+	}
+}
+
+func TestStartBackgroundNetworkMakesOneNightlyDeepJobForAllNetworks(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	cfg.Scanning.EnablePortScan = true
+	cfg.Scanning.PortScanRange = "1-10"
+	h := NewHandler(store, cfg)
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.now = func() time.Time { return time.Date(2026, time.October, 8, 3, 10, 0, 0, loc) }
+
+	networks := []string{"192.168.1.0/24", "10.20.0.0/24"}
+	job := h.startBackgroundNetwork(networks[0], networks)
+	if job == nil || !job.nightlyDeep {
+		t.Fatal("expected first 03:00 background scan to start a nightly deep job")
+	}
+	if len(job.deepNetworks) != len(networks) {
+		t.Fatalf("deep networks = %v, want %v", job.deepNetworks, networks)
+	}
+	if _, err := store.GetSetting("last_deep_scan_date"); err != nil {
+		t.Fatalf("last_deep_scan_date was not recorded: %v", err)
+	}
+	job.cancel()
+	<-job.done
+
+	second := h.startBackgroundNetwork(networks[1], networks)
+	if second == nil {
+		t.Fatal("expected a second background job")
+	}
+	if second.nightlyDeep {
+		t.Fatal("expected nightly deep job to run only once per day")
+	}
+	second.cancel()
+	<-second.done
+}
+
+func TestNightlyDeepCutoffNotifiesOnlyAffectedNetworks(t *testing.T) {
+	store := newScanJobTestStore(t)
+	if err := store.SaveNetworkNotification("192.168.1.0/24", "https://example.test/affected", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveNetworkNotification("10.20.0.0/24", "https://example.test/complete", true); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(store, config.Default())
+	var messages []string
+	h.sendSlackNotification = func(webhook, text string) error {
+		messages = append(messages, webhook+"\n"+text)
+		return nil
+	}
+	job := &scanJob{deepNetworkProgress: []deepNetworkProgress{
+		{Network: "192.168.1.0/24", Total: 5, Complete: 3},
+		{Network: "10.20.0.0/24", Total: 2, Complete: 2},
+	}}
+	job.notifyNightlyDeepCutoff(h)
+	if len(messages) != 1 {
+		t.Fatalf("notification count = %d, want 1: %v", len(messages), messages)
+	}
+	if !strings.Contains(messages[0], "affected") || !strings.Contains(messages[0], "3 completed") || !strings.Contains(messages[0], "2 skipped") {
+		t.Errorf("notification = %q", messages[0])
 	}
 }
 

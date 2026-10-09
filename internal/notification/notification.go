@@ -93,3 +93,15 @@ func FormatConsolidatedSlackMessage(networkName, networkCIDR string, newDevices 
 
 	return sb.String()
 }
+
+// FormatDeepScanCutoffSlackMessage reports targets left unscanned when the
+// nightly maintenance window ends. It deliberately includes aggregate counts
+// only, not endpoint or service details.
+func FormatDeepScanCutoffSlackMessage(networkName, networkCIDR string, completed, skipped int) string {
+	return fmt.Sprintf(
+		"⚠️ *LAN-Orangutan: Deep Scan Cut Off* [%s] (`%s`)\n"+
+			"The 03:00-06:00 Eastern maintenance window ended before all targets were scanned.\n"+
+			"*%d completed*, *%d skipped*.",
+		networkName, networkCIDR, completed, skipped,
+	)
+}

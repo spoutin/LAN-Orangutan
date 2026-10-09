@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/notification"
 	"github.com/spoutin/LAN-Orangutan/internal/scanner"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
@@ -30,6 +32,7 @@ type scanJob struct {
 	id       string
 	networks []string
 	cancel   context.CancelFunc
+	done     chan struct{}
 
 	mu               sync.RWMutex
 	status           string // running, done, cancelled or failed
@@ -48,8 +51,10 @@ type scanJob struct {
 	// automatic marks a scan the background scanner started, as opposed to one
 	// the user clicked. Set once at creation. The UI uses it to stay quiet for
 	// automatic scans instead of popping the progress overlay on its own.
-	automatic bool
-	mode      string
+	automatic    bool
+	mode         string
+	nightlyDeep  bool
+	deepNetworks []string
 
 	// Stage 2 port scanning telemetry
 	portScanActive      bool
@@ -230,19 +235,35 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 // must hold h.jobMu. automatic marks a scan the background scanner started, so
 // the UI can stay quiet for it.
 func (h *Handler) startScanJob(networks []string, automatic bool, mode string) *scanJob {
+	return h.startScanJobWithDeadline(networks, automatic, mode, time.Time{}, nil)
+}
+
+func (h *Handler) startScanJobWithDeadline(networks []string, automatic bool, mode string, deadline time.Time, deepNetworks []string) *scanJob {
 	// Descend from h.scanCtx (the server's shutdown context) rather than
 	// context.Background(), so cancelling it at shutdown cancels a running scan.
 	ctx, cancel := context.WithCancel(h.scanCtx)
+	if !deadline.IsZero() {
+		deadlineCtx, deadlineCancel := context.WithDeadline(ctx, deadline)
+		baseCancel := cancel
+		ctx = deadlineCtx
+		cancel = func() {
+			deadlineCancel()
+			baseCancel()
+		}
+	}
 
 	job := &scanJob{
-		id:        fmt.Sprintf("scan-%d", time.Now().UnixNano()),
-		networks:  networks,
-		cancel:    cancel,
-		status:    "running",
-		startedAt: time.Now(),
-		results:   make([]networkScanSummary, 0, len(networks)),
-		automatic: automatic,
-		mode:      mode,
+		id:           fmt.Sprintf("scan-%d", time.Now().UnixNano()),
+		networks:     networks,
+		cancel:       cancel,
+		done:         make(chan struct{}),
+		status:       "running",
+		startedAt:    h.now(),
+		results:      make([]networkScanSummary, 0, len(networks)),
+		automatic:    automatic,
+		mode:         mode,
+		nightlyDeep:  !deadline.IsZero(),
+		deepNetworks: append([]string(nil), deepNetworks...),
 	}
 	for _, network := range networks {
 		estimate := h.store.GetLastDuration(network)
@@ -259,6 +280,7 @@ func (h *Handler) startScanJob(networks []string, automatic bool, mode string) *
 	h.scanWG.Add(1)
 	go func() {
 		defer h.scanWG.Done()
+		defer close(job.done)
 		job.run(ctx, h)
 	}()
 	return job
@@ -355,7 +377,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			if !j.automatic {
 				// Keep manual scans immediate
 				shouldPortScan = true
-			} else {
+			} else if !j.nightlyDeep {
 				// Automatic background scan: quiet-hour 3:00 AM Eastern Time prober
 				loc, err := time.LoadLocation("America/New_York")
 				if err != nil {
@@ -379,7 +401,13 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		}
 	}
 
-	if len(deepTargets) > 0 && ctx.Err() == nil {
+	if j.nightlyDeep && ctx.Err() == nil {
+		j.runNightlyDeepScan(ctx, h)
+		if ctx.Err() == context.DeadlineExceeded {
+			j.finish("cancelled", "nightly deep scan stopped at the 06:00 Eastern cutoff")
+			return
+		}
+	} else if len(deepTargets) > 0 && ctx.Err() == nil {
 		j.runDeepQueue(ctx, h, deepTargets)
 	}
 
@@ -601,7 +629,10 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 
 	jobs := make(chan deepTarget)
 	var wg sync.WaitGroup
-	const concurrency = 3
+	concurrency := 3
+	if j.nightlyDeep {
+		concurrency = 1
+	}
 	for range concurrency {
 		wg.Add(1)
 		go func() {
@@ -623,6 +654,61 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 	j.mu.Lock()
 	j.portScanActive = false
 	j.mu.Unlock()
+}
+
+// runNightlyDeepScan builds one shuffled all-network queue. It is separate from
+// Stage 1 so staggering discovery does not exclude later networks from Stage 2.
+func (j *scanJob) runNightlyDeepScan(ctx context.Context, h *Handler) {
+	devices := h.store.GetDevices()
+	interval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
+	networks := append([]string(nil), j.deepNetworks...)
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rng.Shuffle(len(networks), func(i, k int) { networks[i], networks[k] = networks[k], networks[i] })
+	targetsByNetwork := make(map[string][]types.Device, len(networks))
+	for _, cidr := range networks {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		for _, device := range devices {
+			ip := net.ParseIP(device.IP)
+			if ip != nil && network.Contains(ip) && device.IsOnline(interval) {
+				targetsByNetwork[cidr] = append(targetsByNetwork[cidr], *device)
+			}
+		}
+		rng.Shuffle(len(targetsByNetwork[cidr]), func(i, k int) {
+			targetsByNetwork[cidr][i], targetsByNetwork[cidr][k] = targetsByNetwork[cidr][k], targetsByNetwork[cidr][i]
+		})
+	}
+	j.networks = networks
+	j.runDeepQueue(ctx, h, targetsByNetwork)
+	if ctx.Err() == context.DeadlineExceeded {
+		j.notifyNightlyDeepCutoff(h)
+	}
+}
+
+func (j *scanJob) notifyNightlyDeepCutoff(h *Handler) {
+	j.mu.RLock()
+	progress := append([]deepNetworkProgress(nil), j.deepNetworkProgress...)
+	j.mu.RUnlock()
+	for _, network := range progress {
+		skipped := network.Total - network.Complete
+		if skipped <= 0 {
+			continue
+		}
+		conf, err := h.store.GetNetworkNotification(network.Network)
+		if err != nil || conf == nil || !conf.Enabled || conf.SlackWebhook == "" {
+			continue
+		}
+		name := network.Network
+		if configured, ok := h.cfg.Scanning.NetworkNames[network.Network]; ok {
+			name = configured
+		}
+		message := notification.FormatDeepScanCutoffSlackMessage(name, network.Network, network.Complete, skipped)
+		if err := h.sendSlackNotification(conf.SlackWebhook, message); err != nil {
+			fmt.Printf("Nightly deep scan cutoff notification failed for %s: %v\n", network.Network, err)
+		}
+	}
 }
 
 // runDeepScan probes currently online inventory records without rediscovering
@@ -699,21 +785,15 @@ func (j *scanJob) adopt() {
 	j.automatic = false
 }
 
-// StartBackgroundScanner re-scans the detected networks every interval so the
-// device list stays current on its own, without anyone clicking Scan or keeping
-// a browser open. It reuses the same job path, the one-scan-at-a-time guard and
-// the per-network rate limiting as a manual scan, and stops when ctx is
-// cancelled. A non-positive interval disables it. The ticker always runs so the
-// user can switch continuous scanning on and off at runtime; runBackgroundScan
-// skips the actual scan while the setting is off.
+// StartBackgroundScanner rotates through detected networks, waiting for one
+// automatic scan to complete and then spacing the next one by interval. This
+// prevents an all-network sweep from concentrating its connection state at once.
 func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		return
 	}
 
 	go func() {
-		// Scan shortly after startup so a freshly started server does not sit
-		// empty until the first interval elapses.
 		startup := time.NewTimer(5 * time.Second)
 		defer startup.Stop()
 		select {
@@ -721,44 +801,113 @@ func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Dura
 			return
 		case <-startup.C:
 		}
-		h.runBackgroundScan()
 
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
+		cursor := 0
 		for {
-			select {
-			case <-ctx.Done():
+			if !h.store.ContinuousScanEnabled(h.cfg.Scanning.ContinuousScan) {
+				if !waitForBackgroundScan(ctx, nil, interval) {
+					return
+				}
+				continue
+			}
+
+			networks, err := h.resolveScanTargets("all")
+			if err != nil || len(networks) == 0 {
+				if !waitForBackgroundScan(ctx, nil, interval) {
+					return
+				}
+				continue
+			}
+			network, next, ok := nextBackgroundNetwork(networks, cursor)
+			if !ok {
+				cursor = 0
+				continue
+			}
+			cursor = next
+
+			job := h.startBackgroundNetwork(network, networks)
+			if job != nil && !waitForBackgroundScan(ctx, job.done, interval) {
 				return
-			case <-ticker.C:
-				h.runBackgroundScan()
+			}
+			if job == nil && !waitForBackgroundScan(ctx, nil, interval) {
+				return
 			}
 		}
 	}()
 }
 
-// runBackgroundScan starts one scan of all detected networks, unless a scan is
-// already running. The job itself skips any network that was scanned too
-// recently, so this never scans a network more often than the rate limit
-// allows, however short the interval.
-func (h *Handler) runBackgroundScan() {
-	// The ticker always runs so the setting can be toggled at runtime; skip the
-	// actual scan when continuous scanning is currently switched off.
-	if !h.store.ContinuousScanEnabled(h.cfg.Scanning.ContinuousScan) {
-		return
-	}
-
-	networks, err := h.resolveScanTargets("all")
-	if err != nil || len(networks) == 0 {
-		return
-	}
-
+func (h *Handler) startBackgroundNetwork(network string, allNetworks []string) *scanJob {
 	h.jobMu.Lock()
 	defer h.jobMu.Unlock()
 
 	if h.job != nil && h.job.isRunning() {
+		return nil
+	}
+	var deadline time.Time
+	var deepNetworks []string
+	if h.cfg.Scanning.EnablePortScan && h.cfg.Scanning.PortScanRange != "" {
+		loc, err := time.LoadLocation("America/New_York")
+		if err != nil {
+			loc = time.UTC
+		}
+		now := h.now().In(loc)
+		if now.Hour() == 3 {
+			date := now.Format("2006-01-02")
+			last, _ := h.store.GetSetting("last_deep_scan_date")
+			if last != date {
+				_ = h.store.SetSetting("last_deep_scan_date", date)
+				deadline = time.Date(now.Year(), now.Month(), now.Day(), 6, 0, 0, 0, loc)
+				deepNetworks = append([]string(nil), allNetworks...)
+			}
+		}
+	}
+	h.job = h.startScanJobWithDeadline([]string{network}, true, scanModeBoth, deadline, deepNetworks)
+	return h.job
+}
+
+// runBackgroundScan preserves the immediate refresh when continuous scanning is
+// enabled from the UI, but starts only the first resolved network. The scheduler
+// then continues its normal one-network rotation.
+func (h *Handler) runBackgroundScan() {
+	if !h.store.ContinuousScanEnabled(h.cfg.Scanning.ContinuousScan) {
 		return
 	}
-	h.job = h.startScanJob(networks, true, scanModeBoth)
+	networks, err := h.resolveScanTargets("all")
+	if err != nil || len(networks) == 0 {
+		return
+	}
+	h.startBackgroundNetwork(networks[0], networks)
+}
+
+func nextBackgroundNetwork(networks []string, cursor int) (string, int, bool) {
+	if len(networks) == 0 {
+		return "", 0, false
+	}
+	if cursor < 0 || cursor >= len(networks) {
+		cursor = 0
+	}
+	return networks[cursor], (cursor + 1) % len(networks), true
+}
+
+func waitForBackgroundScan(ctx context.Context, done <-chan struct{}, delay time.Duration) bool {
+	if done != nil {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-done:
+		}
+	}
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // startPortScan runs a targeted high-speed port scan on a list of discovered active devices.
@@ -792,7 +941,7 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 	}
 	j.mu.Unlock()
 
-	ports, sshPorts, services, err := h.scanner.ScanHostPorts(ctx, device.IP, h.cfg.Scanning.PortScanRange)
+	ports, sshPorts, services, err := h.scanner.ScanHostPortsWithTiming(ctx, device.IP, h.cfg.Scanning.PortScanRange, j.nightlyDeep)
 	if err != nil {
 		fmt.Printf("[DEBUG-PORT-SCAN] Failed to scan ports for %s: %v\n", device.IP, err)
 	} else {
