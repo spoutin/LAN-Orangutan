@@ -189,7 +189,20 @@ async function cancelScan() {
 // Reports the outcome of a finished job. Networks that were rate limited or
 // failed are surfaced rather than being hidden behind a success message.
 function reportScanOutcome(p) {
-    const scanned = (p.networks || []).filter(n => n.status === 'scanned');
+	if (p.targeted_deep_scan) {
+		if (p.status === 'cancelled') {
+			showToast('Service rescan cancelled', 'warning');
+			return;
+		}
+		const host = p.last_port_scan_host || {};
+		if (host.error) {
+			showToast('Service rescan failed: ' + host.error, 'warning');
+			return;
+		}
+		showToast('Service rescan complete', 'success');
+		return;
+	}
+	const scanned = (p.networks || []).filter(n => n.status === 'scanned');
     if (p.status === 'cancelled') {
         showToast('Scan cancelled', 'warning');
         if (scanned.length) setTimeout(refreshAfterScan, 1000);
@@ -1395,7 +1408,8 @@ async function rescanSidebarDeviceDeepServices() {
 	if (button) button.disabled = true;
 	try {
 		await api(`devices/${encodeURIComponent(ip)}/deep-scan`, {}, 'POST');
-		await followScan();
+		const progress = await followDeviceDeepScan(ip);
+		if (progress.last_port_scan_host?.error) throw new Error(progress.last_port_scan_host.error);
 		await refreshSidebarAfterDeepScan(ip, previousScanAt);
 	} catch (e) {
 		if (lastDeepScan) lastDeepScan.textContent = previousText;
@@ -1405,8 +1419,17 @@ async function rescanSidebarDeviceDeepServices() {
 	}
 }
 
+async function followDeviceDeepScan(ip) {
+	while (true) {
+		await new Promise(resolve => setTimeout(resolve, SCAN_POLL_MS));
+		const progress = (await api('scan/progress')).data;
+		if (progress.status !== 'running') return progress;
+		if (progress.last_port_scan_host?.ip === ip && progress.last_port_scan_host?.error) return progress;
+	}
+}
+
 async function refreshSidebarAfterDeepScan(ip, previousScanAt) {
-	for (let attempt = 0; attempt < 10; attempt++) {
+	for (let attempt = 0; attempt < 20; attempt++) {
 		await refreshInPlace();
 		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
 		const scannedAt = row?.dataset.lastDeepScanAt || '';
