@@ -2677,6 +2677,18 @@ img.login-logo {
     opacity: 0.8;
 }
 
+.deep-scan-progress {
+    color: var(--success);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.deep-scan-progress .spinner-svg {
+    animation: spin 1.5s linear infinite;
+    stroke: var(--success);
+}
+
 .network-list {
     display: flex;
     flex-direction: column;
