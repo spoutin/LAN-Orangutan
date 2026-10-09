@@ -55,6 +55,7 @@ type scanJob struct {
 	mode         string
 	nightlyDeep  bool
 	deepNetworks []string
+	deepDevices  []types.Device
 
 	// Stage 2 port scanning telemetry
 	portScanActive      bool
@@ -235,10 +236,10 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 // must hold h.jobMu. automatic marks a scan the background scanner started, so
 // the UI can stay quiet for it.
 func (h *Handler) startScanJob(networks []string, automatic bool, mode string) *scanJob {
-	return h.startScanJobWithDeadline(networks, automatic, mode, time.Time{}, nil)
+	return h.startScanJobWithDeadline(networks, automatic, mode, time.Time{}, nil, nil)
 }
 
-func (h *Handler) startScanJobWithDeadline(networks []string, automatic bool, mode string, deadline time.Time, deepNetworks []string) *scanJob {
+func (h *Handler) startScanJobWithDeadline(networks []string, automatic bool, mode string, deadline time.Time, deepNetworks []string, deepDevices []types.Device) *scanJob {
 	// Descend from h.scanCtx (the server's shutdown context) rather than
 	// context.Background(), so cancelling it at shutdown cancels a running scan.
 	ctx, cancel := context.WithCancel(h.scanCtx)
@@ -264,6 +265,7 @@ func (h *Handler) startScanJobWithDeadline(networks []string, automatic bool, mo
 		mode:         mode,
 		nightlyDeep:  !deadline.IsZero(),
 		deepNetworks: append([]string(nil), deepNetworks...),
+		deepDevices:  append([]types.Device(nil), deepDevices...),
 	}
 	for _, network := range networks {
 		estimate := h.store.GetLastDuration(network)
@@ -409,6 +411,8 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		}
 	} else if len(deepTargets) > 0 && ctx.Err() == nil {
 		j.runDeepQueue(ctx, h, deepTargets)
+	} else if ctx.Err() == nil {
+		j.runNewDeviceDeepScan(ctx, h)
 	}
 
 	// Supplemental discovery, once for the whole job: IPv6 neighbors (an IPv6
@@ -599,6 +603,39 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	}
 }
 
+// runNewDeviceDeepScan immediately profiles only records created by this Stage
+// 1 job. Known devices are left for manual or monthly deep scans.
+func (j *scanJob) runNewDeviceDeepScan(ctx context.Context, h *Handler) {
+	j.mu.RLock()
+	newIPs := append([]string(nil), j.accumulatedNew...)
+	j.mu.RUnlock()
+	if len(newIPs) == 0 {
+		return
+	}
+	targets := make(map[string][]types.Device)
+	for _, ip := range newIPs {
+		device := h.store.GetDevice(ip)
+		if device == nil || !device.IsOnline(time.Duration(h.cfg.Scanning.ScanInterval)*time.Second) {
+			continue
+		}
+		for _, network := range j.networks {
+			_, cidr, err := net.ParseCIDR(network)
+			if err == nil && cidr.Contains(net.ParseIP(ip)) {
+				targets[network] = append(targets[network], *device)
+				break
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return
+	}
+	// New-device probing is intentionally conservative even outside the nightly window.
+	wasNightly := j.nightlyDeep
+	j.nightlyDeep = true
+	j.runDeepQueue(ctx, h, targets)
+	j.nightlyDeep = wasNightly
+}
+
 func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork map[string][]types.Device) {
 	type deepTarget struct {
 		network string
@@ -672,7 +709,7 @@ func (j *scanJob) runNightlyDeepScan(ctx context.Context, h *Handler) {
 		}
 		for _, device := range devices {
 			ip := net.ParseIP(device.IP)
-			if ip != nil && network.Contains(ip) && device.IsOnline(interval) {
+			if ip != nil && network.Contains(ip) && device.IsOnline(interval) && (device.LastDeepScanAt.IsZero() || time.Since(device.LastDeepScanAt) >= 30*24*time.Hour) {
 				targetsByNetwork[cidr] = append(targetsByNetwork[cidr], *device)
 			}
 		}
@@ -714,6 +751,17 @@ func (j *scanJob) notifyNightlyDeepCutoff(h *Handler) {
 // runDeepScan probes currently online inventory records without rediscovering
 // the network. This gives users an explicit Stage 2-only operation.
 func (j *scanJob) runDeepScan(ctx context.Context, h *Handler) {
+	if len(j.deepDevices) > 0 {
+		targets := make(map[string][]types.Device)
+		for _, device := range j.deepDevices {
+			cidr := findSubnetForIP(device.IP, j.networks)
+			if cidr != "" {
+				targets[cidr] = append(targets[cidr], device)
+			}
+		}
+		j.runDeepQueue(ctx, h, targets)
+		return
+	}
 	devices := h.store.GetDevices()
 	interval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
 	targetsByNetwork := make(map[string][]types.Device)
@@ -861,7 +909,7 @@ func (h *Handler) startBackgroundNetwork(network string, allNetworks []string) *
 			}
 		}
 	}
-	h.job = h.startScanJobWithDeadline([]string{network}, true, scanModeBoth, deadline, deepNetworks)
+	h.job = h.startScanJobWithDeadline([]string{network}, true, scanModeBoth, deadline, deepNetworks, nil)
 	return h.job
 }
 

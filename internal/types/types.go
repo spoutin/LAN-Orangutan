@@ -49,6 +49,7 @@ type Device struct {
 	NetworkName     string        `json:"network_name,omitempty"`
 	FirstSeen       time.Time     `json:"first_seen"`
 	LastSeen        time.Time     `json:"last_seen"`
+	LastDeepScanAt  time.Time     `json:"last_deep_scan_at,omitempty"`
 	ResponseTime    *float64      `json:"response_time,omitempty"`
 
 	// AddressHistory lists earlier IPs this device (matched by its MAC) was seen

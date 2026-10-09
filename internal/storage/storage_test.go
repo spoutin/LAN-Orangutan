@@ -728,6 +728,9 @@ func TestUpdateOpenPortsPersistsDeepScanResults(t *testing.T) {
 	if len(got.OpenServices) != 2 || got.OpenServices[0].Name != "ssh" || got.OpenServices[0].Version != "OpenSSH 9.2p1" {
 		t.Errorf("OpenServices = %+v, want persisted service details", got.OpenServices)
 	}
+	if got.LastDeepScanAt.IsZero() {
+		t.Error("LastDeepScanAt is zero after a successful deep scan")
+	}
 }
 
 func TestUpdateDevicePreservesUniFiVLANWhenOmitted(t *testing.T) {
