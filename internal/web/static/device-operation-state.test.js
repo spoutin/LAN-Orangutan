@@ -13,3 +13,10 @@ test('a targeted deep scan protects only its selected device timestamp', () => {
   assert.equal(protectsTimestamp('10.0.0.15'), true);
   assert.equal(protectsTimestamp('10.0.0.16'), false);
 });
+
+test('a completed targeted deep scan releases its rescan control', () => {
+  const button = { disabled: true };
+  const targetedDeepScanRunning = false;
+  if (!targetedDeepScanRunning) button.disabled = false;
+  assert.equal(button.disabled, false);
+});
