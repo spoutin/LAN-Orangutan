@@ -172,6 +172,7 @@ async function api(action, params = {}, method = 'GET') {
 // A large network takes minutes, which is far too long to hold a request open.
 const SCAN_POLL_MS = 1000;
 let activeScanProgress = null;
+let activeTargetedDeepScanIP = '';
 
 function formatSeconds(total) {
     const s = Math.max(0, Math.round(total));
@@ -1298,7 +1299,7 @@ function openDeviceSidebar(target) {
 		// A table refresh can arrive while this device's targeted deep scan is
 		// still running. Preserve its operation feedback rather than briefly
 		// replacing the spinner with the prior persisted timestamp.
-		const targetedDeepScanRunning = activeScanProgress?.status === 'running' && activeScanProgress?.targeted_deep_scan && activeScanProgress?.targeted_device_ip === data.ip;
+		const targetedDeepScanRunning = activeTargetedDeepScanIP === data.ip;
 		if (lastDeepScan && !targetedDeepScanRunning) {
 			const scannedAt = data.lastDeepScanAt ? new Date(data.lastDeepScanAt) : null;
 			if (scannedAt && !isNaN(scannedAt.getTime())) {
@@ -1409,12 +1410,14 @@ async function rescanSidebarDeviceDeepServices() {
 	const previousScanAt = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`)?.dataset.lastDeepScanAt || '';
 	try {
 		const started = await api(`devices/${encodeURIComponent(ip)}/deep-scan`, {}, 'POST');
+		activeTargetedDeepScanIP = ip;
 		activeScanProgress = started.data;
 		renderTargetedDeepScanProgress(ip);
 		const progress = await followDeviceDeepScan(ip);
 		if (progress.last_port_scan_host?.error) throw new Error(progress.last_port_scan_host.error);
 		await refreshSidebarAfterDeepScan(ip, previousScanAt);
 	} catch (e) {
+		activeTargetedDeepScanIP = '';
 		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
 		if (row) openDeviceSidebar(row);
 		showToast('Could not start deep service rescan: ' + e.message, 'error');
@@ -1451,6 +1454,7 @@ async function refreshSidebarAfterDeepScan(ip, previousScanAt) {
 		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
 		const scannedAt = row?.dataset.lastDeepScanAt || '';
 		if (row && scannedAt && scannedAt !== previousScanAt) {
+			activeTargetedDeepScanIP = '';
 			openDeviceSidebar(row);
 			return;
 		}
