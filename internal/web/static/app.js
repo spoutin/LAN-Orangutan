@@ -171,6 +171,7 @@ async function api(action, params = {}, method = 'GET') {
 // Scans run in the background on the server and the page polls for progress.
 // A large network takes minutes, which is far too long to hold a request open.
 const SCAN_POLL_MS = 1000;
+const deviceOperations = new Map();
 
 function formatSeconds(total) {
     const s = Math.max(0, Math.round(total));
@@ -1305,6 +1306,7 @@ function openDeviceSidebar(target) {
 				lastDeepScan.textContent = 'Never';
 			}
 		}
+		renderDeviceOperation(data.ip);
 
 		const sshEl = document.getElementById('sb-ssh');
 		if (sshEl) {
@@ -1400,23 +1402,29 @@ function closeServiceDetails() {
 async function rescanSidebarDeviceDeepServices() {
 	const ip = document.getElementById('sb-edit-ip')?.value;
 	if (!ip) return;
-	const lastDeepScan = document.getElementById('sb-last-deep-scan');
-	const button = document.getElementById('sb-deep-rescan-btn');
-	const previousText = lastDeepScan?.textContent || 'Never';
 	const previousScanAt = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`)?.dataset.lastDeepScanAt || '';
-	if (lastDeepScan) lastDeepScan.innerHTML = '<span class="deep-scan-progress"><svg class="spinner-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>Scanning services...</span>';
-	if (button) button.disabled = true;
+	deviceOperations.set(ip, { kind: 'deep-scan', status: 'running', previousScanAt });
+	renderDeviceOperation(ip);
 	try {
 		await api(`devices/${encodeURIComponent(ip)}/deep-scan`, {}, 'POST');
 		const progress = await followDeviceDeepScan(ip);
 		if (progress.last_port_scan_host?.error) throw new Error(progress.last_port_scan_host.error);
 		await refreshSidebarAfterDeepScan(ip, previousScanAt);
 	} catch (e) {
-		if (lastDeepScan) lastDeepScan.textContent = previousText;
+		deviceOperations.delete(ip);
+		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
+		if (row) openDeviceSidebar(row);
 		showToast('Could not start deep service rescan: ' + e.message, 'error');
-	} finally {
-		if (button) button.disabled = false;
 	}
+}
+
+function renderDeviceOperation(ip) {
+	const operation = deviceOperations.get(ip);
+	const lastDeepScan = document.getElementById('sb-last-deep-scan');
+	const button = document.getElementById('sb-deep-rescan-btn');
+	if (!operation || operation.kind !== 'deep-scan' || operation.status !== 'running') return;
+	if (lastDeepScan) lastDeepScan.innerHTML = '<span class="deep-scan-progress"><svg class="spinner-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>Scanning services...</span>';
+	if (button) button.disabled = true;
 }
 
 async function followDeviceDeepScan(ip) {
@@ -1434,13 +1442,13 @@ async function refreshSidebarAfterDeepScan(ip, previousScanAt) {
 		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
 		const scannedAt = row?.dataset.lastDeepScanAt || '';
 		if (row && scannedAt && scannedAt !== previousScanAt) {
+			deviceOperations.delete(ip);
 			openDeviceSidebar(row);
 			return;
 		}
 		await new Promise(resolve => setTimeout(resolve, 500));
 	}
-	const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
-	if (row) openDeviceSidebar(row);
+	throw new Error('The service scan completed but its result was not persisted');
 }
 
 function closeDeviceSidebar() {
