@@ -534,13 +534,17 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 
 func (s *Storage) loadOpenPorts(device *types.Device) error {
 	var portsJSON, servicesJSON string
-	if err := s.db.QueryRow("SELECT ports, services FROM device_open_ports WHERE ip = ?", device.IP).Scan(&portsJSON, &servicesJSON); err != nil {
+	var lastDeepScanAt sql.NullTime
+	if err := s.db.QueryRow("SELECT ports, services, last_deep_scan_at FROM device_open_ports WHERE ip = ?", device.IP).Scan(&portsJSON, &servicesJSON, &lastDeepScanAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil
 		}
 		return err
 	}
 	_ = json.Unmarshal([]byte(portsJSON), &device.OpenPorts)
+	if lastDeepScanAt.Valid {
+		device.LastDeepScanAt = lastDeepScanAt.Time
+	}
 	return json.Unmarshal([]byte(servicesJSON), &device.OpenServices)
 }
 
@@ -557,9 +561,9 @@ func (s *Storage) UpdateOpenPorts(ip string, ports []int, services []types.OpenS
 		return err
 	}
 	_, err = s.db.Exec(`
-		INSERT INTO device_open_ports (ip, ports, services) VALUES (?, ?, ?)
-		ON CONFLICT(ip) DO UPDATE SET ports = excluded.ports, services = excluded.services
-	`, ip, string(portsJSON), string(servicesJSON))
+		INSERT INTO device_open_ports (ip, ports, services, last_deep_scan_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(ip) DO UPDATE SET ports = excluded.ports, services = excluded.services, last_deep_scan_at = excluded.last_deep_scan_at
+	`, ip, string(portsJSON), string(servicesJSON), time.Now())
 	return err
 }
 

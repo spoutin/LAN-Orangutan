@@ -320,7 +320,8 @@ orangutan export out.csv</code></pre>
                                     data-notes="{{.Notes}}"
                                     data-firstseen="{{.FirstSeen}}"
                                     data-lastseen="{{.LastSeenUnix}}"
-                                    data-lastseen-display="{{.LastSeen}}"
+                                     data-lastseen-display="{{.LastSeen}}"
+									 data-last-deep-scan-at="{{if .LastDeepScanAt}}{{.LastDeepScanAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}"
                                     data-responsetime="{{if .ResponseTime}}{{.ResponseTime}} ms{{else}}N/A{{end}}"
                                     data-status="{{.Status}}"
                                     data-status-class="{{.StatusClass}}"
@@ -621,6 +622,10 @@ orangutan export out.csv</code></pre>
                                             <span class="spec-label">Vendor:</span>
                                             <span class="spec-val" id="sb-hw-vendor">—</span>
                                         </li>
+										<li>
+											<span class="spec-label">MAC Address:</span>
+											<span class="spec-val" id="sb-mac-address">—</span>
+										</li>
                                         <li>
                                             <span class="spec-label">UniFi Model:</span>
                                             <span class="spec-val" id="sb-unifi-model">—</span>
@@ -634,6 +639,11 @@ orangutan export out.csv</code></pre>
 										<span class="spec-val" id="sb-open-services-summary">Not scanned yet</span>
 									</li>
 									<button type="button" class="btn sb-services-button" id="sb-services-btn" onclick="openServiceDetails()">View services</button>
+									<li>
+										<span class="spec-label">Last deep scan:</span>
+										<span class="spec-val" id="sb-last-deep-scan">Never</span>
+									</li>
+									<button type="button" class="btn sb-services-button" id="sb-deep-rescan-btn" onclick="rescanSidebarDeviceDeepServices()">Rescan deep services</button>
 									<li>
 										<span class="spec-label">SSH:</span>
 										<span class="spec-val" id="sb-ssh">—</span>

@@ -14,6 +14,33 @@ import (
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
+func TestDeviceDeepScanStartsOnlyRequestedDevice(t *testing.T) {
+	store := newScanJobTestStore(t)
+	device := &types.Device{IP: "192.168.1.25", Hostname: "nas"}
+	if err := store.UpdateDevice(device); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"192.168.1.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+	h := NewHandler(store, cfg)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/devices/192.168.1.25/deep-scan", nil)
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("deep scan status = %d: %s", rec.Code, rec.Body.String())
+	}
+	h.jobMu.Lock()
+	job := h.job
+	h.jobMu.Unlock()
+	if job == nil || len(job.deepDevices) != 1 || job.deepDevices[0].IP != device.IP {
+		t.Fatalf("deep scan targets = %+v, want only %s", job, device.IP)
+	}
+	job.cancel()
+	<-job.done
+}
+
 func TestDevice_PUT_UpdateEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))

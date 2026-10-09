@@ -94,6 +94,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleDevicesClear(w, r)
 	case strings.HasPrefix(path, "devices/"):
 		ip := strings.TrimPrefix(path, "devices/")
+		if strings.HasSuffix(ip, "/deep-scan") {
+			r.URL.RawPath = ""
+			r.URL.Path = strings.TrimSuffix(ip, "/deep-scan")
+			h.handleDeviceDeepScan(w, r)
+			return
+		}
 		q := r.URL.Query()
 		if q.Get("ip") == "" {
 			q.Set("ip", ip)
@@ -137,6 +143,38 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.error(w, http.StatusNotFound, "endpoint not found")
 	}
+}
+
+func (h *Handler) handleDeviceDeepScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	ip := r.URL.Path
+	device := h.store.GetDevice(ip)
+	if device == nil {
+		h.error(w, http.StatusNotFound, "device not found")
+		return
+	}
+	h.jobMu.Lock()
+	defer h.jobMu.Unlock()
+	if h.job != nil && h.job.isRunning() {
+		h.job.adopt()
+		h.success(w, h.job.snapshot(h.cfg, h.store))
+		return
+	}
+	networks, err := h.resolveScanTargets("all")
+	if err != nil {
+		h.error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cidr := findSubnetForIP(device.IP, networks)
+	if cidr == "" {
+		h.error(w, http.StatusBadRequest, "device is not in a configured scan network")
+		return
+	}
+	h.job = h.startScanJobWithDeadline([]string{cidr}, false, scanModeDeep, time.Time{}, nil, []types.Device{*device})
+	h.success(w, h.job.snapshot(h.cfg, h.store))
 }
 
 // handleDevices handles GET /api/devices

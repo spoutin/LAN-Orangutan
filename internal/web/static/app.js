@@ -1263,6 +1263,8 @@ function openDeviceSidebar(target) {
         const vendorVal = data.vendorOriginal || data.vendor || 'Unknown';
         const hwVendorEl = document.getElementById('sb-hw-vendor');
         if (hwVendorEl) hwVendorEl.textContent = vendorVal;
+		const macEl = document.getElementById('sb-mac-address');
+		if (macEl) macEl.textContent = data.mac || '—';
 
         const unifiModelEl = document.getElementById('sb-unifi-model');
         if (unifiModelEl) unifiModelEl.textContent = data.unifiModel || '—';
@@ -1277,6 +1279,18 @@ function openDeviceSidebar(target) {
 			try { services = JSON.parse(data.openServices || '[]'); } catch (_) {}
 			servicesSummary.textContent = services.length ? `${services.length} detected` : data.openPorts ? `${data.openPorts.split(',').length} detected` : 'Not scanned yet';
 			if (servicesButton) servicesButton.style.display = services.length || data.openPorts ? '' : 'none';
+		}
+		const lastDeepScan = document.getElementById('sb-last-deep-scan');
+		if (lastDeepScan) {
+			const scannedAt = data.lastDeepScanAt ? new Date(data.lastDeepScanAt) : null;
+			if (scannedAt && !isNaN(scannedAt.getTime())) {
+				const unix = Math.floor(scannedAt.getTime() / 1000);
+				lastDeepScan.dataset.relativeTime = unix;
+				lastDeepScan.textContent = `${scannedAt.toLocaleString()} · ${relativeTime(unix)}`;
+			} else {
+				lastDeepScan.dataset.relativeTime = '';
+				lastDeepScan.textContent = 'Never';
+			}
 		}
 
 		const sshEl = document.getElementById('sb-ssh');
@@ -1368,6 +1382,18 @@ function openServiceDetails() {
 
 function closeServiceDetails() {
 	document.getElementById('service-details-modal').style.display = 'none';
+}
+
+async function rescanSidebarDeviceDeepServices() {
+	const ip = document.getElementById('sb-edit-ip')?.value;
+	if (!ip) return;
+	try {
+		await api(`devices/${encodeURIComponent(ip)}/deep-scan`, {}, 'POST');
+		showToast('Deep service rescan started', 'success');
+		await followScan();
+	} catch (e) {
+		showToast('Could not start deep service rescan: ' + e.message, 'error');
+	}
 }
 
 function closeDeviceSidebar() {
