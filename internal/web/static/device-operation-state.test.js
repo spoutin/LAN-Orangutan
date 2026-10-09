@@ -6,3 +6,10 @@ test('targeted deep scan progress identifies the device that owns the sidebar sp
   assert.equal(progress.status === 'running' && progress.targeted_deep_scan && progress.targeted_device_ip === '10.0.0.15', true);
   assert.equal(progress.status === 'running' && progress.targeted_deep_scan && progress.targeted_device_ip === '10.0.0.16', false);
 });
+
+test('a targeted deep scan protects only its selected device timestamp', () => {
+  const progress = { status: 'running', targeted_deep_scan: true, targeted_device_ip: '10.0.0.15' };
+  const protectsTimestamp = ip => progress.status === 'running' && progress.targeted_deep_scan && progress.targeted_device_ip === ip;
+  assert.equal(protectsTimestamp('10.0.0.15'), true);
+  assert.equal(protectsTimestamp('10.0.0.16'), false);
+});

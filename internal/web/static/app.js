@@ -1295,7 +1295,11 @@ function openDeviceSidebar(target) {
 			if (servicesButton) servicesButton.style.display = services.length || data.openPorts ? '' : 'none';
 		}
 		const lastDeepScan = document.getElementById('sb-last-deep-scan');
-		if (lastDeepScan) {
+		// A table refresh can arrive while this device's targeted deep scan is
+		// still running. Preserve its operation feedback rather than briefly
+		// replacing the spinner with the prior persisted timestamp.
+		const targetedDeepScanRunning = activeScanProgress?.status === 'running' && activeScanProgress?.targeted_deep_scan && activeScanProgress?.targeted_device_ip === data.ip;
+		if (lastDeepScan && !targetedDeepScanRunning) {
 			const scannedAt = data.lastDeepScanAt ? new Date(data.lastDeepScanAt) : null;
 			if (scannedAt && !isNaN(scannedAt.getTime())) {
 				const unix = Math.floor(scannedAt.getTime() / 1000);
