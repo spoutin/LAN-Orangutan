@@ -15,6 +15,13 @@ import (
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
+// RemoteRunner executes scans on remote gateways over SSH
+type RemoteRunner interface {
+	HasRemoteScannerForTarget(target string) bool
+	GetGatewayForTarget(target string) string
+	RunScan(ctx context.Context, target string, args []string) ([]byte, error)
+}
+
 // Scanner performs network scans
 type Scanner struct {
 	minInterval time.Duration
@@ -23,6 +30,7 @@ type Scanner struct {
 	serviceDetection bool
 	enablePortScan   bool
 	portScanRange    string
+	remoteRunner     RemoteRunner
 }
 
 // New creates a new Scanner. serviceDetection enables the opt-in port probe
@@ -34,6 +42,16 @@ func New(minIntervalSeconds int, serviceDetection bool, enablePortScan bool, por
 		enablePortScan:   enablePortScan,
 		portScanRange:    portScanRange,
 	}
+}
+
+// SetRemoteRunner registers a remote execution runner for edge gateways
+func (s *Scanner) SetRemoteRunner(runner RemoteRunner) {
+	s.remoteRunner = runner
+}
+
+// GetRemoteRunner returns the registered remote runner, or nil
+func (s *Scanner) GetRemoteRunner() RemoteRunner {
+	return s.remoteRunner
 }
 
 // nmapRun represents the root element of nmap XML output
@@ -118,6 +136,33 @@ func (s *Scanner) Scan(ctx context.Context, cidr string) (*types.ScanResult, err
 		return s.scanTailscale(cidr, startTime), nil
 	}
 
+	// If a remote scanner is registered for this CIDR, use it without falling back to local scanning
+	if s.remoteRunner != nil && s.remoteRunner.HasRemoteScannerForTarget(cidr) {
+		devices, scannerName, err := s.scanWithNmap(ctx, cidr)
+		if err != nil {
+			return &types.ScanResult{
+				Success:   false,
+				Error:     err.Error(),
+				Network:   cidr,
+				Scanner:   scannerName,
+				Timestamp: time.Now(),
+			}, nil
+		}
+		fillWindowsNames(ctx, devices)
+		if s.serviceDetection {
+			EnrichWithServices(ctx, devices)
+		}
+		return &types.ScanResult{
+			Success:     true,
+			Devices:     devices,
+			DeviceCount: len(devices),
+			Network:     cidr,
+			Scanner:     scannerName,
+			Duration:    time.Since(startTime).Seconds(),
+			Timestamp:   time.Now(),
+		}, nil
+	}
+
 	// Try nmap first
 	devices, scanner, err := s.scanWithNmap(ctx, cidr)
 	if err != nil {
@@ -183,17 +228,29 @@ func (s *Scanner) scanTailscale(cidr string, startTime time.Time) *types.ScanRes
 
 // scanWithNmap performs a scan using nmap
 func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device, string, error) {
-	// Check if nmap is available
-	if _, err := exec.LookPath("nmap"); err != nil {
-		return nil, "", fmt.Errorf("nmap not found")
-	}
-
-	// Run nmap with a fast ping sweep and disable reverse DNS (we decouple port scanning to run asynchronously in Stage 2)
 	args := []string{"-sn", "-n", "-oX", "-", cidr}
-	cmd := exec.CommandContext(ctx, "nmap", args...)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, "", fmt.Errorf("nmap failed: %w", err)
+	var output []byte
+	var err error
+	scannerName := "nmap"
+
+	if s.remoteRunner != nil && s.remoteRunner.HasRemoteScannerForTarget(cidr) {
+		scannerName = "remote-nmap"
+		output, err = s.remoteRunner.RunScan(ctx, cidr, args)
+		if err != nil {
+			return nil, "", err
+		}
+	} else {
+		// Check if nmap is available
+		if _, lookErr := exec.LookPath("nmap"); lookErr != nil {
+			return nil, "", fmt.Errorf("nmap not found")
+		}
+
+		// Run nmap with a fast ping sweep and disable reverse DNS (we decouple port scanning to run asynchronously in Stage 2)
+		cmd := exec.CommandContext(ctx, "nmap", args...)
+		output, err = cmd.Output()
+		if err != nil {
+			return nil, "", fmt.Errorf("nmap failed: %w", err)
+		}
 	}
 
 	// Parse XML output
@@ -269,7 +326,7 @@ func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device
 		devices = append(devices, device)
 	}
 
-	return devices, "nmap", nil
+	return devices, scannerName, nil
 }
 
 // scanWithArpScan performs a scan using arp-scan
@@ -459,15 +516,25 @@ func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string
 // ScanHostPortsWithTiming runs a targeted service scan. Nightly scans use the
 // conservative timing profile to keep connection state pressure low.
 func (s *Scanner) ScanHostPortsWithTiming(ctx context.Context, ip string, portRange string, conservative bool) ([]int, []int, []types.OpenService, error) {
-	if _, err := exec.LookPath("nmap"); err != nil {
-		return nil, nil, nil, fmt.Errorf("nmap not found")
-	}
-
 	args := portScanArgumentsWithTiming(portRange, ip, conservative)
-	cmd := exec.CommandContext(ctx, "nmap", args...)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("nmap port scan failed: %w", err)
+	var output []byte
+	var err error
+
+	if s.remoteRunner != nil && s.remoteRunner.HasRemoteScannerForTarget(ip) {
+		output, err = s.remoteRunner.RunScan(ctx, ip, args)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	} else {
+		if _, lookErr := exec.LookPath("nmap"); lookErr != nil {
+			return nil, nil, nil, fmt.Errorf("nmap not found")
+		}
+
+		cmd := exec.CommandContext(ctx, "nmap", args...)
+		output, err = cmd.Output()
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("nmap port scan failed: %w", err)
+		}
 	}
 	return parsePortScanResult(output)
 }

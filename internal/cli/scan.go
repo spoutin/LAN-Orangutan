@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spoutin/LAN-Orangutan/internal/network"
+	"github.com/spoutin/LAN-Orangutan/internal/remotescan"
 	"github.com/spoutin/LAN-Orangutan/internal/scanner"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 )
@@ -35,6 +36,11 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	// Create scanner
 	s := scanner.New(cfg.Scanning.MinScanInterval, cfg.Scanning.EnableServiceDetection, cfg.Scanning.EnablePortScan, cfg.Scanning.PortScanRange)
+	if cfg.RemoteScanners.Enable {
+		runner := remotescan.NewRunner(cfg.RemoteScanners)
+		defer runner.Close()
+		s.SetRemoteRunner(runner)
+	}
 
 	// Determine networks to scan
 	var networks []string

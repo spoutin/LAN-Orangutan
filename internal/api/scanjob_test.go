@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/remotescan"
 	"github.com/spoutin/LAN-Orangutan/internal/scanner"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
@@ -228,6 +230,75 @@ func TestScanPortHostUpdatesPresence(t *testing.T) {
 	}
 	if !stored.LastSeen.After(past) {
 		t.Fatalf("stored LastSeen = %v, expected updated after %v", stored.LastSeen, past)
+	}
+}
+
+type testRemoteRunnerFailure struct {
+	gateway string
+	target  string
+	err     error
+}
+
+func (r *testRemoteRunnerFailure) HasRemoteScannerForTarget(target string) bool {
+	return target == r.target
+}
+func (r *testRemoteRunnerFailure) GetGatewayForTarget(target string) string {
+	return r.gateway
+}
+func (r *testRemoteRunnerFailure) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
+	return nil, &remotescan.RemoteScannerError{
+		Gateway:       r.gateway,
+		Target:        target,
+		Err:           r.err,
+		IsMissingNmap: true,
+	}
+}
+
+func TestRemoteScannerFailureNotifiesSlackAndSkips(t *testing.T) {
+	store := newScanJobTestStore(t)
+	_ = store.SaveNetworkNotification("10.0.0.0/24", "https://example.test/slack-opnsense", true)
+
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+	h := NewHandler(store, cfg)
+
+	var slackMessages []string
+	h.sendSlackNotification = func(webhook, text string) error {
+		slackMessages = append(slackMessages, text)
+		return nil
+	}
+
+	h.scanner.SetRemoteRunner(&testRemoteRunnerFailure{
+		gateway: "opnsense (10.0.0.1)",
+		target:  "10.0.0.0/24",
+		err:     fmt.Errorf("nmap: not found"),
+	})
+
+	job := h.startScanJob([]string{"10.0.0.0/24"}, false, scanModeQuick)
+	<-job.done
+
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	if len(job.results) == 0 {
+		t.Fatal("expected job results")
+	}
+	if job.results[0].Status != "failed" {
+		t.Fatalf("expected status=failed, got %s", job.results[0].Status)
+	}
+
+	if len(slackMessages) != 1 {
+		t.Fatalf("expected 1 Slack notification, got %d: %v", len(slackMessages), slackMessages)
+	}
+	if !strings.Contains(slackMessages[0], "Remote Scanner Failure") || !strings.Contains(slackMessages[0], "opnsense (10.0.0.1)") {
+		t.Fatalf("unexpected Slack message: %s", slackMessages[0])
+	}
+
+	// A second failure within the hour must be debounced
+	job2 := h.startScanJob([]string{"10.0.0.0/24"}, false, scanModeQuick)
+	<-job2.done
+	if len(slackMessages) != 1 {
+		t.Fatalf("expected still 1 Slack notification after debounced second failure, got %d", len(slackMessages))
 	}
 }
 

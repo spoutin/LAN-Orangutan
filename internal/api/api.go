@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/spoutin/LAN-Orangutan/internal/config"
 	"github.com/spoutin/LAN-Orangutan/internal/network"
 	"github.com/spoutin/LAN-Orangutan/internal/notification"
+	"github.com/spoutin/LAN-Orangutan/internal/remotescan"
 	"github.com/spoutin/LAN-Orangutan/internal/scanner"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
@@ -42,18 +44,26 @@ type Handler struct {
 	scanCtx context.Context
 	scanWG  sync.WaitGroup
 	now     func() time.Time
+
+	alertMu    sync.Mutex
+	alertCache map[string]time.Time
 }
 
 // NewHandler creates a new API handler
 func NewHandler(store *storage.Storage, cfg *config.Config) *Handler {
+	s := scanner.New(cfg.Scanning.MinScanInterval, cfg.Scanning.EnableServiceDetection, cfg.Scanning.EnablePortScan, cfg.Scanning.PortScanRange)
+	if cfg.RemoteScanners.Enable {
+		s.SetRemoteRunner(remotescan.NewRunner(cfg.RemoteScanners))
+	}
 	return &Handler{
 		store:                  store,
 		cfg:                    cfg,
-		scanner:                scanner.New(cfg.Scanning.MinScanInterval, cfg.Scanning.EnableServiceDetection, cfg.Scanning.EnablePortScan, cfg.Scanning.PortScanRange),
+		scanner:                s,
 		scanCtx:                context.Background(),
 		fetchSwitchConnections: scanner.FetchSwitchConnections,
 		sendSlackNotification:  notification.SendSlackNotification,
 		now:                    time.Now,
+		alertCache:             make(map[string]time.Time),
 	}
 }
 
@@ -66,6 +76,16 @@ func (h *Handler) SetScanContext(ctx context.Context) { h.scanCtx = ctx }
 // shutdown, after the scan context has been cancelled, so a scan is not left
 // half-written.
 func (h *Handler) WaitForScans() { h.scanWG.Wait() }
+
+// Close closes any background resources, such as remote SSH connections
+func (h *Handler) Close() error {
+	if r := h.scanner.GetRemoteRunner(); r != nil {
+		if closer, ok := r.(interface{ Close() error }); ok {
+			return closer.Close()
+		}
+	}
+	return nil
+}
 
 // ServeHTTP implements http.Handler
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -647,9 +667,11 @@ func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResu
 
 	result, err := h.scanner.Scan(ctx, cidr)
 	if err != nil {
+		h.notifyRemoteScannerFailure(cidr, cidr, err)
 		return nil, err
 	}
 	if !result.Success {
+		h.notifyRemoteScannerFailure(cidr, cidr, errors.New(result.Error))
 		return nil, errors.New(result.Error)
 	}
 
@@ -950,4 +972,49 @@ func (h *Handler) dispatchNotifications(cidr string, newDevices []types.Device, 
 	go func() {
 		_ = notification.SendSlackNotification(n.SlackWebhook, text)
 	}()
+}
+
+func (h *Handler) notifyRemoteScannerFailure(networkCIDR string, target string, err error) {
+	if err == nil {
+		return
+	}
+	var rErr *remotescan.RemoteScannerError
+	var gateway string
+	var isMissingNmap bool
+	var errorMsg string
+
+	if errors.As(err, &rErr) {
+		gateway = rErr.Gateway
+		isMissingNmap = rErr.IsMissingNmap
+		errorMsg = rErr.Err.Error()
+	} else if r := h.scanner.GetRemoteRunner(); r != nil && r.HasRemoteScannerForTarget(target) {
+		gateway = r.GetGatewayForTarget(target)
+		errorMsg = err.Error()
+		if strings.Contains(strings.ToLower(errorMsg), "not found") || strings.Contains(strings.ToLower(errorMsg), "no such file") {
+			isMissingNmap = true
+		}
+	} else {
+		return
+	}
+
+	debounceKey := fmt.Sprintf("%s:%s", gateway, networkCIDR)
+	h.alertMu.Lock()
+	if h.alertCache == nil {
+		h.alertCache = make(map[string]time.Time)
+	}
+	lastAlert, exists := h.alertCache[debounceKey]
+	if exists && time.Since(lastAlert) < time.Hour {
+		h.alertMu.Unlock()
+		return
+	}
+	h.alertCache[debounceKey] = time.Now()
+	h.alertMu.Unlock()
+
+	conf, storeErr := h.store.GetNetworkNotification(networkCIDR)
+	if storeErr != nil || conf == nil || !conf.Enabled || conf.SlackWebhook == "" {
+		return
+	}
+
+	msg := notification.FormatRemoteScannerFailureSlackMessage(gateway, target, errorMsg, isMissingNmap)
+	_ = h.sendSlackNotification(conf.SlackWebhook, msg)
 }

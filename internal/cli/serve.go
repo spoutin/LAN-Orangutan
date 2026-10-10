@@ -178,6 +178,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		case <-time.After(5 * time.Second):
 		}
 
+		_ = apiHandler.Close()
 		close(done)
 	}()
 

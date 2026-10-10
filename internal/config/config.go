@@ -93,7 +93,8 @@ type Config struct {
 	OpenWrt   OpenWrtConfig
 	OPNsense  OPNsenseConfig
 	UniFi     UniFiConfig
-	Switches  SwitchesConfig
+	Switches       SwitchesConfig
+	RemoteScanners RemoteScannersConfig
 }
 
 // OpenWrtConfig holds OpenWrt connection settings
@@ -142,6 +143,63 @@ type SwitchConfig struct {
 	PrivacyProtocol string
 	PrivacyPassword string `json:"-"`
 	TimeoutSeconds  int
+}
+
+// RemoteScannersConfig holds settings for offloading Nmap scans to edge firewalls over SSH.
+type RemoteScannersConfig struct {
+	Enable      bool                           `json:"enable"`
+	SSHKey      string                         `json:"-"` // in-memory PEM encoded private key (not serialized)
+	SSHKeyFile  string                         `json:"ssh_key_file,omitempty"`
+	SSHPassword string                         `json:"-"` // optional password (not serialized)
+	Names       []string                       `json:"names,omitempty"`
+	Configs     map[string]RemoteScannerConfig `json:"configs,omitempty"`
+}
+
+// RemoteScannerConfig holds settings for one remote gateway scanner.
+type RemoteScannerConfig struct {
+	ID       string   `json:"id"`
+	Host     string   `json:"host"`
+	Port     int      `json:"port"`
+	User     string   `json:"user"`
+	Networks []string `json:"networks"`
+}
+
+// FindScannerForCIDR finds the remote scanner configured for a subnet CIDR
+func (c *RemoteScannersConfig) FindScannerForCIDR(cidr string) (*RemoteScannerConfig, bool) {
+	if !c.Enable {
+		return nil, false
+	}
+	cidr = strings.TrimSpace(cidr)
+	for _, id := range c.Names {
+		cfg := c.Configs[id]
+		for _, netStr := range cfg.Networks {
+			if strings.EqualFold(strings.TrimSpace(netStr), cidr) {
+				return &cfg, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// FindScannerForIP finds the remote scanner configured for an IP's subnet
+func (c *RemoteScannersConfig) FindScannerForIP(ipStr string) (*RemoteScannerConfig, bool) {
+	if !c.Enable {
+		return nil, false
+	}
+	ip := net.ParseIP(strings.TrimSpace(ipStr))
+	if ip == nil {
+		return nil, false
+	}
+	for _, id := range c.Names {
+		cfg := c.Configs[id]
+		for _, netStr := range cfg.Networks {
+			_, ipNet, err := net.ParseCIDR(strings.TrimSpace(netStr))
+			if err == nil && ipNet.Contains(ip) {
+				return &cfg, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // Validate verifies that c uses the supported secure SNMPv3 configuration.
@@ -313,6 +371,9 @@ func Default() *Config {
 		Switches: SwitchesConfig{
 			Configs: make(map[string]SwitchConfig),
 		},
+		RemoteScanners: RemoteScannersConfig{
+			Configs: make(map[string]RemoteScannerConfig),
+		},
 	}
 }
 
@@ -330,10 +391,12 @@ func Load(path string) (*Config, error) {
 	defer file.Close()
 
 	var currentSection string
+	var currentKey string
 	scanner := bufio.NewScanner(file)
 
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		rawLine := scanner.Text()
+		line := strings.TrimSpace(rawLine)
 
 		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
@@ -343,19 +406,19 @@ func Load(path string) (*Config, error) {
 		// Section header
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			currentSection = strings.ToLower(line[1 : len(line)-1])
+			currentKey = ""
 			continue
 		}
 
 		// Key-value pair
 		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
+		if len(parts) == 2 {
+			currentKey = strings.TrimSpace(strings.ToLower(parts[0]))
+			value := strings.TrimSpace(parts[1])
+			cfg.setValue(currentSection, currentKey, value)
+		} else if currentKey == "ssh_key" && currentSection == "remote_scanners" {
+			cfg.RemoteScanners.SSHKey += "\n" + line
 		}
-
-		key := strings.TrimSpace(strings.ToLower(parts[0]))
-		value := strings.TrimSpace(parts[1])
-
-		cfg.setValue(currentSection, key, value)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -487,8 +550,23 @@ func (c *Config) setValue(section, key, value string) {
 		case "names":
 			c.setSwitchNames(value)
 		}
+	case "remote_scanners":
+		switch key {
+		case "enable":
+			c.RemoteScanners.Enable = parseBool(value)
+		case "ssh_key":
+			c.RemoteScanners.SSHKey = strings.ReplaceAll(value, "\\n", "\n")
+		case "ssh_key_file":
+			c.RemoteScanners.SSHKeyFile = value
+		case "ssh_password":
+			c.RemoteScanners.SSHPassword = value
+		case "names":
+			c.setRemoteScannerNames(value)
+		}
 	default:
-		if strings.HasPrefix(section, "switch.") {
+		if strings.HasPrefix(section, "remote_scanner.") {
+			c.setRemoteScannerValue(strings.TrimPrefix(section, "remote_scanner."), key, value)
+		} else if strings.HasPrefix(section, "switch.") {
 			c.setSwitchValue(strings.TrimPrefix(section, "switch."), key, value)
 		}
 	}
@@ -557,6 +635,66 @@ func (c *Config) setSwitchValue(id, key, value string) {
 		}
 	}
 	c.Switches.Configs[switchCfg.ID] = *switchCfg
+}
+
+func (c *Config) setRemoteScannerNames(value string) {
+	c.RemoteScanners.Names = nil
+	for _, name := range strings.Split(value, ",") {
+		id := strings.ToLower(strings.TrimSpace(name))
+		if id == "" {
+			continue
+		}
+		c.RemoteScanners.Names = append(c.RemoteScanners.Names, id)
+		c.ensureRemoteScanner(id)
+	}
+}
+
+func (c *Config) ensureRemoteScanner(id string) *RemoteScannerConfig {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if c.RemoteScanners.Configs == nil {
+		c.RemoteScanners.Configs = make(map[string]RemoteScannerConfig)
+	}
+	cfg, ok := c.RemoteScanners.Configs[id]
+	if !ok {
+		cfg = RemoteScannerConfig{
+			ID:   id,
+			Port: 22,
+			User: "root",
+		}
+		c.RemoteScanners.Configs[id] = cfg
+	}
+	return &cfg
+}
+
+func (c *Config) setRemoteScannerValue(id, key, value string) {
+	id = strings.ToLower(strings.TrimSpace(id))
+	c.ensureRemoteScanner(id)
+	cfg := c.RemoteScanners.Configs[id]
+	switch key {
+	case "host":
+		cfg.Host = value
+	case "port":
+		if v, err := strconv.Atoi(value); err == nil && v > 0 {
+			cfg.Port = v
+		}
+	case "user":
+		if value != "" {
+			cfg.User = value
+		}
+	case "networks":
+		cfg.Networks = network.ParseNetworkList(value)
+	}
+	c.RemoteScanners.Configs[id] = cfg
+	found := false
+	for _, name := range c.RemoteScanners.Names {
+		if name == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		c.RemoteScanners.Names = append(c.RemoteScanners.Names, id)
+	}
 }
 
 // ApplyEnv overlays settings from environment variables onto c.
@@ -690,6 +828,38 @@ func (c *Config) ApplyEnv() error {
 		} {
 			if v := os.Getenv(prefix + setting.env); v != "" {
 				c.setSwitchValue(id, setting.key, v)
+			}
+		}
+	}
+
+	if v := os.Getenv("ORANGUTAN_REMOTE_SCAN_ENABLE"); v != "" {
+		c.RemoteScanners.Enable = parseBool(v)
+	}
+	if v := os.Getenv("ORANGUTAN_REMOTE_SCAN_KEY"); v != "" {
+		c.RemoteScanners.SSHKey = strings.ReplaceAll(v, "\\n", "\n")
+	}
+	if v := os.Getenv("ORANGUTAN_REMOTE_SCAN_KEY_FILE"); v != "" {
+		c.RemoteScanners.SSHKeyFile = v
+	}
+	if v := os.Getenv("ORANGUTAN_REMOTE_SCAN_PASSWORD"); v != "" {
+		c.RemoteScanners.SSHPassword = v
+	}
+	if v := os.Getenv("ORANGUTAN_REMOTE_SCANNERS_NAMES"); v != "" {
+		c.setRemoteScannerNames(v)
+	}
+	for _, id := range c.RemoteScanners.Names {
+		prefix := "ORANGUTAN_REMOTE_SCANNER_" + strings.ToUpper(id) + "_"
+		for _, setting := range []struct {
+			key string
+			env string
+		}{
+			{"host", "HOST"},
+			{"port", "PORT"},
+			{"user", "USER"},
+			{"networks", "NETWORKS"},
+		} {
+			if v := os.Getenv(prefix + setting.env); v != "" {
+				c.setRemoteScannerValue(id, setting.key, v)
 			}
 		}
 	}

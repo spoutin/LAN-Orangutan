@@ -15,3 +15,31 @@ func TestFormatDeepScanCutoffSlackMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatRemoteScannerFailureSlackMessage(t *testing.T) {
+	msg := FormatRemoteScannerFailureSlackMessage("opnsense (10.0.0.1)", "10.0.0.0/24", "nmap: not found", true)
+	for _, want := range []string{
+		"Remote Scanner Failure",
+		"opnsense (10.0.0.1)",
+		"10.0.0.0/24",
+		"nmap: not found",
+		"pkg install nmap",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q does not contain %q", msg, want)
+		}
+	}
+
+	genericMsg := FormatRemoteScannerFailureSlackMessage("openwrt (10.5.5.1)", "10.5.5.0/24", "connection refused", false)
+	for _, want := range []string{
+		"Remote Scanner Failure",
+		"openwrt (10.5.5.1)",
+		"10.5.5.0/24",
+		"connection refused",
+		"SSH connectivity",
+	} {
+		if !strings.Contains(genericMsg, want) {
+			t.Errorf("message %q does not contain %q", genericMsg, want)
+		}
+	}
+}

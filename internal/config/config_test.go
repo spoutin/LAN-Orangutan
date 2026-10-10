@@ -711,3 +711,109 @@ timeout_seconds = 0
 		t.Errorf("TimeoutSeconds = %d, want default 5", got)
 	}
 }
+
+func TestRemoteScannersConfig_LoadFromINI(t *testing.T) {
+	path := writeConfig(t, `
+[remote_scanners]
+enable = true
+ssh_key = -----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASC
+-----END PRIVATE KEY-----
+
+[remote_scanner.opnsense]
+host = 10.0.0.1
+port = 22
+user = root
+networks = 10.0.0.0/24, 10.0.1.0/24
+
+[remote_scanner.openwrt]
+host = 10.5.5.1
+port = 2222
+user = admin
+networks = 10.5.5.0/24, 192.168.1.0/24
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.RemoteScanners.Enable {
+		t.Fatal("expected RemoteScanners.Enable = true")
+	}
+	if !strings.Contains(cfg.RemoteScanners.SSHKey, "BEGIN PRIVATE KEY") {
+		t.Fatal("expected RemoteScanners.SSHKey to contain in-memory key")
+	}
+	if len(cfg.RemoteScanners.Names) != 2 {
+		t.Fatalf("expected 2 scanners, got %d: %v", len(cfg.RemoteScanners.Names), cfg.RemoteScanners.Names)
+	}
+
+	// Test CIDR routing
+	opn, ok := cfg.RemoteScanners.FindScannerForCIDR("10.0.0.0/24")
+	if !ok || opn.Host != "10.0.0.1" || opn.User != "root" {
+		t.Fatalf("FindScannerForCIDR 10.0.0.0/24: got %+v, ok=%v", opn, ok)
+	}
+	wrt, ok := cfg.RemoteScanners.FindScannerForCIDR("192.168.1.0/24")
+	if !ok || wrt.Host != "10.5.5.1" || wrt.Port != 2222 || wrt.User != "admin" {
+		t.Fatalf("FindScannerForCIDR 192.168.1.0/24: got %+v, ok=%v", wrt, ok)
+	}
+
+	// Test IP routing
+	opnIP, ok := cfg.RemoteScanners.FindScannerForIP("10.0.1.55")
+	if !ok || opnIP.Host != "10.0.0.1" {
+		t.Fatalf("FindScannerForIP 10.0.1.55: got %+v, ok=%v", opnIP, ok)
+	}
+	wrtIP, ok := cfg.RemoteScanners.FindScannerForIP("10.5.5.12")
+	if !ok || wrtIP.Host != "10.5.5.1" {
+		t.Fatalf("FindScannerForIP 10.5.5.12: got %+v, ok=%v", wrtIP, ok)
+	}
+
+	// Unmapped IP
+	unmapped, ok := cfg.RemoteScanners.FindScannerForIP("172.16.1.1")
+	if ok || unmapped != nil {
+		t.Fatalf("expected unmapped IP to return false, got %+v", unmapped)
+	}
+}
+
+func TestRemoteScannersConfig_LoadFromEnv(t *testing.T) {
+	t.Setenv("ORANGUTAN_REMOTE_SCAN_ENABLE", "true")
+	t.Setenv("ORANGUTAN_REMOTE_SCAN_KEY", "-----BEGIN PRIVATE KEY-----\\nMIIE...\\n-----END PRIVATE KEY-----")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNERS_NAMES", "edge1")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_EDGE1_HOST", "10.10.10.1")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_EDGE1_PORT", "2200")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_EDGE1_USER", "root")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_EDGE1_NETWORKS", "10.10.10.0/24")
+
+	path := writeConfig(t, "")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.ApplyEnv(); err != nil {
+		t.Fatalf("ApplyEnv: %v", err)
+	}
+	if !cfg.RemoteScanners.Enable {
+		t.Fatal("expected RemoteScanners.Enable = true from env")
+	}
+	if !strings.Contains(cfg.RemoteScanners.SSHKey, "BEGIN PRIVATE KEY") {
+		t.Fatalf("SSHKey = %q, expected unescaped newlines", cfg.RemoteScanners.SSHKey)
+	}
+	sc, ok := cfg.RemoteScanners.FindScannerForCIDR("10.10.10.0/24")
+	if !ok || sc.Host != "10.10.10.1" || sc.Port != 2200 || sc.User != "root" {
+		t.Fatalf("scanner edge1 = %+v, ok=%v", sc, ok)
+	}
+}
+
+func TestRemoteScannersConfigDoesNotSerializeCredentials(t *testing.T) {
+	cfg := Default()
+	cfg.RemoteScanners.Enable = true
+	cfg.RemoteScanners.SSHKey = "super-secret-private-key"
+	cfg.RemoteScanners.SSHPassword = "super-secret-password"
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "super-secret-private-key") || strings.Contains(string(data), "super-secret-password") {
+		t.Fatal("serialized configuration must not leak remote scanner SSH secrets")
+	}
+}

@@ -1,6 +1,11 @@
 package scanner
 
-import "testing"
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestPortScanArgumentsSkipDiscoveryAndAllowRetries(t *testing.T) {
 	got := portScanArguments("1-1024", "10.0.0.15")
@@ -29,8 +34,6 @@ func TestNightlyPortScanArgumentsUseConservativeTiming(t *testing.T) {
 }
 
 func TestParsePortScanResultRecordsDetectedSSHPort(t *testing.T) {
-	// An open custom port is SSH only when Nmap's service detection identifies it
-	// as such. Other open ports must remain in the port list without becoming SSH.
 	xmlOutput := []byte(`<?xml version="1.0"?>
 <nmaprun><host><ports>
   <port protocol="tcp" portid="2222"><state state="open"/><service name="ssh" product="OpenSSH" version="9.2p1" extrainfo="Debian"/></port>
@@ -50,5 +53,94 @@ func TestParsePortScanResultRecordsDetectedSSHPort(t *testing.T) {
 	}
 	if len(services) != 2 || services[0].Name != "ssh" || services[0].Version != "OpenSSH 9.2p1 Debian" {
 		t.Errorf("services = %+v, want parsed Nmap service details", services)
+	}
+}
+
+type mockRemoteRunner struct {
+	hasTarget bool
+	runOutput []byte
+	runErr    error
+	called    bool
+}
+
+func (m *mockRemoteRunner) HasRemoteScannerForTarget(target string) bool {
+	return m.hasTarget
+}
+
+func (m *mockRemoteRunner) GetGatewayForTarget(target string) string {
+	return "test-gateway (10.0.0.1)"
+}
+
+func (m *mockRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
+	m.called = true
+	return m.runOutput, m.runErr
+}
+
+func TestScanUsesRemoteRunnerWhenConfigured(t *testing.T) {
+	mock := &mockRemoteRunner{
+		hasTarget: true,
+		runOutput: []byte(`<nmaprun><host><status state="up"/><address addr="10.0.0.22" addrtype="ipv4"/><address addr="00:11:22:33:44:55" addrtype="mac"/></host></nmaprun>`),
+	}
+	s := New(30, false, false, "")
+	s.SetRemoteRunner(mock)
+
+	result, err := s.Scan(context.Background(), "10.0.0.0/24")
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+	if !mock.called {
+		t.Fatal("expected RemoteRunner to be called")
+	}
+	if !result.Success {
+		t.Fatalf("expected success=true, got error: %s", result.Error)
+	}
+	if len(result.Devices) != 1 || result.Devices[0].IP != "10.0.0.22" {
+		t.Fatalf("expected device 10.0.0.22, got %+v", result.Devices)
+	}
+}
+
+func TestScanRemoteRunnerFailureDoesNotFallbackToArpScan(t *testing.T) {
+	mock := &mockRemoteRunner{
+		hasTarget: true,
+		runErr:    fmt.Errorf("remote nmap failed on gateway"),
+	}
+	s := New(30, false, false, "")
+	s.SetRemoteRunner(mock)
+
+	result, err := s.Scan(context.Background(), "10.0.0.0/24")
+	if err != nil {
+		t.Fatalf("unexpected Scan error: %v", err)
+	}
+	if !mock.called {
+		t.Fatal("expected RemoteRunner to be called")
+	}
+	if result.Success {
+		t.Fatal("expected result.Success=false when remote scan fails")
+	}
+	if !strings.Contains(result.Error, "remote nmap failed on gateway") {
+		t.Fatalf("result.Error = %q, want remote error", result.Error)
+	}
+}
+
+func TestScanHostPortsWithTimingUsesRemoteRunner(t *testing.T) {
+	mock := &mockRemoteRunner{
+		hasTarget: true,
+		runOutput: []byte(`<?xml version="1.0"?><nmaprun><host><ports><port protocol="tcp" portid="443"><state state="open"/><service name="https"/></port></ports></host></nmaprun>`),
+	}
+	s := New(30, false, false, "")
+	s.SetRemoteRunner(mock)
+
+	ports, _, services, err := s.ScanHostPortsWithTiming(context.Background(), "10.0.0.15", "443", false)
+	if err != nil {
+		t.Fatalf("ScanHostPortsWithTiming error: %v", err)
+	}
+	if !mock.called {
+		t.Fatal("expected RemoteRunner to be called")
+	}
+	if len(ports) != 1 || ports[0] != 443 {
+		t.Fatalf("expected port 443, got %v", ports)
+	}
+	if len(services) != 1 || services[0].Name != "https" {
+		t.Fatalf("expected service https, got %+v", services)
 	}
 }

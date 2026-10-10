@@ -105,3 +105,19 @@ func FormatDeepScanCutoffSlackMessage(networkName, networkCIDR string, completed
 		networkName, networkCIDR, completed, skipped,
 	)
 }
+
+// FormatRemoteScannerFailureSlackMessage formats an alert when a remote edge gateway fails to scan
+func FormatRemoteScannerFailureSlackMessage(gateway, target, errorMsg string, isMissingNmap bool) string {
+	action := "Scan skipped to protect firewall connection state. Please verify gateway SSH connectivity."
+	if isMissingNmap {
+		action = "Scan skipped to protect firewall connection state. Nmap appears to be missing on the gateway—please reinstall it (e.g. `pkg install nmap` on OPNsense or `opkg install nmap` on OpenWrt)."
+	}
+	return fmt.Sprintf(
+		"🚨 *LAN-Orangutan: Remote Scanner Failure*\n"+
+			"*Gateway:* %s\n"+
+			"*Target:* `%s`\n"+
+			"*Error:* %s\n"+
+			"*Action:* %s",
+		gateway, target, errorMsg, action,
+	)
+}

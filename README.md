@@ -315,6 +315,44 @@ Only read-only SNMPv3 `authPriv` is supported. LAN Orangutan never sends SNMP SE
 
 The result is the switch forwarding-table location, not a guaranteed dedicated physical port. Wi-Fi clients can resolve to the access point's upstream switch port. A `Po` port-channel result is an uplink/LAG and does not identify one of its physical member ports. The first release does not show PoE watts because a correct SG500X consumption OID has not yet been validated.
 
+### Remote Edge Scanning (OPNsense & OpenWrt)
+
+LAN Orangutan can offload Nmap scans directly to edge firewalls and routers (such as OPNsense or OpenWrt) over SSH. This eliminates cross-firewall connection-state bursts, NAT inspection overhead, and IDS/IPS false alarms by originating the sweeps and service probes directly inside destination subnets.
+
+Configure gateway mappings in `config.ini` or via environment variables (injected via OpenBao / systemd):
+
+```ini
+[remote_scanners]
+enable = true
+ssh_key = -----BEGIN OPENSSH PRIVATE KEY-----\n...
+# or ssh_key_file = /etc/lan-orangutan/id_ed25519
+names = opnsense, openwrt
+
+[remote_scanner.opnsense]
+host = 10.0.0.1
+port = 22
+user = root
+networks = 10.0.0.0/24, 10.0.1.0/24, 10.0.3.0/24, 10.0.4.0/24
+
+[remote_scanner.openwrt]
+host = 10.5.5.1
+port = 22
+user = root
+networks = 10.5.5.0/24, 192.168.1.0/24, 192.168.111.0/24
+```
+
+Environment variables supported:
+* `ORANGUTAN_REMOTE_SCAN_ENABLE`: `true` to enable.
+* `ORANGUTAN_REMOTE_SCAN_KEY`: in-memory OpenSSH private key PEM (no disk file needed).
+* `ORANGUTAN_REMOTE_SCAN_KEY_FILE`: path to private key file.
+* `ORANGUTAN_REMOTE_SCANNERS_NAMES`: comma-separated gateway IDs.
+* `ORANGUTAN_REMOTE_SCANNER_<ID>_HOST`: gateway IP.
+* `ORANGUTAN_REMOTE_SCANNER_<ID>_PORT`: SSH port (default: 22).
+* `ORANGUTAN_REMOTE_SCANNER_<ID>_USER`: SSH user (default: root).
+* `ORANGUTAN_REMOTE_SCANNER_<ID>_NETWORKS`: comma-separated CIDRs routed to this gateway.
+
+**Failure Isolation & Alerting:** If an edge scanner fails (SSH unreachable, authentication rejected, or Nmap missing on the gateway), the scan for that subnet is skipped to protect firewall state tables, and an alert is immediately dispatched to the Slack webhook configured for that network.
+
 ## Building from Source
 
 ```bash

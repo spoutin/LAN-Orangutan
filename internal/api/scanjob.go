@@ -1053,6 +1053,7 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 
 	ports, sshPorts, services, err := h.scanner.ScanHostPortsWithTiming(ctx, device.IP, h.cfg.Scanning.PortScanRange, j.nightlyDeep)
 	if err != nil {
+		h.notifyRemoteScannerFailure(network, device.IP, err)
 		fmt.Printf("[DEBUG-PORT-SCAN] Failed to scan ports for %s: %v\n", device.IP, err)
 	} else {
 		// Fetch current device from store to preserve customized fields
