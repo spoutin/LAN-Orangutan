@@ -494,3 +494,31 @@ func TestSSHRunner_SudoExecution(t *testing.T) {
 	}
 }
 
+func TestSSHRunner_MissingKeyFileReturnsDescriptiveError(t *testing.T) {
+	cfg := config.RemoteScannersConfig{
+		Enable: true,
+		Names:  []string{"opnsense"},
+		Configs: map[string]config.RemoteScannerConfig{
+			"opnsense": {
+				ID:         "opnsense",
+				Host:       "127.0.0.1",
+				Port:       2222,
+				User:       "scanuser",
+				SSHKeyFile: "/nonexistent/path/to/key",
+				Networks:   []string{"10.0.4.0/24"},
+			},
+		},
+	}
+	runner := NewRunner(cfg)
+	defer runner.Close()
+
+	_, err := runner.RunScan(context.Background(), "10.0.4.0/24", []string{"-sn", "10.0.4.0/24"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "/nonexistent/path/to/key") {
+		t.Fatalf("expected error to mention key file path, got: %v", err)
+	}
+}
+
+

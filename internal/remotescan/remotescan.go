@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -112,17 +113,26 @@ func (r *SSHRunner) getKeyFileForScanner(sc config.RemoteScannerConfig) string {
 	return r.cfg.SSHKeyFile
 }
 
-func (r *SSHRunner) getAuthMethods(sc config.RemoteScannerConfig) []ssh.AuthMethod {
+func (r *SSHRunner) getAuthMethods(sc config.RemoteScannerConfig) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
+	var loadErrors []string
 
 	// 1. Gateway-specific credentials
 	if sc.SSHKey != "" {
-		if signer, err := ssh.ParsePrivateKey([]byte(sc.SSHKey)); err == nil {
+		signer, err := ssh.ParsePrivateKey([]byte(sc.SSHKey))
+		if err == nil {
 			methods = append(methods, ssh.PublicKeys(signer))
+		} else {
+			loadErrors = append(loadErrors, fmt.Sprintf("gateway %q ssh_key: %v", sc.ID, err))
+			log.Printf("[remotescan] gateway %q: failed parsing ssh_key: %v", sc.ID, err)
 		}
 	} else if sc.SSHKeyFile != "" {
-		if signer, _, err := parsePrivateKeyFromFile(sc.SSHKeyFile); err == nil {
+		signer, _, err := parsePrivateKeyFromFile(sc.SSHKeyFile)
+		if err == nil {
 			methods = append(methods, ssh.PublicKeys(signer))
+		} else {
+			loadErrors = append(loadErrors, fmt.Sprintf("gateway %q ssh_key_file %q: %v", sc.ID, sc.SSHKeyFile, err))
+			log.Printf("[remotescan] gateway %q: failed reading ssh_key_file %q: %v", sc.ID, sc.SSHKeyFile, err)
 		}
 	}
 
@@ -131,17 +141,25 @@ func (r *SSHRunner) getAuthMethods(sc config.RemoteScannerConfig) []ssh.AuthMeth
 	}
 
 	if len(methods) > 0 {
-		return methods
+		return methods, nil
 	}
 
 	// 2. Fallback to top-level shared credentials
 	if r.cfg.SSHKey != "" {
-		if signer, err := ssh.ParsePrivateKey([]byte(r.cfg.SSHKey)); err == nil {
+		signer, err := ssh.ParsePrivateKey([]byte(r.cfg.SSHKey))
+		if err == nil {
 			methods = append(methods, ssh.PublicKeys(signer))
+		} else {
+			loadErrors = append(loadErrors, fmt.Sprintf("shared ssh_key: %v", err))
+			log.Printf("[remotescan] shared ssh_key: failed parsing key: %v", err)
 		}
 	} else if r.cfg.SSHKeyFile != "" {
-		if signer, _, err := parsePrivateKeyFromFile(r.cfg.SSHKeyFile); err == nil {
+		signer, _, err := parsePrivateKeyFromFile(r.cfg.SSHKeyFile)
+		if err == nil {
 			methods = append(methods, ssh.PublicKeys(signer))
+		} else {
+			loadErrors = append(loadErrors, fmt.Sprintf("shared ssh_key_file %q: %v", r.cfg.SSHKeyFile, err))
+			log.Printf("[remotescan] shared ssh_key_file %q: failed reading file: %v", r.cfg.SSHKeyFile, err)
 		}
 	}
 
@@ -149,7 +167,15 @@ func (r *SSHRunner) getAuthMethods(sc config.RemoteScannerConfig) []ssh.AuthMeth
 		methods = append(methods, ssh.Password(r.cfg.SSHPassword))
 	}
 
-	return methods
+	if len(methods) > 0 {
+		return methods, nil
+	}
+
+	if len(loadErrors) > 0 {
+		return nil, fmt.Errorf("no valid SSH authentication methods available for gateway %q: %s", sc.ID, strings.Join(loadErrors, "; "))
+	}
+
+	return nil, fmt.Errorf("no SSH authentication configured for gateway %q (specify ssh_key_file, ssh_key, or ssh_password)", sc.ID)
 }
 
 func (r *SSHRunner) getClient(sc config.RemoteScannerConfig) (*ssh.Client, error) {
@@ -183,9 +209,14 @@ func (r *SSHRunner) getClient(sc config.RemoteScannerConfig) (*ssh.Client, error
 		user = "root"
 	}
 
+	authMethods, err := r.getAuthMethods(sc)
+	if err != nil {
+		return nil, err
+	}
+
 	clientConfig := &ssh.ClientConfig{
 		User:            user,
-		Auth:            r.getAuthMethods(sc),
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}
