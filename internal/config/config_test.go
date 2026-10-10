@@ -952,3 +952,96 @@ networks = 10.6.6.0/24
 		t.Fatalf("AllOpenWrts() len = %d, want 2", len(allWrts))
 	}
 }
+
+func TestRemoteScannerConfig_SudoSupport(t *testing.T) {
+	path := writeConfig(t, `
+[opnsense]
+enable = true
+url = https://10.0.0.1
+remote_scan = true
+ssh_user = opnuser
+ssh_sudo = true
+networks = 10.0.0.0/24
+
+[openwrt]
+enable = true
+url = http://10.5.5.1
+remote_scan = true
+ssh_user = root
+networks = 10.5.5.0/24
+
+[openwrt.branch]
+enable = true
+url = http://10.6.6.1
+remote_scan = true
+ssh_user = wrtuser
+ssh_sudo = true
+networks = 10.6.6.0/24
+
+[remote_scanners]
+enable = true
+
+[remote_scanners.standalone]
+host = 10.7.7.1
+user = standuser
+sudo = true
+networks = 10.7.7.0/24
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !cfg.OPNsense.SSHSudo {
+		t.Fatal("expected cfg.OPNsense.SSHSudo = true")
+	}
+	if cfg.OPNsense.SSHUser != "opnuser" {
+		t.Fatalf("cfg.OPNsense.SSHUser = %q, want 'opnuser'", cfg.OPNsense.SSHUser)
+	}
+
+	opn, ok := cfg.RemoteScanners.FindScannerForCIDR("10.0.0.0/24")
+	if !ok || !opn.Sudo || opn.User != "opnuser" {
+		t.Fatalf("opn scanner = %+v, want Sudo=true User='opnuser'", opn)
+	}
+
+	wrt, ok := cfg.RemoteScanners.FindScannerForCIDR("10.5.5.0/24")
+	if !ok || wrt.Sudo || wrt.User != "root" {
+		t.Fatalf("wrt scanner = %+v, want Sudo=false User='root'", wrt)
+	}
+
+	branch, ok := cfg.RemoteScanners.FindScannerForCIDR("10.6.6.0/24")
+	if !ok || !branch.Sudo || branch.User != "wrtuser" {
+		t.Fatalf("branch scanner = %+v, want Sudo=true User='wrtuser'", branch)
+	}
+
+	standalone, ok := cfg.RemoteScanners.FindScannerForCIDR("10.7.7.0/24")
+	if !ok || !standalone.Sudo || standalone.User != "standuser" {
+		t.Fatalf("standalone scanner = %+v, want Sudo=true User='standuser'", standalone)
+	}
+
+	// Test environment variable overrides
+	t.Setenv("ORANGUTAN_OPNSENSE_SSH_SUDO", "false")
+	t.Setenv("ORANGUTAN_REMOTE_SCAN_STANDALONE_SUDO", "false")
+	t.Setenv("ORANGUTAN_OPENWRT_SSH_SUDO", "true")
+
+	cfg2, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load with env: %v", err)
+	}
+	if err := cfg2.ApplyEnv(); err != nil {
+		t.Fatalf("ApplyEnv: %v", err)
+	}
+	if cfg2.OPNsense.SSHSudo {
+		t.Fatal("expected OPNsense.SSHSudo = false after env override")
+	}
+	opn2, _ := cfg2.RemoteScanners.FindScannerForCIDR("10.0.0.0/24")
+	if opn2.Sudo {
+		t.Fatal("expected opn2.Sudo = false after env override")
+	}
+	wrt2, _ := cfg2.RemoteScanners.FindScannerForCIDR("10.5.5.0/24")
+	if !wrt2.Sudo {
+		t.Fatal("expected wrt2.Sudo = true after env override")
+	}
+}
+
