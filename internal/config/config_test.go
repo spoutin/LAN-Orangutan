@@ -1045,3 +1045,35 @@ networks = 10.7.7.0/24
 	}
 }
 
+func TestRouterConfig_UserAliases(t *testing.T) {
+	path := writeConfig(t, `
+[opnsense]
+enable = true
+url = https://10.0.0.1
+remote_scan = true
+user = ipam
+key_file = /var/secrets/opnsense.key
+sudo = true
+networks = 10.0.4.0/24
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OPNsense.SSHUser != "ipam" {
+		t.Fatalf("cfg.OPNsense.SSHUser = %q, want 'ipam'", cfg.OPNsense.SSHUser)
+	}
+	if cfg.OPNsense.SSHKeyFile != "/var/secrets/opnsense.key" {
+		t.Fatalf("cfg.OPNsense.SSHKeyFile = %q, want '/var/secrets/opnsense.key'", cfg.OPNsense.SSHKeyFile)
+	}
+	if !cfg.OPNsense.SSHSudo {
+		t.Fatal("expected cfg.OPNsense.SSHSudo = true")
+	}
+
+	opn, ok := cfg.RemoteScanners.FindScannerForCIDR("10.0.4.0/24")
+	if !ok || opn.User != "ipam" || !opn.Sudo || opn.SSHKeyFile != "/var/secrets/opnsense.key" {
+		t.Fatalf("opn scanner = %+v, want User='ipam' Sudo=true SSHKeyFile='/var/secrets/opnsense.key'", opn)
+	}
+}
+
+

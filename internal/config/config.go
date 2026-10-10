@@ -569,21 +569,21 @@ func (c *Config) setValue(section, key, value string) {
 			c.OpenWrt.VerifySSL = parseBool(value)
 		case "remote_scan":
 			c.OpenWrt.RemoteScan = parseBool(value)
-		case "ssh_host":
+		case "ssh_host", "host":
 			c.OpenWrt.SSHHost = value
-		case "ssh_port":
+		case "ssh_port", "port":
 			if v, err := strconv.Atoi(value); err == nil && v > 0 {
 				c.OpenWrt.SSHPort = v
 			}
-		case "ssh_user":
+		case "ssh_user", "user", "username":
 			c.OpenWrt.SSHUser = value
 		case "ssh_sudo", "sudo":
 			c.OpenWrt.SSHSudo = parseBool(value)
-		case "ssh_key":
+		case "ssh_key", "key":
 			c.OpenWrt.SSHKey = strings.ReplaceAll(value, "\\n", "\n")
-		case "ssh_key_file":
+		case "ssh_key_file", "key_file":
 			c.OpenWrt.SSHKeyFile = value
-		case "ssh_password":
+		case "ssh_password", "password":
 			c.OpenWrt.SSHPassword = value
 		case "networks":
 			c.OpenWrt.Networks = network.ParseNetworkList(value)
@@ -607,21 +607,21 @@ func (c *Config) setValue(section, key, value string) {
 			c.OPNsense.VerifySSL = parseBool(value)
 		case "remote_scan":
 			c.OPNsense.RemoteScan = parseBool(value)
-		case "ssh_host":
+		case "ssh_host", "host":
 			c.OPNsense.SSHHost = value
-		case "ssh_port":
+		case "ssh_port", "port":
 			if v, err := strconv.Atoi(value); err == nil && v > 0 {
 				c.OPNsense.SSHPort = v
 			}
-		case "ssh_user":
+		case "ssh_user", "user", "username":
 			c.OPNsense.SSHUser = value
 		case "ssh_sudo", "sudo":
 			c.OPNsense.SSHSudo = parseBool(value)
-		case "ssh_key":
+		case "ssh_key", "key":
 			c.OPNsense.SSHKey = strings.ReplaceAll(value, "\\n", "\n")
-		case "ssh_key_file":
+		case "ssh_key_file", "key_file":
 			c.OPNsense.SSHKeyFile = value
-		case "ssh_password":
+		case "ssh_password", "password":
 			c.OPNsense.SSHPassword = value
 		case "networks":
 			c.OPNsense.Networks = network.ParseNetworkList(value)
@@ -652,11 +652,11 @@ func (c *Config) setValue(section, key, value string) {
 			c.RemoteScanners.Enable = parseBool(value)
 		case "ssh_sudo", "sudo":
 			c.RemoteScanners.Sudo = parseBool(value)
-		case "ssh_key":
+		case "ssh_key", "key":
 			c.RemoteScanners.SSHKey = strings.ReplaceAll(value, "\\n", "\n")
-		case "ssh_key_file":
+		case "ssh_key_file", "key_file":
 			c.RemoteScanners.SSHKeyFile = value
-		case "ssh_password":
+		case "ssh_password", "password":
 			c.RemoteScanners.SSHPassword = value
 		case "names":
 			c.setRemoteScannerNames(value)
@@ -784,23 +784,23 @@ func (c *Config) setOpenWrtValue(id, key, value string) {
 		cfg.VerifySSL = parseBool(value)
 	case "remote_scan":
 		cfg.RemoteScan = parseBool(value)
-	case "ssh_host":
+	case "ssh_host", "host":
 		cfg.SSHHost = value
-	case "ssh_port":
+	case "ssh_port", "port":
 		if v, err := strconv.Atoi(value); err == nil && v > 0 {
 			cfg.SSHPort = v
 		}
-	case "ssh_user":
+	case "ssh_user", "user", "username":
 		if value != "" {
 			cfg.SSHUser = value
 		}
 	case "ssh_sudo", "sudo":
 		cfg.SSHSudo = parseBool(value)
-	case "ssh_key":
+	case "ssh_key", "key":
 		cfg.SSHKey = strings.ReplaceAll(value, "\\n", "\n")
-	case "ssh_key_file":
+	case "ssh_key_file", "key_file":
 		cfg.SSHKeyFile = value
-	case "ssh_password":
+	case "ssh_password", "password":
 		cfg.SSHPassword = value
 	case "networks":
 		cfg.Networks = network.ParseNetworkList(value)
@@ -891,13 +891,13 @@ func (c *Config) setRemoteScannerValue(id, key, value string) {
 	c.ensureRemoteScanner(id)
 	cfg := c.RemoteScanners.Configs[id]
 	switch key {
-	case "host":
+	case "host", "ssh_host":
 		cfg.Host = value
-	case "port":
+	case "port", "ssh_port":
 		if v, err := strconv.Atoi(value); err == nil && v > 0 {
 			cfg.Port = v
 		}
-	case "user":
+	case "user", "ssh_user", "username":
 		if value != "" {
 			cfg.User = value
 		}
@@ -905,11 +905,11 @@ func (c *Config) setRemoteScannerValue(id, key, value string) {
 		cfg.Sudo = parseBool(value)
 	case "networks":
 		cfg.Networks = network.ParseNetworkList(value)
-	case "ssh_key":
+	case "ssh_key", "key":
 		cfg.SSHKey = strings.ReplaceAll(value, "\\n", "\n")
-	case "ssh_key_file":
+	case "ssh_key_file", "key_file":
 		cfg.SSHKeyFile = value
-	case "ssh_password":
+	case "ssh_password", "password":
 		cfg.SSHPassword = value
 	}
 	c.RemoteScanners.Configs[id] = cfg
@@ -1003,13 +1003,21 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_HOST"); v != "" {
 		c.OpenWrt.SSHHost = v
+	} else if v := os.Getenv("ORANGUTAN_OPENWRT_HOST"); v != "" {
+		c.OpenWrt.SSHHost = v
 	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_PORT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.OpenWrt.SSHPort = n
 		}
+	} else if v := os.Getenv("ORANGUTAN_OPENWRT_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.OpenWrt.SSHPort = n
+		}
 	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_USER"); v != "" {
+		c.OpenWrt.SSHUser = v
+	} else if v := os.Getenv("ORANGUTAN_OPENWRT_USER"); v != "" {
 		c.OpenWrt.SSHUser = v
 	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_SUDO"); v != "" {
@@ -1019,11 +1027,17 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_KEY"); v != "" {
 		c.OpenWrt.SSHKey = strings.ReplaceAll(v, "\\n", "\n")
+	} else if v := os.Getenv("ORANGUTAN_OPENWRT_KEY"); v != "" {
+		c.OpenWrt.SSHKey = strings.ReplaceAll(v, "\\n", "\n")
 	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_KEY_FILE"); v != "" {
 		c.OpenWrt.SSHKeyFile = v
+	} else if v := os.Getenv("ORANGUTAN_OPENWRT_KEY_FILE"); v != "" {
+		c.OpenWrt.SSHKeyFile = v
 	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_PASSWORD"); v != "" {
+		c.OpenWrt.SSHPassword = v
+	} else if v := os.Getenv("ORANGUTAN_OPENWRT_PASSWORD"); v != "" {
 		c.OpenWrt.SSHPassword = v
 	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_NETWORKS"); v != "" {
@@ -1043,13 +1057,19 @@ func (c *Config) ApplyEnv() error {
 			{"verify_ssl", "VERIFY_SSL"},
 			{"remote_scan", "REMOTE_SCAN"},
 			{"ssh_host", "SSH_HOST"},
+			{"host", "HOST"},
 			{"ssh_port", "SSH_PORT"},
+			{"port", "PORT"},
 			{"ssh_user", "SSH_USER"},
+			{"user", "USER"},
 			{"ssh_sudo", "SSH_SUDO"},
 			{"sudo", "SUDO"},
 			{"ssh_key", "SSH_KEY"},
+			{"key", "KEY"},
 			{"ssh_key_file", "SSH_KEY_FILE"},
+			{"key_file", "KEY_FILE"},
 			{"ssh_password", "SSH_PASSWORD"},
+			{"password", "PASSWORD"},
 			{"networks", "NETWORKS"},
 		} {
 			if v := os.Getenv(prefix + setting.env); v != "" {
@@ -1078,13 +1098,21 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_HOST"); v != "" {
 		c.OPNsense.SSHHost = v
+	} else if v := os.Getenv("ORANGUTAN_OPNSENSE_HOST"); v != "" {
+		c.OPNsense.SSHHost = v
 	}
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_PORT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.OPNsense.SSHPort = n
 		}
+	} else if v := os.Getenv("ORANGUTAN_OPNSENSE_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.OPNsense.SSHPort = n
+		}
 	}
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_USER"); v != "" {
+		c.OPNsense.SSHUser = v
+	} else if v := os.Getenv("ORANGUTAN_OPNSENSE_USER"); v != "" {
 		c.OPNsense.SSHUser = v
 	}
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_SUDO"); v != "" {
@@ -1094,11 +1122,17 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_KEY"); v != "" {
 		c.OPNsense.SSHKey = strings.ReplaceAll(v, "\\n", "\n")
+	} else if v := os.Getenv("ORANGUTAN_OPNSENSE_KEY"); v != "" {
+		c.OPNsense.SSHKey = strings.ReplaceAll(v, "\\n", "\n")
 	}
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_KEY_FILE"); v != "" {
 		c.OPNsense.SSHKeyFile = v
+	} else if v := os.Getenv("ORANGUTAN_OPNSENSE_KEY_FILE"); v != "" {
+		c.OPNsense.SSHKeyFile = v
 	}
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_PASSWORD"); v != "" {
+		c.OPNsense.SSHPassword = v
+	} else if v := os.Getenv("ORANGUTAN_OPNSENSE_PASSWORD"); v != "" {
 		c.OPNsense.SSHPassword = v
 	}
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_NETWORKS"); v != "" {
@@ -1180,14 +1214,20 @@ func (c *Config) ApplyEnv() error {
 				env string
 			}{
 				{"host", "HOST"},
+				{"ssh_host", "SSH_HOST"},
 				{"port", "PORT"},
+				{"ssh_port", "SSH_PORT"},
 				{"user", "USER"},
+				{"ssh_user", "SSH_USER"},
 				{"sudo", "SUDO"},
 				{"ssh_sudo", "SSH_SUDO"},
 				{"networks", "NETWORKS"},
 				{"ssh_key", "SSH_KEY"},
+				{"key", "KEY"},
 				{"ssh_key_file", "SSH_KEY_FILE"},
+				{"key_file", "KEY_FILE"},
 				{"ssh_password", "SSH_PASSWORD"},
+				{"password", "PASSWORD"},
 			} {
 				if v := os.Getenv(prefix + setting.env); v != "" {
 					c.setRemoteScannerValue(id, setting.key, v)
