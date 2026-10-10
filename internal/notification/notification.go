@@ -121,3 +121,14 @@ func FormatRemoteScannerFailureSlackMessage(gateway, target, errorMsg string, is
 		gateway, target, errorMsg, action,
 	)
 }
+
+// FormatRemoteScannerRecoverySlackMessage formats an alert when a remote edge gateway recovers
+func FormatRemoteScannerRecoverySlackMessage(gateway, target string) string {
+	return fmt.Sprintf(
+		"✅ *LAN-Orangutan: Remote Scanner Recovered*\n"+
+			"*Gateway:* %s\n"+
+			"*Target:* `%s`\n"+
+			"*Status:* Remote scan succeeded. Normal edge scanning resumed.",
+		gateway, target,
+	)
+}

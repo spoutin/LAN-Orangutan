@@ -43,3 +43,18 @@ func TestFormatRemoteScannerFailureSlackMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatRemoteScannerRecoverySlackMessage(t *testing.T) {
+	msg := FormatRemoteScannerRecoverySlackMessage("opnsense (10.0.0.1)", "10.0.4.0/24")
+	for _, want := range []string{
+		"Remote Scanner Recovered",
+		"opnsense (10.0.0.1)",
+		"10.0.4.0/24",
+		"succeeded",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q does not contain %q", msg, want)
+		}
+	}
+}
+
