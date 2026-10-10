@@ -45,8 +45,9 @@ type Handler struct {
 	scanWG  sync.WaitGroup
 	now     func() time.Time
 
-	alertMu    sync.Mutex
-	alertCache map[string]time.Time
+	alertMu        sync.Mutex
+	alertCache     map[string]time.Time
+	failedGateways map[string]bool
 }
 
 // NewHandler creates a new API handler
@@ -64,6 +65,7 @@ func NewHandler(store *storage.Storage, cfg *config.Config) *Handler {
 		sendSlackNotification:  notification.SendSlackNotification,
 		now:                    time.Now,
 		alertCache:             make(map[string]time.Time),
+		failedGateways:         make(map[string]bool),
 	}
 }
 
@@ -396,14 +398,17 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.scanner.Scan(ctx, cidr)
 	if err != nil {
+		h.notifyRemoteScannerFailure(cidr, cidr, err)
 		h.error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	if !result.Success {
+		h.notifyRemoteScannerFailure(cidr, cidr, errors.New(result.Error))
 		h.error(w, http.StatusInternalServerError, result.Error)
 		return
 	}
+	h.notifyRemoteScannerSuccess(cidr, cidr)
 
 	// Merge devices into storage
 	newDevs, seenDevs, err := h.store.MergeDevices(result.Devices)
@@ -674,6 +679,7 @@ func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResu
 		h.notifyRemoteScannerFailure(cidr, cidr, errors.New(result.Error))
 		return nil, errors.New(result.Error)
 	}
+	h.notifyRemoteScannerSuccess(cidr, cidr)
 
 	newDevs, seenDevs, err := h.store.MergeDevices(result.Devices)
 	if err != nil {
@@ -999,15 +1005,15 @@ func (h *Handler) notifyRemoteScannerFailure(networkCIDR string, target string, 
 
 	debounceKey := fmt.Sprintf("%s:%s", gateway, networkCIDR)
 	h.alertMu.Lock()
-	if h.alertCache == nil {
-		h.alertCache = make(map[string]time.Time)
+	if h.failedGateways == nil {
+		h.failedGateways = make(map[string]bool)
 	}
-	lastAlert, exists := h.alertCache[debounceKey]
-	if exists && time.Since(lastAlert) < time.Hour {
+	if h.failedGateways[debounceKey] {
+		// Already alerted for this failure incident; suppress repeats until recovery
 		h.alertMu.Unlock()
 		return
 	}
-	h.alertCache[debounceKey] = time.Now()
+	h.failedGateways[debounceKey] = true
 	h.alertMu.Unlock()
 
 	conf, storeErr := h.store.GetNetworkNotification(networkCIDR)
@@ -1016,5 +1022,31 @@ func (h *Handler) notifyRemoteScannerFailure(networkCIDR string, target string, 
 	}
 
 	msg := notification.FormatRemoteScannerFailureSlackMessage(gateway, target, errorMsg, isMissingNmap)
+	_ = h.sendSlackNotification(conf.SlackWebhook, msg)
+}
+
+func (h *Handler) notifyRemoteScannerSuccess(networkCIDR string, target string) {
+	var gateway string
+	if r := h.scanner.GetRemoteRunner(); r != nil && r.HasRemoteScannerForTarget(target) {
+		gateway = r.GetGatewayForTarget(target)
+	} else {
+		return
+	}
+
+	debounceKey := fmt.Sprintf("%s:%s", gateway, networkCIDR)
+	h.alertMu.Lock()
+	if h.failedGateways == nil || !h.failedGateways[debounceKey] {
+		h.alertMu.Unlock()
+		return
+	}
+	delete(h.failedGateways, debounceKey)
+	h.alertMu.Unlock()
+
+	conf, storeErr := h.store.GetNetworkNotification(networkCIDR)
+	if storeErr != nil || conf == nil || !conf.Enabled || conf.SlackWebhook == "" {
+		return
+	}
+
+	msg := notification.FormatRemoteScannerRecoverySlackMessage(gateway, target)
 	_ = h.sendSlackNotification(conf.SlackWebhook, msg)
 }

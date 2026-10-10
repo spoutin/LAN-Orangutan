@@ -1064,6 +1064,7 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 		h.notifyRemoteScannerFailure(network, device.IP, err)
 		fmt.Printf("[DEBUG-PORT-SCAN] Failed to scan ports for %s: %v\n", device.IP, err)
 	} else {
+		h.notifyRemoteScannerSuccess(network, device.IP)
 		// Fetch current device from store to preserve customized fields
 		current := h.store.GetDevice(device.IP)
 		if current == nil {

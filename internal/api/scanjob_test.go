@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -301,6 +302,115 @@ func TestRemoteScannerFailureNotifiesSlackAndSkips(t *testing.T) {
 		t.Fatalf("expected still 1 Slack notification after debounced second failure, got %d", len(slackMessages))
 	}
 }
+
+type testSwitchableRemoteRunner struct {
+	gateway string
+	target  string
+	fail    bool
+	err     error
+}
+
+func (r *testSwitchableRemoteRunner) HasRemoteScannerForTarget(target string) bool {
+	return target == r.target
+}
+func (r *testSwitchableRemoteRunner) GetGatewayForTarget(target string) string {
+	return r.gateway
+}
+func (r *testSwitchableRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
+	if r.fail {
+		return nil, &remotescan.RemoteScannerError{
+			Gateway:       r.gateway,
+			Target:        target,
+			Err:           r.err,
+			IsMissingNmap: true,
+		}
+	}
+	return []byte(`<nmaprun><host><status state="up"/><address addr="10.0.0.1" addrtype="ipv4"/></host></nmaprun>`), nil
+}
+func (r *testSwitchableRemoteRunner) Close() error { return nil }
+
+func TestRemoteScannerAlertOnceAndRecoveryNotification(t *testing.T) {
+	store := newScanJobTestStore(t)
+	_ = store.SaveNetworkNotification("10.0.0.0/24", "https://example.test/slack-opnsense", true)
+
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+	h := NewHandler(store, cfg)
+
+	var mu sync.Mutex
+	var slackMessages []string
+	h.sendSlackNotification = func(webhook, text string) error {
+		mu.Lock()
+		slackMessages = append(slackMessages, text)
+		mu.Unlock()
+		return nil
+	}
+
+	runner := &testSwitchableRemoteRunner{
+		gateway: "opnsense (10.0.0.1)",
+		target:  "10.0.0.0/24",
+		fail:    true,
+		err:     fmt.Errorf("nmap: not found"),
+	}
+	h.scanner.SetRemoteRunner(runner)
+	ctx := context.Background()
+
+	// 1. First failure -> 1 failure Slack alert
+	_, _ = h.scanNetwork(ctx, "10.0.0.0/24")
+	mu.Lock()
+	if len(slackMessages) != 1 {
+		t.Fatalf("expected 1 Slack notification, got %d: %v", len(slackMessages), slackMessages)
+	}
+	if !strings.Contains(slackMessages[0], "Remote Scanner Failure") {
+		t.Fatalf("unexpected message: %s", slackMessages[0])
+	}
+	mu.Unlock()
+
+	// 2. Second failure while still down -> 0 new alerts (suppressed, no repeat spam)
+	_, _ = h.scanNetwork(ctx, "10.0.0.0/24")
+	mu.Lock()
+	if len(slackMessages) != 1 {
+		t.Fatalf("expected still 1 notification after second failure, got %d", len(slackMessages))
+	}
+	mu.Unlock()
+
+	// 3. Scanner recovers -> 1 recovery Slack alert
+	runner.fail = false
+	_, err := h.scanNetwork(ctx, "10.0.0.0/24")
+	if err != nil {
+		t.Fatalf("scanNetwork: %v", err)
+	}
+	mu.Lock()
+	if len(slackMessages) != 2 {
+		t.Fatalf("expected 2 Slack notifications after recovery, got %d: %v", len(slackMessages), slackMessages)
+	}
+	if !strings.Contains(slackMessages[1], "Remote Scanner Recovered") || !strings.Contains(slackMessages[1], "opnsense (10.0.0.1)") {
+		t.Fatalf("unexpected recovery message: %s", slackMessages[1])
+	}
+	mu.Unlock()
+
+	// 4. Continued success -> 0 new alerts
+	_, _ = h.scanNetwork(ctx, "10.0.0.0/24")
+	mu.Lock()
+	if len(slackMessages) != 2 {
+		t.Fatalf("expected still 2 Slack notifications after continued success, got %d", len(slackMessages))
+	}
+	mu.Unlock()
+
+	// 5. Subsequent failure -> 1 new failure alert
+	runner.fail = true
+	_, _ = h.scanNetwork(ctx, "10.0.0.0/24")
+	mu.Lock()
+	if len(slackMessages) != 3 {
+		t.Fatalf("expected 3 Slack notifications after new failure, got %d: %v", len(slackMessages), slackMessages)
+	}
+	if !strings.Contains(slackMessages[2], "Remote Scanner Failure") {
+		t.Fatalf("unexpected message: %s", slackMessages[2])
+	}
+	mu.Unlock()
+}
+
 
 func TestScanJob_MultiOpenWrtRouters(t *testing.T) {
 	cfg := config.Default()
