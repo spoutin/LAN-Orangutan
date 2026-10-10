@@ -283,7 +283,9 @@ func (h *Handler) startScanJobWithDeadline(networks []string, automatic bool, mo
 
 	h.store.ClearCompletedNetworks()
 	h.store.SetCurrentScanningNetwork("")
-	h.store.SetScanRunning(true)
+	if len(deepDevices) != 1 {
+		h.store.SetScanRunning(true)
+	}
 
 	h.scanWG.Add(1)
 	go func() {
@@ -681,6 +683,9 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 		go func() {
 			defer wg.Done()
 			for target := range jobs {
+				if len(j.deepDevices) != 1 {
+					h.store.SetCurrentScanningNetwork(target.network)
+				}
 				j.scanPortHost(ctx, h, target.network, target.device)
 			}
 		}()
@@ -693,6 +698,10 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 	}
 	close(jobs)
 	wg.Wait()
+
+	if len(j.deepDevices) != 1 {
+		h.store.SetCurrentScanningNetwork("")
+	}
 
 	j.mu.Lock()
 	j.portScanActive = false
@@ -771,12 +780,10 @@ func (j *scanJob) runDeepScan(ctx context.Context, h *Handler) {
 	devices := h.store.GetDevices()
 	interval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
 	targetsByNetwork := make(map[string][]types.Device)
-	for i, cidr := range j.networks {
+	for _, cidr := range j.networks {
 		if ctx.Err() != nil {
 			return
 		}
-		j.beginNetwork(cidr, i+1, 0)
-		h.store.SetCurrentScanningNetwork(cidr)
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {
 			j.addResult(networkScanSummary{Network: cidr, Status: "failed", Error: err.Error()}, 0)
@@ -789,10 +796,14 @@ func (j *scanJob) runDeepScan(ctx context.Context, h *Handler) {
 				targets = append(targets, *device)
 			}
 		}
-		j.addResult(networkScanSummary{Network: cidr, Status: "scanned", DeviceCount: len(targets)}, len(targets))
 		targetsByNetwork[cidr] = targets
 	}
 	j.runDeepQueue(ctx, h, targetsByNetwork)
+	for i, cidr := range j.networks {
+		targets := targetsByNetwork[cidr]
+		j.beginNetwork(cidr, i+1, 0)
+		j.addResult(networkScanSummary{Network: cidr, Status: "scanned", DeviceCount: len(targets)}, len(targets))
+	}
 }
 
 // beginNetwork records that the job has started scanning a network.
@@ -1029,6 +1040,9 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 		if j.deepNetworkProgress[i].Network == network {
 			j.deepNetworkProgress[i].Active--
 			j.deepNetworkProgress[i].Complete++
+			if j.deepNetworkProgress[i].Complete >= j.deepNetworkProgress[i].Total && len(j.deepDevices) != 1 {
+				h.store.AddCompletedNetwork(network)
+			}
 			break
 		}
 	}

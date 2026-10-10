@@ -172,7 +172,78 @@ async function api(action, params = {}, method = 'GET') {
 // A large network takes minutes, which is far too long to hold a request open.
 const SCAN_POLL_MS = 1000;
 let activeScanProgress = null;
-let activeTargetedDeepScanIP = '';
+
+const scanCoordinator = {
+    timer: null,
+    isPolling: false,
+    activeProgress: null,
+    refreshedNetworkKeys: new Set(),
+    listeners: new Set(),
+
+    start() {
+        if (this.timer) return;
+        this.refreshedNetworkKeys.clear();
+        this.poll();
+        this.timer = setInterval(() => this.poll(), SCAN_POLL_MS);
+    },
+
+    stop() {
+        if (this.timer) {
+            clearInterval(this.timer);
+            this.timer = null;
+        }
+    },
+
+    addListener(fn) {
+        this.listeners.add(fn);
+        if (this.activeProgress) {
+            try { fn(this.activeProgress); } catch (_) {}
+        }
+    },
+
+    removeListener(fn) {
+        this.listeners.delete(fn);
+    },
+
+    notifyListeners(progress) {
+        for (const listener of this.listeners) {
+            try { listener(progress); } catch (_) {}
+        }
+    },
+
+    async poll() {
+        if (this.isPolling) return;
+        this.isPolling = true;
+        try {
+            const res = await api('scan/progress');
+            const progress = res?.data;
+            if (!progress) return;
+            this.activeProgress = progress;
+            activeScanProgress = progress;
+            this.notifyListeners(progress);
+
+            if (progress.status !== 'running') {
+                this.stop();
+                if (!progress.automatic) {
+                    reportScanOutcome(progress);
+                }
+                await refreshInPlace();
+                return;
+            }
+
+            const completedNetworks = window.scanRefresh?.completedNetworkKeys
+                ? window.scanRefresh.completedNetworkKeys(progress)
+                : [];
+            if (completedNetworks.some(key => !this.refreshedNetworkKeys.has(key))) {
+                completedNetworks.forEach(key => this.refreshedNetworkKeys.add(key));
+                await refreshInPlace();
+            }
+        } catch (_) {
+        } finally {
+            this.isPolling = false;
+        }
+    }
+};
 
 function formatSeconds(total) {
     const s = Math.max(0, Math.round(total));
@@ -226,37 +297,11 @@ async function refreshAfterScan() {
     if (!(await refreshInPlace())) location.reload();
 }
 
-// Follows a scan that is already running until it stops. Scans live on the
-// server, not in the page, so this is used both by the page that starts one and
-// by any page loaded while one is already in progress.
-async function followScan() {
-    const refreshedNetworks = new Set();
-    while (true) {
-        await new Promise(r => setTimeout(r, SCAN_POLL_MS));
-        const progress = (await api('scan/progress')).data;
-        // Stop when the scan ends, or when the current job is an automatic
-        // background scan: the user's scan has finished and the background
-        // scanner has taken the single job slot, so there is nothing of the
-        // user's left to follow.
-        if (progress.status !== 'running' || progress.automatic) {
-            if (!progress.automatic) {
-                reportScanOutcome(progress);
-            }
-            return;
-        }
-        const completedNetworks = window.scanRefresh.completedNetworkKeys(progress);
-        if (completedNetworks.some(key => !refreshedNetworks.has(key))) {
-            completedNetworks.forEach(key => refreshedNetworks.add(key));
-            await refreshInPlace();
-        }
-    }
-}
-
 async function runScan(target, mode = 'quick') {
     try {
         await api(`scan/start?network=${encodeURIComponent(target)}&mode=${encodeURIComponent(mode)}`, {}, 'POST');
         await refreshInPlace();
-        await followScan();
+        scanCoordinator.start();
     } catch (e) {
         const isRateLimit = e.message.toLowerCase().includes('rate limit');
         showToast(isRateLimit ? e.message : 'Scan failed: ' + e.message, isRateLimit ? 'warning' : 'error');
@@ -269,9 +314,11 @@ async function runScan(target, mode = 'quick') {
 async function resumeScanIfRunning() {
     try {
         const progress = (await api('scan/progress')).data;
-        // Only resume a scan the user started.
         if (progress && progress.status === 'running' && !progress.automatic) {
-            await followScan();
+            scanCoordinator.activeProgress = progress;
+            activeScanProgress = progress;
+            scanCoordinator.notifyListeners(progress);
+            scanCoordinator.start();
         }
     } catch (e) {
         // No scan has ever run, or this page cannot ask. Nothing to show.
@@ -985,22 +1032,12 @@ function selectDeviceRow(target) {
     openDeviceSidebar(row);
 }
 
-function openDeviceSidebar(target) {
-    let row = null;
-    let data = null;
-    if (target instanceof HTMLElement) {
-        row = target;
-        data = target.dataset;
-    } else if (typeof target === 'string') {
-        row = document.querySelector(`.device-row[data-ip="${CSS.escape(target)}"]`);
-        data = row ? row.dataset : {};
-    } else if (target && target.ip) {
-        row = document.querySelector(`.device-row[data-ip="${CSS.escape(target.ip)}"]`);
-        data = row ? row.dataset : target;
-    } else {
-        data = target || {};
-    }
+function isTargetedDeepScanActive(ip) {
+    const progress = scanCoordinator.activeProgress || activeScanProgress;
+    return !!(progress && progress.status === 'running' && progress.targeted_deep_scan && progress.targeted_device_ip === ip);
+}
 
+function syncDeviceSidebarTelemetry(data) {
     // 1. Header
     const effectiveType = data.customTypeOriginal || data.typeDisplay || data.type || '';
     const iconEl = document.getElementById('sb-icon');
@@ -1295,23 +1332,19 @@ function openDeviceSidebar(target) {
 			servicesSummary.textContent = services.length ? `${services.length} detected` : data.openPorts ? `${data.openPorts.split(',').length} detected` : 'Not scanned yet';
 			if (servicesButton) servicesButton.style.display = services.length || data.openPorts ? '' : 'none';
 		}
+
+		const isScanningThisDevice = isTargetedDeepScanActive(data.ip);
 		const lastDeepScan = document.getElementById('sb-last-deep-scan');
-		// A table refresh can arrive while this device's targeted deep scan is
-		// still running. Preserve its operation feedback rather than briefly
-		// replacing the spinner with the prior persisted timestamp.
-		const targetedDeepScanRunning = activeTargetedDeepScanIP === data.ip;
-		if (lastDeepScan && !targetedDeepScanRunning) {
-			const scannedAt = data.lastDeepScanAt ? new Date(data.lastDeepScanAt) : null;
-			if (scannedAt && !isNaN(scannedAt.getTime())) {
-				const unix = Math.floor(scannedAt.getTime() / 1000);
-				lastDeepScan.dataset.relativeTime = unix;
-				lastDeepScan.textContent = `${scannedAt.toLocaleString()} · ${relativeTime(unix)}`;
-			} else {
-				lastDeepScan.dataset.relativeTime = '';
-				lastDeepScan.textContent = 'Never';
-			}
+		const button = document.getElementById('sb-deep-rescan-btn');
+		if (button) button.disabled = isScanningThisDevice;
+
+		if (lastDeepScan && !isScanningThisDevice) {
+			delete lastDeepScan.dataset.relativeTime;
+			const res = window.deviceOperationState?.formatLastDeepScan
+				? window.deviceOperationState.formatLastDeepScan(data.lastDeepScanAt, false)
+				: { html: 'Never' };
+			lastDeepScan.innerHTML = res.html;
 		}
-		renderTargetedDeepScanProgress(data.ip);
 
 		const sshEl = document.getElementById('sb-ssh');
 		if (sshEl) {
@@ -1329,38 +1362,55 @@ function openDeviceSidebar(target) {
         const histBtn = document.getElementById('sb-history-btn');
         if (histBtn) histBtn.onclick = () => viewSidebarPresenceHistory();
     }
+}
 
-    // 7. Device Customizations Card
-    // Avoid overwriting active inputs if user is currently typing/editing
-    const isFormActive = document.activeElement && document.getElementById('sb-edit-form')?.contains(document.activeElement);
-    if (!isFormActive) {
-        const editIp = document.getElementById('sb-edit-ip');
-        if (editIp) editIp.value = data.ip || '';
+function populateSidebarEditForm(data) {
+    const editIp = document.getElementById('sb-edit-ip');
+    if (editIp) editIp.value = data.ip || '';
 
-        const editLabel = document.getElementById('sb-edit-label');
-        if (editLabel) editLabel.value = data.labelOriginal || '';
+    const editLabel = document.getElementById('sb-edit-label');
+    if (editLabel) editLabel.value = data.labelOriginal || '';
 
-        const editCustomHostname = document.getElementById('sb-edit-custom-hostname');
-        if (editCustomHostname) editCustomHostname.value = data.customHostnameOriginal || '';
+    const editCustomHostname = document.getElementById('sb-edit-custom-hostname');
+    if (editCustomHostname) editCustomHostname.value = data.customHostnameOriginal || '';
 
-        const editCustomWebUrl = document.getElementById('sb-edit-custom-web-url');
-        if (editCustomWebUrl) editCustomWebUrl.value = data.customWebUrlOriginal || '';
+    const editCustomWebUrl = document.getElementById('sb-edit-custom-web-url');
+    if (editCustomWebUrl) editCustomWebUrl.value = data.customWebUrlOriginal || '';
 
-        const editCustomType = document.getElementById('sb-edit-custom-type');
-        if (editCustomType) editCustomType.value = data.customTypeOriginal || '';
+    const editCustomType = document.getElementById('sb-edit-custom-type');
+    if (editCustomType) editCustomType.value = data.customTypeOriginal || '';
 
-        const editNotes = document.getElementById('sb-edit-notes');
-        if (editNotes) editNotes.value = data.notes || '';
+    const editNotes = document.getElementById('sb-edit-notes');
+    if (editNotes) editNotes.value = data.notes || '';
 
-        const editAnsible = document.getElementById('sb-edit-ansible-managed');
-        if (editAnsible) editAnsible.checked = data.ansibleManaged === 'true' || data.ansibleManaged === '1' || data.ansibleManaged === true;
+    const editAnsible = document.getElementById('sb-edit-ansible-managed');
+    if (editAnsible) editAnsible.checked = data.ansibleManaged === 'true' || data.ansibleManaged === '1' || data.ansibleManaged === true;
 
-		const editSSHOverride = document.getElementById('sb-edit-ssh-override');
-		if (editSSHOverride) editSSHOverride.value = data.sshOverride || '';
-		const editSSHPort = document.getElementById('sb-edit-ssh-port');
-		if (editSSHPort) editSSHPort.value = data.sshOverridePort || '';
-		updateSSHPortControl();
+	const editSSHOverride = document.getElementById('sb-edit-ssh-override');
+	if (editSSHOverride) editSSHOverride.value = data.sshOverride || '';
+	const editSSHPort = document.getElementById('sb-edit-ssh-port');
+	if (editSSHPort) editSSHPort.value = data.sshOverridePort || '';
+	updateSSHPortControl();
+}
+
+function openDeviceSidebar(target) {
+    let row = null;
+    let data = null;
+    if (target instanceof HTMLElement) {
+        row = target;
+        data = target.dataset;
+    } else if (typeof target === 'string') {
+        row = document.querySelector(`.device-row[data-ip="${CSS.escape(target)}"]`);
+        data = row ? row.dataset : {};
+    } else if (target && target.ip) {
+        row = document.querySelector(`.device-row[data-ip="${CSS.escape(target.ip)}"]`);
+        data = row ? row.dataset : target;
+    } else {
+        data = target || {};
     }
+
+    syncDeviceSidebarTelemetry(data);
+    populateSidebarEditForm(data);
 
     // Show sidebar
     const sidebar = document.getElementById('device-sidebar');
@@ -1404,66 +1454,53 @@ function closeServiceDetails() {
 	document.getElementById('service-details-modal').style.display = 'none';
 }
 
+function updateSidebarDeepScanState(ip, isRunning) {
+	const currentIp = document.getElementById('sb-edit-ip')?.value;
+	if (currentIp !== ip) return;
+
+	const lastDeepScan = document.getElementById('sb-last-deep-scan');
+	const button = document.getElementById('sb-deep-rescan-btn');
+	if (button) button.disabled = isRunning;
+	if (!lastDeepScan) return;
+
+	delete lastDeepScan.dataset.relativeTime;
+	if (isRunning) {
+		const res = window.deviceOperationState?.formatLastDeepScan
+			? window.deviceOperationState.formatLastDeepScan(null, true)
+			: { html: '<span class="deep-scan-progress">Scanning services...</span>' };
+		lastDeepScan.innerHTML = res.html;
+	} else {
+		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
+		const res = window.deviceOperationState?.formatLastDeepScan
+			? window.deviceOperationState.formatLastDeepScan(row?.dataset.lastDeepScanAt, false)
+			: { html: 'Never' };
+		lastDeepScan.innerHTML = res.html;
+		updateRelativeTimes();
+	}
+}
+
+scanCoordinator.addListener(progress => {
+	if (progress?.targeted_deep_scan && progress?.targeted_device_ip) {
+		updateSidebarDeepScanState(progress.targeted_device_ip, progress.status === 'running');
+	}
+});
+
 async function rescanSidebarDeviceDeepServices() {
 	const ip = document.getElementById('sb-edit-ip')?.value;
 	if (!ip) return;
-	const previousScanAt = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`)?.dataset.lastDeepScanAt || '';
+	updateSidebarDeepScanState(ip, true);
 	try {
 		const started = await api(`devices/${encodeURIComponent(ip)}/deep-scan`, {}, 'POST');
-		activeTargetedDeepScanIP = ip;
-		activeScanProgress = started.data;
-		renderTargetedDeepScanProgress(ip);
-		const progress = await followDeviceDeepScan(ip);
-		if (progress.last_port_scan_host?.error) throw new Error(progress.last_port_scan_host.error);
-		await refreshSidebarAfterDeepScan(ip, previousScanAt);
+		if (started?.data) {
+			scanCoordinator.activeProgress = started.data;
+			activeScanProgress = started.data;
+			scanCoordinator.notifyListeners(started.data);
+		}
+		scanCoordinator.start();
 	} catch (e) {
-		activeTargetedDeepScanIP = '';
-		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
-		if (row) openDeviceSidebar(row);
+		updateSidebarDeepScanState(ip, false);
 		showToast('Could not start deep service rescan: ' + e.message, 'error');
 	}
-}
-
-function renderTargetedDeepScanProgress(ip) {
-	const lastDeepScan = document.getElementById('sb-last-deep-scan');
-	const button = document.getElementById('sb-deep-rescan-btn');
-	const isRunning = activeScanProgress?.status === 'running' && activeScanProgress?.targeted_deep_scan && activeScanProgress?.targeted_device_ip === ip;
-	if (!isRunning) {
-		if (button) button.disabled = false;
-		return;
-	}
-	if (lastDeepScan) lastDeepScan.innerHTML = '<span class="deep-scan-progress"><svg class="spinner-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>Scanning services...</span>';
-	if (button) button.disabled = true;
-}
-
-async function followDeviceDeepScan(ip) {
-	while (true) {
-		await new Promise(resolve => setTimeout(resolve, SCAN_POLL_MS));
-		const progress = (await api('scan/progress')).data;
-		activeScanProgress = progress;
-		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
-		if (row) openDeviceSidebar(row);
-		if (progress.status !== 'running') {
-			activeScanProgress = null;
-			return progress;
-		}
-		if (progress.last_port_scan_host?.ip === ip && progress.last_port_scan_host?.error) return progress;
-	}
-}
-
-async function refreshSidebarAfterDeepScan(ip, previousScanAt) {
-	for (let attempt = 0; attempt < 20; attempt++) {
-		await refreshInPlace();
-		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
-		const scannedAt = row?.dataset.lastDeepScanAt || '';
-		if (row && scannedAt && scannedAt !== previousScanAt) {
-			activeTargetedDeepScanIP = '';
-			openDeviceSidebar(row);
-			return;
-		}
-		await new Promise(resolve => setTimeout(resolve, 500));
-	}
-	throw new Error('The service scan completed but its result was not persisted');
 }
 
 function closeDeviceSidebar() {
@@ -2110,7 +2147,17 @@ async function refreshInPlace() {
             rowToSelect.classList.add('selected-row');
             const sidebar = document.getElementById('device-sidebar');
             if (sidebar && !sidebar.classList.contains('hidden')) {
-                openDeviceSidebar(rowToSelect);
+                syncDeviceSidebarTelemetry(rowToSelect.dataset);
+                const isFormActive = document.activeElement && document.getElementById('sb-edit-form')?.contains(document.activeElement);
+                const hasUnsaved = sidebarHasUnsavedChanges();
+                const canSyncForm = window.deviceOperationState?.shouldSyncSidebarForm
+                    ? window.deviceOperationState.shouldSyncSidebarForm({ hasUnsavedChanges: hasUnsaved, isFormFocused: !!isFormActive })
+                    : (!hasUnsaved && !isFormActive);
+
+                if (canSyncForm) {
+                    populateSidebarEditForm(rowToSelect.dataset);
+                    initializeSidebarSaveState();
+                }
             }
         }
     }
@@ -2257,6 +2304,9 @@ function relativeTime(unixSeconds) {
 
 function updateRelativeTimes() {
     document.querySelectorAll('[data-relative-time]').forEach(el => {
+        if (window.deviceOperationState?.isElementProtectedFromTimeUpdate && window.deviceOperationState.isElementProtectedFromTimeUpdate(el)) {
+            return;
+        }
         const ts = parseInt(el.dataset.relativeTime, 10);
         if (!isNaN(ts) && ts > 0) {
             el.textContent = relativeTime(ts);

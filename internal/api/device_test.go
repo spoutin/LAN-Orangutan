@@ -37,6 +37,9 @@ func TestDeviceDeepScanStartsOnlyRequestedDevice(t *testing.T) {
 	if job == nil || len(job.deepDevices) != 1 || job.deepDevices[0].IP != device.IP {
 		t.Fatalf("deep scan targets = %+v, want only %s", job, device.IP)
 	}
+	if store.IsScanRunning() {
+		t.Fatal("targeted deep scan must not mark general network scan running in store")
+	}
 	job.cancel()
 	<-job.done
 }
