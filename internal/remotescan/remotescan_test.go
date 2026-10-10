@@ -429,3 +429,68 @@ func TestSSHRunner_DynamicKeyFileReloadOnDiskModification(t *testing.T) {
 		t.Fatalf("output2 = %s", string(out2))
 	}
 }
+
+func TestSSHRunner_SudoExecution(t *testing.T) {
+	var receivedCmds []string
+	var mu sync.Mutex
+
+	port, clientKey := startTestSSHServer(t, func(cmd string) (string, int) {
+		mu.Lock()
+		receivedCmds = append(receivedCmds, cmd)
+		mu.Unlock()
+		return `<nmaprun></nmaprun>`, 0
+	})
+
+	cfg := config.RemoteScannersConfig{
+		Enable: true,
+		SSHKey: clientKey,
+		Names:  []string{"opnsense", "openwrt"},
+		Configs: map[string]config.RemoteScannerConfig{
+			"opnsense": {
+				ID:       "opnsense",
+				Host:     "127.0.0.1",
+				Port:     port,
+				User:     "opnuser",
+				Sudo:     true,
+				Networks: []string{"10.0.0.0/24"},
+			},
+			"openwrt": {
+				ID:       "openwrt",
+				Host:     "127.0.0.1",
+				Port:     port,
+				User:     "root",
+				Sudo:     false,
+				Networks: []string{"10.5.5.0/24"},
+			},
+		},
+	}
+
+	runner := NewRunner(cfg)
+	defer runner.Close()
+
+	// 1. Scan target routed via opnsense (Sudo = true)
+	_, err := runner.RunScan(context.Background(), "10.0.0.0/24", []string{"-sn", "10.0.0.0/24"})
+	if err != nil {
+		t.Fatalf("opnsense RunScan: %v", err)
+	}
+
+	// 2. Scan target routed via openwrt (Sudo = false)
+	_, err = runner.RunScan(context.Background(), "10.5.5.0/24", []string{"-sn", "10.5.5.0/24"})
+	if err != nil {
+		t.Fatalf("openwrt RunScan: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(receivedCmds) != 2 {
+		t.Fatalf("received %d commands, want 2: %v", len(receivedCmds), receivedCmds)
+	}
+
+	if !strings.HasPrefix(receivedCmds[0], "sudo -n nmap ") {
+		t.Fatalf("expected opnsense command to start with 'sudo -n nmap ', got %q", receivedCmds[0])
+	}
+	if !strings.HasPrefix(receivedCmds[1], "nmap ") {
+		t.Fatalf("expected openwrt command to start with 'nmap ', got %q", receivedCmds[1])
+	}
+}
+

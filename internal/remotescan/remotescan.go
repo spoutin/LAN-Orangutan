@@ -257,7 +257,11 @@ func (r *SSHRunner) RunScan(ctx context.Context, target string, args []string) (
 		}
 	}()
 
-	cmd := fmt.Sprintf("nmap %s", strings.Join(args, " "))
+	prefix := "nmap"
+	if sc.Sudo {
+		prefix = "sudo -n nmap"
+	}
+	cmd := fmt.Sprintf("%s %s", prefix, strings.Join(args, " "))
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
 	session.Stderr = &stderr
