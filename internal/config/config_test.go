@@ -808,12 +808,85 @@ func TestRemoteScannersConfigDoesNotSerializeCredentials(t *testing.T) {
 	cfg.RemoteScanners.Enable = true
 	cfg.RemoteScanners.SSHKey = "super-secret-private-key"
 	cfg.RemoteScanners.SSHPassword = "super-secret-password"
+	cfg.setRemoteScannerNames("gw1")
+	cfg.setRemoteScannerValue("gw1", "ssh_key", "super-secret-gw-key")
+	cfg.setRemoteScannerValue("gw1", "ssh_password", "super-secret-gw-pass")
 
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	if strings.Contains(string(data), "super-secret-private-key") || strings.Contains(string(data), "super-secret-password") {
-		t.Fatal("serialized configuration must not leak remote scanner SSH secrets")
+	for _, secret := range []string{
+		"super-secret-private-key",
+		"super-secret-password",
+		"super-secret-gw-key",
+		"super-secret-gw-pass",
+	} {
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("serialized configuration leaked secret: %s", secret)
+		}
+	}
+}
+
+func TestRemoteScannersConfig_PerGatewayCredentials_INI(t *testing.T) {
+	path := writeConfig(t, `
+[remote_scanners]
+enable = true
+ssh_key = default-key
+
+[remote_scanner.openwrt1]
+host = 10.5.5.1
+ssh_key = openwrt1-specific-key
+networks = 10.5.5.0/24
+
+[remote_scanner.openwrt2]
+host = 10.6.6.1
+ssh_password = openwrt2-specific-pass
+networks = 10.6.6.0/24
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	gw1, ok := cfg.RemoteScanners.FindScannerForCIDR("10.5.5.0/24")
+	if !ok || gw1.SSHKey != "openwrt1-specific-key" {
+		t.Fatalf("gw1 = %+v, want SSHKey='openwrt1-specific-key'", gw1)
+	}
+
+	gw2, ok := cfg.RemoteScanners.FindScannerForCIDR("10.6.6.0/24")
+	if !ok || gw2.SSHPassword != "openwrt2-specific-pass" {
+		t.Fatalf("gw2 = %+v, want SSHPassword='openwrt2-specific-pass'", gw2)
+	}
+}
+
+func TestRemoteScannersConfig_PerGatewayCredentials_Env(t *testing.T) {
+	t.Setenv("ORANGUTAN_REMOTE_SCAN_ENABLE", "true")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNERS_NAMES", "openwrt_a,openwrt_b")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_OPENWRT_A_HOST", "10.5.5.1")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_OPENWRT_A_NETWORKS", "10.5.5.0/24")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_OPENWRT_A_SSH_KEY", "-----BEGIN KEY A-----\\nAAA\\n-----END KEY A-----")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_OPENWRT_B_HOST", "10.6.6.1")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_OPENWRT_B_NETWORKS", "10.6.6.0/24")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_OPENWRT_B_SSH_KEY_FILE", "/path/to/key_b")
+
+	path := writeConfig(t, "")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.ApplyEnv(); err != nil {
+		t.Fatalf("ApplyEnv: %v", err)
+	}
+
+	gwA, ok := cfg.RemoteScanners.FindScannerForCIDR("10.5.5.0/24")
+	if !ok || !strings.Contains(gwA.SSHKey, "BEGIN KEY A") {
+		t.Fatalf("gwA = %+v, want SSHKey containing 'BEGIN KEY A'", gwA)
+	}
+
+	gwB, ok := cfg.RemoteScanners.FindScannerForCIDR("10.6.6.0/24")
+	if !ok || gwB.SSHKeyFile != "/path/to/key_b" {
+		t.Fatalf("gwB = %+v, want SSHKeyFile='/path/to/key_b'", gwB)
 	}
 }

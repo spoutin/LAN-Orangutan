@@ -343,13 +343,17 @@ networks = 10.5.5.0/24, 192.168.1.0/24, 192.168.111.0/24
 
 Environment variables supported:
 * `ORANGUTAN_REMOTE_SCAN_ENABLE`: `true` to enable.
-* `ORANGUTAN_REMOTE_SCAN_KEY`: in-memory OpenSSH private key PEM (no disk file needed).
-* `ORANGUTAN_REMOTE_SCAN_KEY_FILE`: path to private key file.
-* `ORANGUTAN_REMOTE_SCANNERS_NAMES`: comma-separated gateway IDs.
+* `ORANGUTAN_REMOTE_SCAN_KEY`: default in-memory OpenSSH private key PEM (no disk file needed).
+* `ORANGUTAN_REMOTE_SCAN_KEY_FILE`: default path to private key file.
+* `ORANGUTAN_REMOTE_SCAN_PASSWORD`: default SSH password.
+* `ORANGUTAN_REMOTE_SCANNERS_NAMES`: comma-separated gateway IDs (e.g. `opnsense,openwrt1,openwrt2`).
 * `ORANGUTAN_REMOTE_SCANNER_<ID>_HOST`: gateway IP.
 * `ORANGUTAN_REMOTE_SCANNER_<ID>_PORT`: SSH port (default: 22).
 * `ORANGUTAN_REMOTE_SCANNER_<ID>_USER`: SSH user (default: root).
 * `ORANGUTAN_REMOTE_SCANNER_<ID>_NETWORKS`: comma-separated CIDRs routed to this gateway.
+* `ORANGUTAN_REMOTE_SCANNER_<ID>_SSH_KEY`: optional per-gateway private key PEM override.
+* `ORANGUTAN_REMOTE_SCANNER_<ID>_SSH_KEY_FILE`: optional per-gateway private key file override.
+* `ORANGUTAN_REMOTE_SCANNER_<ID>_SSH_PASSWORD`: optional per-gateway password override.
 
 **Failure Isolation & Alerting:** If an edge scanner fails (SSH unreachable, authentication rejected, or Nmap missing on the gateway), the scan for that subnet is skipped to protect firewall state tables, and an alert is immediately dispatched to the Slack webhook configured for that network.
 

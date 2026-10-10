@@ -157,11 +157,14 @@ type RemoteScannersConfig struct {
 
 // RemoteScannerConfig holds settings for one remote gateway scanner.
 type RemoteScannerConfig struct {
-	ID       string   `json:"id"`
-	Host     string   `json:"host"`
-	Port     int      `json:"port"`
-	User     string   `json:"user"`
-	Networks []string `json:"networks"`
+	ID          string   `json:"id"`
+	Host        string   `json:"host"`
+	Port        int      `json:"port"`
+	User        string   `json:"user"`
+	Networks    []string `json:"networks"`
+	SSHKey      string   `json:"-"` // per-gateway in-memory PEM key (not serialized)
+	SSHKeyFile  string   `json:"ssh_key_file,omitempty"`
+	SSHPassword string   `json:"-"` // per-gateway password (not serialized)
 }
 
 // FindScannerForCIDR finds the remote scanner configured for a subnet CIDR
@@ -418,6 +421,12 @@ func Load(path string) (*Config, error) {
 			cfg.setValue(currentSection, currentKey, value)
 		} else if currentKey == "ssh_key" && currentSection == "remote_scanners" {
 			cfg.RemoteScanners.SSHKey += "\n" + line
+		} else if currentKey == "ssh_key" && strings.HasPrefix(currentSection, "remote_scanner.") {
+			id := strings.TrimPrefix(currentSection, "remote_scanner.")
+			cfg.ensureRemoteScanner(id)
+			sc := cfg.RemoteScanners.Configs[id]
+			sc.SSHKey += "\n" + line
+			cfg.RemoteScanners.Configs[id] = sc
 		}
 	}
 
@@ -683,6 +692,12 @@ func (c *Config) setRemoteScannerValue(id, key, value string) {
 		}
 	case "networks":
 		cfg.Networks = network.ParseNetworkList(value)
+	case "ssh_key":
+		cfg.SSHKey = strings.ReplaceAll(value, "\\n", "\n")
+	case "ssh_key_file":
+		cfg.SSHKeyFile = value
+	case "ssh_password":
+		cfg.SSHPassword = value
 	}
 	c.RemoteScanners.Configs[id] = cfg
 	found := false
@@ -857,6 +872,9 @@ func (c *Config) ApplyEnv() error {
 			{"port", "PORT"},
 			{"user", "USER"},
 			{"networks", "NETWORKS"},
+			{"ssh_key", "SSH_KEY"},
+			{"ssh_key_file", "SSH_KEY_FILE"},
+			{"ssh_password", "SSH_PASSWORD"},
 		} {
 			if v := os.Getenv(prefix + setting.env); v != "" {
 				c.setRemoteScannerValue(id, setting.key, v)

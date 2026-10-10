@@ -42,36 +42,36 @@ func (e *RemoteScannerError) Unwrap() error {
 
 // SSHRunner implements Runner using SSH connections
 type SSHRunner struct {
-	cfg         config.RemoteScannersConfig
-	authMethods []ssh.AuthMethod
-	clients     map[string]*ssh.Client
-	mu          sync.Mutex
+	cfg                config.RemoteScannersConfig
+	defaultAuthMethods []ssh.AuthMethod
+	clients            map[string]*ssh.Client
+	mu                 sync.Mutex
 }
 
 // NewRunner creates a new SSHRunner from configuration
 func NewRunner(cfg config.RemoteScannersConfig) Runner {
-	var authMethods []ssh.AuthMethod
+	var defaultAuthMethods []ssh.AuthMethod
 
 	if cfg.SSHKey != "" {
 		if signer, err := ssh.ParsePrivateKey([]byte(cfg.SSHKey)); err == nil {
-			authMethods = append(authMethods, ssh.PublicKeys(signer))
+			defaultAuthMethods = append(defaultAuthMethods, ssh.PublicKeys(signer))
 		}
 	} else if cfg.SSHKeyFile != "" {
 		if keyBytes, err := os.ReadFile(cfg.SSHKeyFile); err == nil {
 			if signer, err := ssh.ParsePrivateKey(keyBytes); err == nil {
-				authMethods = append(authMethods, ssh.PublicKeys(signer))
+				defaultAuthMethods = append(defaultAuthMethods, ssh.PublicKeys(signer))
 			}
 		}
 	}
 
 	if cfg.SSHPassword != "" {
-		authMethods = append(authMethods, ssh.Password(cfg.SSHPassword))
+		defaultAuthMethods = append(defaultAuthMethods, ssh.Password(cfg.SSHPassword))
 	}
 
 	return &SSHRunner{
-		cfg:         cfg,
-		authMethods: authMethods,
-		clients:     make(map[string]*ssh.Client),
+		cfg:                cfg,
+		defaultAuthMethods: defaultAuthMethods,
+		clients:            make(map[string]*ssh.Client),
 	}
 }
 
@@ -105,6 +105,32 @@ func (r *SSHRunner) GetGatewayForTarget(target string) string {
 	return fmt.Sprintf("%s (%s)", sc.ID, sc.Host)
 }
 
+func (r *SSHRunner) getAuthMethods(sc config.RemoteScannerConfig) []ssh.AuthMethod {
+	var methods []ssh.AuthMethod
+
+	if sc.SSHKey != "" {
+		if signer, err := ssh.ParsePrivateKey([]byte(sc.SSHKey)); err == nil {
+			methods = append(methods, ssh.PublicKeys(signer))
+		}
+	} else if sc.SSHKeyFile != "" {
+		if keyBytes, err := os.ReadFile(sc.SSHKeyFile); err == nil {
+			if signer, err := ssh.ParsePrivateKey(keyBytes); err == nil {
+				methods = append(methods, ssh.PublicKeys(signer))
+			}
+		}
+	}
+
+	if sc.SSHPassword != "" {
+		methods = append(methods, ssh.Password(sc.SSHPassword))
+	}
+
+	if len(methods) > 0 {
+		return methods
+	}
+
+	return r.defaultAuthMethods
+}
+
 func (r *SSHRunner) getClient(sc config.RemoteScannerConfig) (*ssh.Client, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -121,7 +147,7 @@ func (r *SSHRunner) getClient(sc config.RemoteScannerConfig) (*ssh.Client, error
 
 	clientConfig := &ssh.ClientConfig{
 		User:            user,
-		Auth:            r.authMethods,
+		Auth:            r.getAuthMethods(sc),
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}

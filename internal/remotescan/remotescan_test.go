@@ -222,3 +222,57 @@ func TestSSHRunner_ContextCancellation(t *testing.T) {
 		t.Fatal("expected context cancellation error, got nil")
 	}
 }
+
+func TestSSHRunner_PerGatewaySSHKeyOverrides(t *testing.T) {
+	// Server 1 only accepts key 1
+	port1, key1 := startTestSSHServer(t, func(cmd string) (string, int) {
+		return "<nmaprun><host><status state=\"up\"/><address addr=\"10.5.5.2\" addrtype=\"ipv4\"/></host></nmaprun>", 0
+	})
+	// Server 2 only accepts key 2
+	port2, key2 := startTestSSHServer(t, func(cmd string) (string, int) {
+		return "<nmaprun><host><status state=\"up\"/><address addr=\"10.6.6.2\" addrtype=\"ipv4\"/></host></nmaprun>", 0
+	})
+
+	cfg := config.RemoteScannersConfig{
+		Enable: true,
+		SSHKey: "invalid-default-key", // default key won't work on either
+		Names:  []string{"openwrt1", "openwrt2"},
+		Configs: map[string]config.RemoteScannerConfig{
+			"openwrt1": {
+				ID:       "openwrt1",
+				Host:     "127.0.0.1",
+				Port:     port1,
+				User:     "root",
+				SSHKey:   key1, // per-gateway key 1
+				Networks: []string{"10.5.5.0/24"},
+			},
+			"openwrt2": {
+				ID:       "openwrt2",
+				Host:     "127.0.0.1",
+				Port:     port2,
+				User:     "root",
+				SSHKey:   key2, // per-gateway key 2
+				Networks: []string{"10.6.6.0/24"},
+			},
+		},
+	}
+
+	runner := NewRunner(cfg)
+	defer runner.Close()
+
+	out1, err := runner.RunScan(context.Background(), "10.5.5.0/24", []string{"-sn", "10.5.5.0/24"})
+	if err != nil {
+		t.Fatalf("scan openwrt1 failed: %v", err)
+	}
+	if !strings.Contains(string(out1), "10.5.5.2") {
+		t.Fatalf("scan openwrt1 output = %s", string(out1))
+	}
+
+	out2, err := runner.RunScan(context.Background(), "10.6.6.0/24", []string{"-sn", "10.6.6.0/24"})
+	if err != nil {
+		t.Fatalf("scan openwrt2 failed: %v", err)
+	}
+	if !strings.Contains(string(out2), "10.6.6.2") {
+		t.Fatalf("scan openwrt2 output = %s", string(out2))
+	}
+}
