@@ -521,4 +521,83 @@ func TestSSHRunner_MissingKeyFileReturnsDescriptiveError(t *testing.T) {
 	}
 }
 
+func TestSSHRunner_AuthFailureIncludesUserAndFingerprint(t *testing.T) {
+	// Server that rejects all public keys
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clientKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(clientKey),
+	})
+
+	sshConfig := &ssh.ServerConfig{
+		PublicKeyCallback: func(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
+			return nil, fmt.Errorf("unauthorized")
+		},
+	}
+	sshConfig.AddHostKey(signer)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	go func() {
+		for {
+			c, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(netConn net.Conn) {
+				defer netConn.Close()
+				_, _, _, _ = ssh.NewServerConn(netConn, sshConfig)
+			}(c)
+		}
+	}()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	cfg := config.RemoteScannersConfig{
+		Enable: true,
+		Names:  []string{"opnsense"},
+		Configs: map[string]config.RemoteScannerConfig{
+			"opnsense": {
+				ID:       "opnsense",
+				Host:     "127.0.0.1",
+				Port:     port,
+				User:     "ipam",
+				SSHKey:   string(clientKeyPEM),
+				Networks: []string{"10.0.4.0/24"},
+			},
+		},
+	}
+	runner := NewRunner(cfg)
+	defer runner.Close()
+
+	_, err = runner.RunScan(context.Background(), "10.0.4.0/24", []string{"-sn", "10.0.4.0/24"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, `as user "ipam"`) {
+		t.Fatalf("expected error to include 'as user \"ipam\"', got: %v", errMsg)
+	}
+	if !strings.Contains(errMsg, "SHA256:") {
+		t.Fatalf("expected error to include key fingerprint 'SHA256:', got: %v", errMsg)
+	}
+}
+
+
 
