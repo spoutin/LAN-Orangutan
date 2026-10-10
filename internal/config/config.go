@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -89,29 +90,53 @@ type Config struct {
 	Scanning  ScanningConfig
 	Storage   StorageConfig
 	Tailscale TailscaleConfig
-	UI        UIConfig
-	OpenWrt   OpenWrtConfig
-	OPNsense  OPNsenseConfig
-	UniFi     UniFiConfig
+	UI             UIConfig
+	OpenWrt        OpenWrtConfig
+	OpenWrts       OpenWrtsConfig
+	OPNsense       OPNsenseConfig
+	UniFi          UniFiConfig
 	Switches       SwitchesConfig
 	RemoteScanners RemoteScannersConfig
 }
 
-// OpenWrtConfig holds OpenWrt connection settings
+// OpenWrtConfig holds OpenWrt connection and remote scanning settings
 type OpenWrtConfig struct {
-	Enable    bool
-	URL       string
-	APIToken  string
-	VerifySSL bool
+	ID          string   `json:"id,omitempty"`
+	Enable      bool     `json:"enable"`
+	URL         string   `json:"url"`
+	APIToken    string   `json:"-"`
+	VerifySSL   bool     `json:"verify_ssl"`
+	RemoteScan  bool     `json:"remote_scan"`
+	SSHHost     string   `json:"ssh_host,omitempty"`
+	SSHPort     int      `json:"ssh_port,omitempty"`
+	SSHUser     string   `json:"ssh_user,omitempty"`
+	SSHKey      string   `json:"-"`
+	SSHKeyFile  string   `json:"ssh_key_file,omitempty"`
+	SSHPassword string   `json:"-"`
+	Networks    []string `json:"networks,omitempty"`
 }
 
-// OPNsenseConfig holds OPNsense connection settings
+// OpenWrtsConfig holds multiple configured OpenWrt routers
+type OpenWrtsConfig struct {
+	Names   []string
+	Configs map[string]OpenWrtConfig
+}
+
+// OPNsenseConfig holds OPNsense connection and remote scanning settings
 type OPNsenseConfig struct {
-	Enable    bool
-	URL       string
-	APIKey    string
-	APISecret string
-	VerifySSL bool
+	Enable      bool     `json:"enable"`
+	URL         string   `json:"url"`
+	APIKey      string   `json:"-"`
+	APISecret   string   `json:"-"`
+	VerifySSL   bool     `json:"verify_ssl"`
+	RemoteScan  bool     `json:"remote_scan"`
+	SSHHost     string   `json:"ssh_host,omitempty"`
+	SSHPort     int      `json:"ssh_port,omitempty"`
+	SSHUser     string   `json:"ssh_user,omitempty"`
+	SSHKey      string   `json:"-"`
+	SSHKeyFile  string   `json:"ssh_key_file,omitempty"`
+	SSHPassword string   `json:"-"`
+	Networks    []string `json:"networks,omitempty"`
 }
 
 // UniFiConfig holds UniFi controller connection settings
@@ -362,6 +387,9 @@ func Default() *Config {
 			Enable:    false,
 			VerifySSL: false,
 		},
+		OpenWrts: OpenWrtsConfig{
+			Configs: make(map[string]OpenWrtConfig),
+		},
 		OPNsense: OPNsenseConfig{
 			Enable:    false,
 			VerifySSL: false,
@@ -427,6 +455,16 @@ func Load(path string) (*Config, error) {
 			sc := cfg.RemoteScanners.Configs[id]
 			sc.SSHKey += "\n" + line
 			cfg.RemoteScanners.Configs[id] = sc
+		} else if currentKey == "ssh_key" && currentSection == "opnsense" {
+			cfg.OPNsense.SSHKey += "\n" + line
+		} else if currentKey == "ssh_key" && currentSection == "openwrt" {
+			cfg.OpenWrt.SSHKey += "\n" + line
+		} else if currentKey == "ssh_key" && strings.HasPrefix(currentSection, "openwrt.") {
+			id := strings.TrimPrefix(currentSection, "openwrt.")
+			cfg.ensureOpenWrt(id)
+			wrt := cfg.OpenWrts.Configs[id]
+			wrt.SSHKey += "\n" + line
+			cfg.OpenWrts.Configs[id] = wrt
 		}
 	}
 
@@ -525,6 +563,29 @@ func (c *Config) setValue(section, key, value string) {
 			c.OpenWrt.APIToken = value
 		case "verify_ssl":
 			c.OpenWrt.VerifySSL = parseBool(value)
+		case "remote_scan":
+			c.OpenWrt.RemoteScan = parseBool(value)
+		case "ssh_host":
+			c.OpenWrt.SSHHost = value
+		case "ssh_port":
+			if v, err := strconv.Atoi(value); err == nil && v > 0 {
+				c.OpenWrt.SSHPort = v
+			}
+		case "ssh_user":
+			c.OpenWrt.SSHUser = value
+		case "ssh_key":
+			c.OpenWrt.SSHKey = strings.ReplaceAll(value, "\\n", "\n")
+		case "ssh_key_file":
+			c.OpenWrt.SSHKeyFile = value
+		case "ssh_password":
+			c.OpenWrt.SSHPassword = value
+		case "networks":
+			c.OpenWrt.Networks = network.ParseNetworkList(value)
+		}
+	case "openwrts":
+		switch key {
+		case "names":
+			c.setOpenWrtNames(value)
 		}
 	case "opnsense":
 		switch key {
@@ -538,6 +599,24 @@ func (c *Config) setValue(section, key, value string) {
 			c.OPNsense.APISecret = value
 		case "verify_ssl":
 			c.OPNsense.VerifySSL = parseBool(value)
+		case "remote_scan":
+			c.OPNsense.RemoteScan = parseBool(value)
+		case "ssh_host":
+			c.OPNsense.SSHHost = value
+		case "ssh_port":
+			if v, err := strconv.Atoi(value); err == nil && v > 0 {
+				c.OPNsense.SSHPort = v
+			}
+		case "ssh_user":
+			c.OPNsense.SSHUser = value
+		case "ssh_key":
+			c.OPNsense.SSHKey = strings.ReplaceAll(value, "\\n", "\n")
+		case "ssh_key_file":
+			c.OPNsense.SSHKeyFile = value
+		case "ssh_password":
+			c.OPNsense.SSHPassword = value
+		case "networks":
+			c.OPNsense.Networks = network.ParseNetworkList(value)
 		}
 	case "unifi":
 		switch key {
@@ -573,7 +652,9 @@ func (c *Config) setValue(section, key, value string) {
 			c.setRemoteScannerNames(value)
 		}
 	default:
-		if strings.HasPrefix(section, "remote_scanner.") {
+		if strings.HasPrefix(section, "openwrt.") {
+			c.setOpenWrtValue(strings.TrimPrefix(section, "openwrt."), key, value)
+		} else if strings.HasPrefix(section, "remote_scanner.") {
 			c.setRemoteScannerValue(strings.TrimPrefix(section, "remote_scanner."), key, value)
 		} else if strings.HasPrefix(section, "switch.") {
 			c.setSwitchValue(strings.TrimPrefix(section, "switch."), key, value)
@@ -644,6 +725,122 @@ func (c *Config) setSwitchValue(id, key, value string) {
 		}
 	}
 	c.Switches.Configs[switchCfg.ID] = *switchCfg
+}
+
+func (c *Config) setOpenWrtNames(value string) {
+	c.OpenWrts.Names = nil
+	for _, name := range strings.Split(value, ",") {
+		id := strings.ToLower(strings.TrimSpace(name))
+		if id == "" {
+			continue
+		}
+		c.OpenWrts.Names = append(c.OpenWrts.Names, id)
+		c.ensureOpenWrt(id)
+	}
+}
+
+func (c *Config) ensureOpenWrt(id string) *OpenWrtConfig {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if c.OpenWrts.Configs == nil {
+		c.OpenWrts.Configs = make(map[string]OpenWrtConfig)
+	}
+	cfg, ok := c.OpenWrts.Configs[id]
+	if !ok {
+		cfg = OpenWrtConfig{
+			ID:        id,
+			SSHPort:   22,
+			SSHUser:   "root",
+			VerifySSL: false,
+		}
+		c.OpenWrts.Configs[id] = cfg
+	}
+	return &cfg
+}
+
+func (c *Config) setOpenWrtValue(id, key, value string) {
+	id = strings.ToLower(strings.TrimSpace(id))
+	c.ensureOpenWrt(id)
+	cfg := c.OpenWrts.Configs[id]
+	switch key {
+	case "enable":
+		cfg.Enable = parseBool(value)
+	case "url":
+		cfg.URL = value
+	case "api_token":
+		cfg.APIToken = value
+	case "verify_ssl":
+		cfg.VerifySSL = parseBool(value)
+	case "remote_scan":
+		cfg.RemoteScan = parseBool(value)
+	case "ssh_host":
+		cfg.SSHHost = value
+	case "ssh_port":
+		if v, err := strconv.Atoi(value); err == nil && v > 0 {
+			cfg.SSHPort = v
+		}
+	case "ssh_user":
+		if value != "" {
+			cfg.SSHUser = value
+		}
+	case "ssh_key":
+		cfg.SSHKey = strings.ReplaceAll(value, "\\n", "\n")
+	case "ssh_key_file":
+		cfg.SSHKeyFile = value
+	case "ssh_password":
+		cfg.SSHPassword = value
+	case "networks":
+		cfg.Networks = network.ParseNetworkList(value)
+	}
+	c.OpenWrts.Configs[id] = cfg
+	found := false
+	for _, name := range c.OpenWrts.Names {
+		if name == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		c.OpenWrts.Names = append(c.OpenWrts.Names, id)
+	}
+}
+
+// AllOpenWrts returns all configured OpenWrt routers
+func (c *Config) AllOpenWrts() []OpenWrtConfig {
+	var list []OpenWrtConfig
+	if c.OpenWrt.Enable || c.OpenWrt.RemoteScan {
+		base := c.OpenWrt
+		if base.ID == "" {
+			base.ID = "openwrt"
+		}
+		list = append(list, base)
+	}
+	for _, name := range c.OpenWrts.Names {
+		if strings.EqualFold(name, "openwrt") && len(list) > 0 {
+			continue
+		}
+		if cfg, ok := c.OpenWrts.Configs[name]; ok && (cfg.Enable || cfg.RemoteScan) {
+			list = append(list, cfg)
+		}
+	}
+	return list
+}
+
+func extractHostFromURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	if !strings.Contains(rawURL, "://") {
+		rawURL = "http://" + rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err == nil {
+		h := u.Hostname()
+		if h != "" {
+			return h
+		}
+	}
+	return rawURL
 }
 
 func (c *Config) setRemoteScannerNames(value string) {
@@ -785,6 +982,58 @@ func (c *Config) ApplyEnv() error {
 	if v := os.Getenv("ORANGUTAN_OPENWRT_VERIFY_SSL"); v != "" {
 		c.OpenWrt.VerifySSL = parseBool(v)
 	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_REMOTE_SCAN"); v != "" {
+		c.OpenWrt.RemoteScan = parseBool(v)
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_HOST"); v != "" {
+		c.OpenWrt.SSHHost = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.OpenWrt.SSHPort = n
+		}
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_USER"); v != "" {
+		c.OpenWrt.SSHUser = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_KEY"); v != "" {
+		c.OpenWrt.SSHKey = strings.ReplaceAll(v, "\\n", "\n")
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_KEY_FILE"); v != "" {
+		c.OpenWrt.SSHKeyFile = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_PASSWORD"); v != "" {
+		c.OpenWrt.SSHPassword = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_NETWORKS"); v != "" {
+		c.OpenWrt.Networks = network.ParseNetworkList(v)
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRTS_NAMES"); v != "" {
+		c.setOpenWrtNames(v)
+	}
+	for _, id := range c.OpenWrts.Names {
+		prefix := "ORANGUTAN_OPENWRT_" + strings.ToUpper(id) + "_"
+		for _, setting := range []struct {
+			key string
+			env string
+		}{
+			{"url", "URL"},
+			{"api_token", "API_TOKEN"},
+			{"verify_ssl", "VERIFY_SSL"},
+			{"remote_scan", "REMOTE_SCAN"},
+			{"ssh_host", "SSH_HOST"},
+			{"ssh_port", "SSH_PORT"},
+			{"ssh_user", "SSH_USER"},
+			{"ssh_key", "SSH_KEY"},
+			{"ssh_key_file", "SSH_KEY_FILE"},
+			{"ssh_password", "SSH_PASSWORD"},
+			{"networks", "NETWORKS"},
+		} {
+			if v := os.Getenv(prefix + setting.env); v != "" {
+				c.setOpenWrtValue(id, setting.key, v)
+			}
+		}
+	}
 
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_ENABLE"); v != "" {
 		c.OPNsense.Enable = parseBool(v)
@@ -800,6 +1049,32 @@ func (c *Config) ApplyEnv() error {
 	}
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_VERIFY_SSL"); v != "" {
 		c.OPNsense.VerifySSL = parseBool(v)
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_REMOTE_SCAN"); v != "" {
+		c.OPNsense.RemoteScan = parseBool(v)
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_HOST"); v != "" {
+		c.OPNsense.SSHHost = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.OPNsense.SSHPort = n
+		}
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_USER"); v != "" {
+		c.OPNsense.SSHUser = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_KEY"); v != "" {
+		c.OPNsense.SSHKey = strings.ReplaceAll(v, "\\n", "\n")
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_KEY_FILE"); v != "" {
+		c.OPNsense.SSHKeyFile = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_PASSWORD"); v != "" {
+		c.OPNsense.SSHPassword = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_NETWORKS"); v != "" {
+		c.OPNsense.Networks = network.ParseNetworkList(v)
 	}
 
 	if v := os.Getenv("ORANGUTAN_UNIFI_ENABLE"); v != "" {
@@ -927,6 +1202,76 @@ func (c *Config) Normalize() []string {
 			switchCfg.TimeoutSeconds = 5
 		}
 		c.Switches.Configs[id] = *switchCfg
+	}
+
+	// Automatically register OPNsense as a remote scanner if remote_scan is true
+	if c.OPNsense.RemoteScan {
+		host := c.OPNsense.SSHHost
+		if host == "" {
+			host = extractHostFromURL(c.OPNsense.URL)
+		}
+		port := c.OPNsense.SSHPort
+		if port <= 0 {
+			port = 22
+		}
+		user := c.OPNsense.SSHUser
+		if user == "" {
+			user = "root"
+		}
+		c.setRemoteScannerValue("opnsense", "host", host)
+		c.setRemoteScannerValue("opnsense", "port", strconv.Itoa(port))
+		c.setRemoteScannerValue("opnsense", "user", user)
+		if len(c.OPNsense.Networks) > 0 {
+			c.setRemoteScannerValue("opnsense", "networks", strings.Join(c.OPNsense.Networks, ","))
+		}
+		if c.OPNsense.SSHKey != "" {
+			c.setRemoteScannerValue("opnsense", "ssh_key", c.OPNsense.SSHKey)
+		}
+		if c.OPNsense.SSHKeyFile != "" {
+			c.setRemoteScannerValue("opnsense", "ssh_key_file", c.OPNsense.SSHKeyFile)
+		}
+		if c.OPNsense.SSHPassword != "" {
+			c.setRemoteScannerValue("opnsense", "ssh_password", c.OPNsense.SSHPassword)
+		}
+		c.RemoteScanners.Enable = true
+	}
+
+	// Automatically register all OpenWrt routers as remote scanners if remote_scan is true
+	for _, wrt := range c.AllOpenWrts() {
+		if wrt.RemoteScan {
+			id := wrt.ID
+			if id == "" {
+				id = "openwrt"
+			}
+			host := wrt.SSHHost
+			if host == "" {
+				host = extractHostFromURL(wrt.URL)
+			}
+			port := wrt.SSHPort
+			if port <= 0 {
+				port = 22
+			}
+			user := wrt.SSHUser
+			if user == "" {
+				user = "root"
+			}
+			c.setRemoteScannerValue(id, "host", host)
+			c.setRemoteScannerValue(id, "port", strconv.Itoa(port))
+			c.setRemoteScannerValue(id, "user", user)
+			if len(wrt.Networks) > 0 {
+				c.setRemoteScannerValue(id, "networks", strings.Join(wrt.Networks, ","))
+			}
+			if wrt.SSHKey != "" {
+				c.setRemoteScannerValue(id, "ssh_key", wrt.SSHKey)
+			}
+			if wrt.SSHKeyFile != "" {
+				c.setRemoteScannerValue(id, "ssh_key_file", wrt.SSHKeyFile)
+			}
+			if wrt.SSHPassword != "" {
+				c.setRemoteScannerValue(id, "ssh_password", wrt.SSHPassword)
+			}
+			c.RemoteScanners.Enable = true
+		}
 	}
 
 	return notes

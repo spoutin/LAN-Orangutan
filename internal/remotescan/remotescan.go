@@ -42,36 +42,36 @@ func (e *RemoteScannerError) Unwrap() error {
 
 // SSHRunner implements Runner using SSH connections
 type SSHRunner struct {
-	cfg                config.RemoteScannersConfig
-	defaultAuthMethods []ssh.AuthMethod
-	clients            map[string]*ssh.Client
-	mu                 sync.Mutex
+	cfg            config.RemoteScannersConfig
+	clients        map[string]*ssh.Client
+	clientKeyFiles map[string]string
+	clientModTimes map[string]time.Time
+	mu             sync.Mutex
+}
+
+func parsePrivateKeyFromFile(path string) (ssh.Signer, time.Time, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	signer, err := ssh.ParsePrivateKey(data)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return signer, fi.ModTime(), nil
 }
 
 // NewRunner creates a new SSHRunner from configuration
 func NewRunner(cfg config.RemoteScannersConfig) Runner {
-	var defaultAuthMethods []ssh.AuthMethod
-
-	if cfg.SSHKey != "" {
-		if signer, err := ssh.ParsePrivateKey([]byte(cfg.SSHKey)); err == nil {
-			defaultAuthMethods = append(defaultAuthMethods, ssh.PublicKeys(signer))
-		}
-	} else if cfg.SSHKeyFile != "" {
-		if keyBytes, err := os.ReadFile(cfg.SSHKeyFile); err == nil {
-			if signer, err := ssh.ParsePrivateKey(keyBytes); err == nil {
-				defaultAuthMethods = append(defaultAuthMethods, ssh.PublicKeys(signer))
-			}
-		}
-	}
-
-	if cfg.SSHPassword != "" {
-		defaultAuthMethods = append(defaultAuthMethods, ssh.Password(cfg.SSHPassword))
-	}
-
 	return &SSHRunner{
-		cfg:                cfg,
-		defaultAuthMethods: defaultAuthMethods,
-		clients:            make(map[string]*ssh.Client),
+		cfg:            cfg,
+		clients:        make(map[string]*ssh.Client),
+		clientKeyFiles: make(map[string]string),
+		clientModTimes: make(map[string]time.Time),
 	}
 }
 
@@ -105,18 +105,24 @@ func (r *SSHRunner) GetGatewayForTarget(target string) string {
 	return fmt.Sprintf("%s (%s)", sc.ID, sc.Host)
 }
 
+func (r *SSHRunner) getKeyFileForScanner(sc config.RemoteScannerConfig) string {
+	if sc.SSHKeyFile != "" {
+		return sc.SSHKeyFile
+	}
+	return r.cfg.SSHKeyFile
+}
+
 func (r *SSHRunner) getAuthMethods(sc config.RemoteScannerConfig) []ssh.AuthMethod {
 	var methods []ssh.AuthMethod
 
+	// 1. Gateway-specific credentials
 	if sc.SSHKey != "" {
 		if signer, err := ssh.ParsePrivateKey([]byte(sc.SSHKey)); err == nil {
 			methods = append(methods, ssh.PublicKeys(signer))
 		}
 	} else if sc.SSHKeyFile != "" {
-		if keyBytes, err := os.ReadFile(sc.SSHKeyFile); err == nil {
-			if signer, err := ssh.ParsePrivateKey(keyBytes); err == nil {
-				methods = append(methods, ssh.PublicKeys(signer))
-			}
+		if signer, _, err := parsePrivateKeyFromFile(sc.SSHKeyFile); err == nil {
+			methods = append(methods, ssh.PublicKeys(signer))
 		}
 	}
 
@@ -128,7 +134,22 @@ func (r *SSHRunner) getAuthMethods(sc config.RemoteScannerConfig) []ssh.AuthMeth
 		return methods
 	}
 
-	return r.defaultAuthMethods
+	// 2. Fallback to top-level shared credentials
+	if r.cfg.SSHKey != "" {
+		if signer, err := ssh.ParsePrivateKey([]byte(r.cfg.SSHKey)); err == nil {
+			methods = append(methods, ssh.PublicKeys(signer))
+		}
+	} else if r.cfg.SSHKeyFile != "" {
+		if signer, _, err := parsePrivateKeyFromFile(r.cfg.SSHKeyFile); err == nil {
+			methods = append(methods, ssh.PublicKeys(signer))
+		}
+	}
+
+	if r.cfg.SSHPassword != "" {
+		methods = append(methods, ssh.Password(r.cfg.SSHPassword))
+	}
+
+	return methods
 }
 
 func (r *SSHRunner) getClient(sc config.RemoteScannerConfig) (*ssh.Client, error) {
@@ -136,6 +157,23 @@ func (r *SSHRunner) getClient(sc config.RemoteScannerConfig) (*ssh.Client, error
 	defer r.mu.Unlock()
 
 	addr := fmt.Sprintf("%s:%d", sc.Host, sc.Port)
+	keyFile := r.getKeyFileForScanner(sc)
+
+	// If key file is configured, check if file on disk was modified since connection established
+	if keyFile != "" {
+		if fi, err := os.Stat(keyFile); err == nil {
+			if lastMod, ok := r.clientModTimes[addr]; ok && !fi.ModTime().Equal(lastMod) {
+				// Key on disk changed! Close and recycle client.
+				if c, ok := r.clients[addr]; ok {
+					_ = c.Close()
+					delete(r.clients, addr)
+					delete(r.clientKeyFiles, addr)
+					delete(r.clientModTimes, addr)
+				}
+			}
+		}
+	}
+
 	if client, ok := r.clients[addr]; ok {
 		return client, nil
 	}
@@ -158,6 +196,12 @@ func (r *SSHRunner) getClient(sc config.RemoteScannerConfig) (*ssh.Client, error
 	}
 
 	r.clients[addr] = conn
+	if keyFile != "" {
+		if fi, err := os.Stat(keyFile); err == nil {
+			r.clientKeyFiles[addr] = keyFile
+			r.clientModTimes[addr] = fi.ModTime()
+		}
+	}
 	return conn, nil
 }
 
@@ -167,6 +211,8 @@ func (r *SSHRunner) removeClient(addr string) {
 	if c, ok := r.clients[addr]; ok {
 		_ = c.Close()
 		delete(r.clients, addr)
+		delete(r.clientKeyFiles, addr)
+		delete(r.clientModTimes, addr)
 	}
 }
 

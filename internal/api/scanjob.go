@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -457,15 +458,22 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		var allReservations []types.Device
 		var routerName string
 
-		// Query OpenWrt if enabled
-		if h.cfg.OpenWrt.Enable {
-			leases, reservations, err := scanner.FetchOpenWrtDHCP(ctx, h.cfg.OpenWrt)
+		// Query OpenWrt routers if enabled
+		for _, wrt := range h.cfg.AllOpenWrts() {
+			if !wrt.Enable {
+				continue
+			}
+			leases, reservations, err := scanner.FetchOpenWrtDHCP(ctx, wrt)
 			if err == nil {
 				allLeases = append(allLeases, leases...)
 				allReservations = append(allReservations, reservations...)
-				routerName = "OpenWrt"
+				if routerName == "" {
+					routerName = "OpenWrt"
+				} else if !strings.Contains(routerName, "OpenWrt") {
+					routerName += " & OpenWrt"
+				}
 			} else {
-				fmt.Printf("Router OpenWrt DHCP fetch error: %v\n", err)
+				fmt.Printf("Router OpenWrt (%s) DHCP fetch error: %v\n", wrt.ID, err)
 			}
 		}
 

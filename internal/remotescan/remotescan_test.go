@@ -8,7 +8,9 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -274,5 +276,156 @@ func TestSSHRunner_PerGatewaySSHKeyOverrides(t *testing.T) {
 	}
 	if !strings.Contains(string(out2), "10.6.6.2") {
 		t.Fatalf("scan openwrt2 output = %s", string(out2))
+	}
+}
+
+func TestSSHRunner_DynamicKeyFileReloadOnDiskModification(t *testing.T) {
+	// Generate Key 1
+	k1, _ := rsa.GenerateKey(rand.Reader, 2048)
+	k1PEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k1)})
+	s1, _ := ssh.NewSignerFromKey(k1)
+
+	// Generate Key 2
+	k2, _ := rsa.GenerateKey(rand.Reader, 2048)
+	k2PEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k2)})
+	s2, _ := ssh.NewSignerFromKey(k2)
+
+	serverKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	serverSigner, _ := ssh.NewSignerFromKey(serverKey)
+
+	var mu sync.Mutex
+	acceptedKey := s1.PublicKey()
+
+	sshConfig := &ssh.ServerConfig{
+		PublicKeyCallback: func(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
+			mu.Lock()
+			current := acceptedKey
+			mu.Unlock()
+			if string(pubKey.Marshal()) == string(current.Marshal()) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("unauthorized key")
+		},
+	}
+	sshConfig.AddHostKey(serverSigner)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	var connsMu sync.Mutex
+	var activeConns []net.Conn
+
+	go func() {
+		for {
+			tcpConn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			connsMu.Lock()
+			activeConns = append(activeConns, tcpConn)
+			connsMu.Unlock()
+
+			go func(c net.Conn) {
+				defer c.Close()
+				sshConn, chans, reqs, err := ssh.NewServerConn(c, sshConfig)
+				if err != nil {
+					return
+				}
+				defer sshConn.Close()
+				go ssh.DiscardRequests(reqs)
+
+				for newChannel := range chans {
+					if newChannel.ChannelType() != "session" {
+						_ = newChannel.Reject(ssh.UnknownChannelType, "unknown")
+						continue
+					}
+					channel, requests, err := newChannel.Accept()
+					if err != nil {
+						return
+					}
+					go func(ch ssh.Channel, in <-chan *ssh.Request) {
+						defer ch.Close()
+						for req := range in {
+							if req.Type == "exec" {
+								_ = req.Reply(true, nil)
+								_, _ = ch.Write([]byte("<nmaprun><host><status state=\"up\"/><address addr=\"10.0.0.1\" addrtype=\"ipv4\"/></host></nmaprun>"))
+								exitStatus := struct{ Status uint32 }{0}
+								_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(&exitStatus))
+								return
+							}
+						}
+					}(channel, requests)
+				}
+			}(tcpConn)
+		}
+	}()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	// Write Key 1 to disk
+	tmpDir := t.TempDir()
+	keyFile := fmt.Sprintf("%s/gateway_key", tmpDir)
+	if err := os.WriteFile(keyFile, k1PEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.RemoteScannersConfig{
+		Enable:     true,
+		SSHKeyFile: keyFile,
+		Names:      []string{"gw"},
+		Configs: map[string]config.RemoteScannerConfig{
+			"gw": {
+				ID:       "gw",
+				Host:     "127.0.0.1",
+				Port:     port,
+				User:     "root",
+				Networks: []string{"10.0.0.0/24"},
+			},
+		},
+	}
+
+	runner := NewRunner(cfg)
+	defer runner.Close()
+
+	// 1. Initial scan with Key 1 must succeed
+	out1, err := runner.RunScan(context.Background(), "10.0.0.0/24", []string{"-sn", "10.0.0.0/24"})
+	if err != nil {
+		t.Fatalf("scan with key 1 failed: %v", err)
+	}
+	if !strings.Contains(string(out1), "10.0.0.1") {
+		t.Fatalf("output1 = %s", string(out1))
+	}
+
+	// 2. Rotate server accepted key to Key 2 (Key 1 will now be rejected) and close old connections
+	mu.Lock()
+	acceptedKey = s2.PublicKey()
+	mu.Unlock()
+
+	connsMu.Lock()
+	for _, c := range activeConns {
+		_ = c.Close()
+	}
+	activeConns = nil
+	connsMu.Unlock()
+
+	// Wait briefly so modification time is different
+	time.Sleep(20 * time.Millisecond)
+
+	// 3. Overwrite key file on disk with Key 2
+	if err := os.WriteFile(keyFile, k2PEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4. Scan again with the same runner: runner must detect modified keyFile on disk,
+	// recycle connection, authenticate with Key 2, and succeed!
+	out2, err := runner.RunScan(context.Background(), "10.0.0.0/24", []string{"-sn", "10.0.0.0/24"})
+	if err != nil {
+		t.Fatalf("scan after key rotation on disk failed: %v", err)
+	}
+	if !strings.Contains(string(out2), "10.0.0.1") {
+		t.Fatalf("output2 = %s", string(out2))
 	}
 }

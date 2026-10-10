@@ -302,6 +302,28 @@ func TestRemoteScannerFailureNotifiesSlackAndSkips(t *testing.T) {
 	}
 }
 
+func TestScanJob_MultiOpenWrtRouters(t *testing.T) {
+	cfg := config.Default()
+	cfg.OpenWrts.Names = []string{"core", "branch"}
+	cfg.OpenWrts.Configs = map[string]config.OpenWrtConfig{
+		"core": {
+			ID:     "core",
+			Enable: true,
+			URL:    "https://10.5.5.1",
+		},
+		"branch": {
+			ID:     "branch",
+			Enable: true,
+			URL:    "https://10.6.6.1",
+		},
+	}
+
+	all := cfg.AllOpenWrts()
+	if len(all) != 2 {
+		t.Fatalf("expected 2 OpenWrts, got %d", len(all))
+	}
+}
+
 func TestScanJob_SwitchesResolveUnknownVLANInventoryMACThroughBridgeFDB(t *testing.T) {
 	store := newScanJobTestStore(t)
 	if err := store.UpdateDevice(&types.Device{IP: "192.168.1.11", MAC: "AA:BB:CC:DD:EE:02"}); err != nil {

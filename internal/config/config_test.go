@@ -890,3 +890,65 @@ func TestRemoteScannersConfig_PerGatewayCredentials_Env(t *testing.T) {
 		t.Fatalf("gwB = %+v, want SSHKeyFile='/path/to/key_b'", gwB)
 	}
 }
+
+func TestUnifiedRouterConfigRegistersRemoteScanners(t *testing.T) {
+	path := writeConfig(t, `
+[opnsense]
+enable = true
+url = https://10.0.0.1
+api_key = opn-key
+api_secret = opn-secret
+remote_scan = true
+networks = 10.0.0.0/24, 10.0.1.0/24
+ssh_key_file = /etc/lan-orangutan/opn_key
+
+[openwrt]
+enable = true
+url = https://10.5.5.1:8443
+api_token = wrt-token
+remote_scan = true
+ssh_user = root
+networks = 10.5.5.0/24, 192.168.1.0/24
+ssh_password = wrt-pass
+
+[openwrt.remote_site]
+enable = true
+url = http://10.6.6.1
+api_token = wrt-token2
+remote_scan = true
+networks = 10.6.6.0/24
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !cfg.RemoteScanners.Enable {
+		t.Fatal("expected RemoteScanners.Enable = true from unified config")
+	}
+
+	// OPNsense scanner derived from [opnsense]
+	opn, ok := cfg.RemoteScanners.FindScannerForCIDR("10.0.0.0/24")
+	if !ok || opn.Host != "10.0.0.1" || opn.Port != 22 || opn.User != "root" || opn.SSHKeyFile != "/etc/lan-orangutan/opn_key" {
+		t.Fatalf("opnsense scanner = %+v, ok=%v", opn, ok)
+	}
+
+	// OpenWrt primary scanner derived from [openwrt]
+	wrt1, ok := cfg.RemoteScanners.FindScannerForCIDR("10.5.5.0/24")
+	if !ok || wrt1.Host != "10.5.5.1" || wrt1.Port != 22 || wrt1.User != "root" || wrt1.SSHPassword != "wrt-pass" {
+		t.Fatalf("openwrt scanner = %+v, ok=%v", wrt1, ok)
+	}
+
+	// OpenWrt secondary scanner derived from [openwrt.remote_site]
+	wrt2, ok := cfg.RemoteScanners.FindScannerForCIDR("10.6.6.0/24")
+	if !ok || wrt2.Host != "10.6.6.1" || wrt2.Port != 22 || wrt2.User != "root" {
+		t.Fatalf("remote_site scanner = %+v, ok=%v", wrt2, ok)
+	}
+
+	// Multi-router OpenWrt helper
+	allWrts := cfg.AllOpenWrts()
+	if len(allWrts) != 2 {
+		t.Fatalf("AllOpenWrts() len = %d, want 2", len(allWrts))
+	}
+}
