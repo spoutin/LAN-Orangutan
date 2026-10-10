@@ -340,6 +340,17 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// Get devices
 	devices := h.store.GetDevices()
 
+	// Get networks and determine effective cycle time for staggered scanning
+	networks, _ := network.DetectNetworks()
+	networks = network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
+
+	scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
+	numNets := len(networks)
+	if numNets < 1 {
+		numNets = 1
+	}
+	cycleInterval := time.Duration(numNets) * scanInterval
+
 	// Convert to view models
 	var deviceViews []*DeviceView
 	groupSet := make(map[string]bool)
@@ -373,19 +384,18 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 			dv.Type = scanner.Classify(resolvedVendor, d.Hostname, nil)
 		}
 
-		scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
-		if d.IsRecent(scanInterval) {
+		if d.IsRecent(cycleInterval) {
 			dv.Status = "online"
 			dv.StatusClass = "status-online"
-			dv.StatusTip = fmt.Sprintf("Online (active on network within the last %s)", formatDurationFriendly(scanInterval+getBuffer(scanInterval)))
-		} else if d.IsOnline(scanInterval) {
+			dv.StatusTip = fmt.Sprintf("Online (active on network within the last %s)", formatDurationFriendly(cycleInterval+scanInterval))
+		} else if d.IsOnline(cycleInterval) {
 			dv.Status = "seen"
 			dv.StatusClass = "status-seen"
-			dv.StatusTip = fmt.Sprintf("Seen recently (active on network within the last %s)", formatDurationFriendly(3*scanInterval))
+			dv.StatusTip = fmt.Sprintf("Seen recently (active on network within the last %s)", formatDurationFriendly(3*cycleInterval))
 		} else {
 			dv.Status = "offline"
 			dv.StatusClass = "status-offline"
-			dv.StatusTip = fmt.Sprintf("Offline (no activity seen for over %s)", formatDurationFriendly(3*scanInterval))
+			dv.StatusTip = fmt.Sprintf("Offline (no activity seen for over %s)", formatDurationFriendly(3*cycleInterval))
 		}
 
 		deviceViews = append(deviceViews, dv)
@@ -407,14 +417,9 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(groups)
 
-	// Get networks and count active devices per network
-	networks, _ := network.DetectNetworks()
-	networks = network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
-
-	scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
 	networkCounts := make(map[string]int)
 	for _, d := range devices {
-		if d.IsOnline(scanInterval) && d.NetworkName != "" {
+		if d.IsOnline(cycleInterval) && d.NetworkName != "" {
 			networkCounts[strings.ToLower(d.NetworkName)]++
 		}
 	}

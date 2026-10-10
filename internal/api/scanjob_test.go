@@ -47,23 +47,25 @@ func TestScanJob_SwitchesPollSequentiallyAndPropagateKnownVLAN(t *testing.T) {
 	}
 }
 
-func TestNextBackgroundNetworkRotatesOneNetworkAtATime(t *testing.T) {
+func TestSelectOldestScannedNetwork(t *testing.T) {
+	store := newScanJobTestStore(t)
 	networks := []string{"192.168.1.0/24", "10.20.0.0/24", "172.16.0.0/24"}
-	cursor := 0
-	var got []string
-	for range 4 {
-		network, next, ok := nextBackgroundNetwork(networks, cursor)
-		if !ok {
-			t.Fatal("nextBackgroundNetwork() returned no network")
-		}
-		got = append(got, network)
-		cursor = next
+
+	// Unscanned network is picked first
+	_ = store.SetLastScan("192.168.1.0/24", time.Now().Add(-10*time.Minute))
+	_ = store.SetLastScan("10.20.0.0/24", time.Now().Add(-20*time.Minute))
+	// "172.16.0.0/24" has zero LastScan
+
+	selected, ok := selectOldestScannedNetwork(store, networks)
+	if !ok || selected != "172.16.0.0/24" {
+		t.Fatalf("selected = %q, want unscanned 172.16.0.0/24", selected)
 	}
-	want := []string{"192.168.1.0/24", "10.20.0.0/24", "172.16.0.0/24", "192.168.1.0/24"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("network %d = %q, want %q", i, got[i], want[i])
-		}
+
+	// Once all are scanned, oldest timestamp is selected
+	_ = store.SetLastScan("172.16.0.0/24", time.Now().Add(-5*time.Minute))
+	selected, ok = selectOldestScannedNetwork(store, networks)
+	if !ok || selected != "10.20.0.0/24" {
+		t.Fatalf("selected = %q, want oldest 10.20.0.0/24", selected)
 	}
 }
 
@@ -164,6 +166,68 @@ func TestNightlyDeepCutoffNotifiesOnlyAffectedNetworks(t *testing.T) {
 	}
 	if !strings.Contains(messages[0], "affected") || !strings.Contains(messages[0], "3 completed") || !strings.Contains(messages[0], "2 skipped") {
 		t.Errorf("notification = %q", messages[0])
+	}
+}
+
+func TestNightlyDeepScanIncludesDevicesSeenWithin24h(t *testing.T) {
+	store := newScanJobTestStore(t)
+	device := &types.Device{
+		IP:       "192.168.1.50",
+		Hostname: "device-2h-old",
+		LastSeen: time.Now().Add(-2 * time.Hour), // 2 hours old (outside 15m window, but inside 24h)
+	}
+	if err := store.UpdateDevice(device); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"192.168.1.0/24"}
+	h := NewHandler(store, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately so runDeepQueue does not actually execute nmap
+
+	job := &scanJob{
+		deepNetworks: []string{"192.168.1.0/24"},
+		networks:     []string{"192.168.1.0/24"},
+	}
+	job.runNightlyDeepScan(ctx, h)
+
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	if len(job.deepNetworkProgress) == 0 || job.deepNetworkProgress[0].Total != 1 {
+		t.Fatalf("deepNetworkProgress = %+v, want 1 target queued for 2h-old device", job.deepNetworkProgress)
+	}
+}
+
+func TestScanPortHostUpdatesPresence(t *testing.T) {
+	store := newScanJobTestStore(t)
+	past := time.Now().Add(-2 * time.Hour)
+	device := types.Device{
+		IP:       "192.168.1.55",
+		Hostname: "printer",
+		LastSeen: past,
+	}
+	if err := store.UpdateDevice(&device); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Scanning.PortScanRange = "80"
+	h := NewHandler(store, cfg)
+
+	job := &scanJob{
+		deepNetworkProgress: []deepNetworkProgress{
+			{Network: "192.168.1.0/24", Total: 1},
+		},
+	}
+	job.scanPortHost(context.Background(), h, "192.168.1.0/24", device)
+
+	stored := store.GetDevice("192.168.1.55")
+	if stored == nil {
+		t.Fatal("device not found in store")
+	}
+	if !stored.LastSeen.After(past) {
+		t.Fatalf("stored LastSeen = %v, expected updated after %v", stored.LastSeen, past)
 	}
 }
 

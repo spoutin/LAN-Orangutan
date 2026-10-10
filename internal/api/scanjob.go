@@ -597,7 +597,12 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			activeIPs = append(activeIPs, ip)
 		}
 		scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
-		_, err := h.store.ProcessMissingDevices(j.networks, activeIPs, scanInterval)
+		allNetworks, _ := h.resolveScanTargets("all")
+		cycleInterval := scanInterval
+		if len(allNetworks) > 1 {
+			cycleInterval = time.Duration(len(allNetworks)) * scanInterval
+		}
+		_, err := h.store.ProcessMissingDevices(j.networks, activeIPs, cycleInterval)
 		if err != nil {
 			fmt.Printf("[DEBUG] ProcessMissingDevices error: %v\n", err)
 		}
@@ -712,7 +717,6 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 // Stage 1 so staggering discovery does not exclude later networks from Stage 2.
 func (j *scanJob) runNightlyDeepScan(ctx context.Context, h *Handler) {
 	devices := h.store.GetDevices()
-	interval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
 	networks := append([]string(nil), j.deepNetworks...)
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	rng.Shuffle(len(networks), func(i, k int) { networks[i], networks[k] = networks[k], networks[i] })
@@ -724,7 +728,9 @@ func (j *scanJob) runNightlyDeepScan(ctx context.Context, h *Handler) {
 		}
 		for _, device := range devices {
 			ip := net.ParseIP(device.IP)
-			if ip != nil && network.Contains(ip) && device.IsOnline(interval) && (device.LastDeepScanAt.IsZero() || time.Since(device.LastDeepScanAt) >= 30*24*time.Hour) {
+			isEligiblePresence := !device.LastSeen.IsZero() && time.Since(device.LastSeen) <= 24*time.Hour
+			isEligibleAge := device.LastDeepScanAt.IsZero() || time.Since(device.LastDeepScanAt) >= 30*24*time.Hour
+			if ip != nil && network.Contains(ip) && isEligiblePresence && isEligibleAge {
 				targetsByNetwork[cidr] = append(targetsByNetwork[cidr], *device)
 			}
 		}
@@ -867,7 +873,6 @@ func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Dura
 		case <-startup.C:
 		}
 
-		cursor := 0
 		for {
 			if !h.store.ContinuousScanEnabled(h.cfg.Scanning.ContinuousScan) {
 				if !waitForBackgroundScan(ctx, nil, interval) {
@@ -883,19 +888,35 @@ func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Dura
 				}
 				continue
 			}
-			network, next, ok := nextBackgroundNetwork(networks, cursor)
+			network, ok := selectOldestScannedNetwork(h.store, networks)
 			if !ok {
-				cursor = 0
 				continue
 			}
-			cursor = next
 
 			job := h.startBackgroundNetwork(network, networks)
+			wasNightlyDeep := job != nil && job.nightlyDeep
 			if job != nil && !waitForBackgroundScan(ctx, job.done, interval) {
 				return
 			}
 			if job == nil && !waitForBackgroundScan(ctx, nil, interval) {
 				return
+			}
+			if wasNightlyDeep {
+				// The overnight deep scan window has ended. Run an immediate Stage 1
+				// discovery sweep across all networks so device presence is fully refreshed.
+				allNetworks, err := h.resolveScanTargets("all")
+				if err == nil && len(allNetworks) > 0 {
+					h.jobMu.Lock()
+					if h.job == nil || !h.job.isRunning() {
+						sweepJob := h.startScanJob(allNetworks, true, scanModeQuick)
+						h.jobMu.Unlock()
+						if sweepJob != nil {
+							_ = waitForBackgroundScan(ctx, sweepJob.done, 0)
+						}
+					} else {
+						h.jobMu.Unlock()
+					}
+				}
 			}
 		}
 	}()
@@ -941,7 +962,31 @@ func (h *Handler) runBackgroundScan() {
 	if err != nil || len(networks) == 0 {
 		return
 	}
-	h.startBackgroundNetwork(networks[0], networks)
+	network, ok := selectOldestScannedNetwork(h.store, networks)
+	if !ok {
+		return
+	}
+	h.startBackgroundNetwork(network, networks)
+}
+
+func selectOldestScannedNetwork(store *storage.Storage, networks []string) (string, bool) {
+	if len(networks) == 0 {
+		return "", false
+	}
+	oldestNet := networks[0]
+	oldestTime := store.GetLastScan(oldestNet)
+
+	for _, n := range networks[1:] {
+		t := store.GetLastScan(n)
+		if t.IsZero() {
+			return n, true
+		}
+		if oldestTime.IsZero() || t.Before(oldestTime) {
+			oldestNet = n
+			oldestTime = t
+		}
+	}
+	return oldestNet, true
 }
 
 func nextBackgroundNetwork(networks []string, cursor int) (string, int, bool) {
@@ -1021,6 +1066,7 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 		if len(sshPorts) > 0 {
 			current.DetectedSSHPort = sshPorts[0]
 		}
+		current.LastSeen = time.Now()
 
 		// Enrich device with open ports (re-classifies types and finds web servers)
 		tempDevices := []types.Device{*current}
