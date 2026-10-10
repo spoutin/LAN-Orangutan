@@ -328,7 +328,8 @@ url = https://10.0.0.1
 api_key = ...
 api_secret = ...
 remote_scan = true
-ssh_user = root
+ssh_user = scanuser
+ssh_sudo = true
 ssh_key_file = /run/secrets/opnsense_key
 networks = 10.0.0.0/24, 10.0.1.0/24, 10.0.3.0/24, 10.0.4.0/24
 
@@ -342,19 +343,30 @@ ssh_key_file = /run/secrets/openwrt_key
 networks = 10.5.5.0/24, 192.168.1.0/24, 192.168.111.0/24
 ```
 
+**Non-Root & Sudo Execution (`ssh_sudo`):**
+If you connect using a dedicated non-root user (e.g. on OPNsense), set `ssh_sudo = true`. LAN Orangutan will execute scans using `sudo -n nmap` so Nmap retains raw socket privileges for ARP and SYN discovery without interactive password prompts. Ensure passwordless sudo is permitted for Nmap on the target gateway (e.g. in `/usr/local/etc/sudoers.d/orangutan`):
+```sudoers
+scanuser ALL=(ALL) NOPASSWD: /usr/local/bin/nmap
+```
+
 **Multiple OpenWrt Routers:** You can configure additional OpenWrt routers with `[openwrt.<name>]` sections (e.g. `[openwrt.remote_site]`). LAN Orangutan will poll DHCP telemetry from all of them and route edge scans accordingly.
 
 **Dynamic Key Reloading:** When `ssh_key_file` is updated on disk (e.g. rotated by OpenBao or a systemd credential drop-in), LAN Orangutan automatically detects the modification, re-reads the key, and recycles the SSH connection without requiring a service restart.
 
 Environment variables supported:
 * `ORANGUTAN_OPNSENSE_REMOTE_SCAN`: `true` to enable remote scans from OPNsense.
+* `ORANGUTAN_OPNSENSE_SSH_USER`: SSH username for OPNsense (defaults to `root`).
+* `ORANGUTAN_OPNSENSE_SSH_SUDO`: `true` to prepend `sudo -n` to remote Nmap commands.
 * `ORANGUTAN_OPNSENSE_SSH_KEY_FILE`: path to OPNsense private key file.
 * `ORANGUTAN_OPNSENSE_NETWORKS`: subnets routed to OPNsense.
 * `ORANGUTAN_OPENWRT_REMOTE_SCAN`: `true` to enable remote scans from primary OpenWrt.
+* `ORANGUTAN_OPENWRT_SSH_USER`: SSH username for OpenWrt (defaults to `root`).
+* `ORANGUTAN_OPENWRT_SSH_SUDO`: `true` to prepend `sudo -n` to remote Nmap commands.
 * `ORANGUTAN_OPENWRT_SSH_KEY_FILE`: path to OpenWrt private key file.
 * `ORANGUTAN_OPENWRT_NETWORKS`: subnets routed to OpenWrt.
 * `ORANGUTAN_OPENWRTS_NAMES`: comma-separated additional OpenWrt IDs (e.g. `site2,site3`).
 * `ORANGUTAN_REMOTE_SCAN_ENABLE`: global toggle.
+* `ORANGUTAN_REMOTE_SCAN_SUDO`: global toggle for `sudo -n` on all remote scanners.
 * `ORANGUTAN_REMOTE_SCAN_KEY`: in-memory OpenSSH private key PEM.
 
 **Failure Isolation & Alerting:** If an edge scanner fails (SSH unreachable, authentication rejected, or Nmap missing on the gateway), the scan for that subnet is skipped to protect firewall state tables, and an alert is immediately dispatched to the Slack webhook configured for that network.
