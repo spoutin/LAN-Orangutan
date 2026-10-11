@@ -72,6 +72,55 @@ func TestSelectOldestScannedNetwork(t *testing.T) {
 	}
 }
 
+func TestSelectOldestScannedNetworksPerGateway(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	h := NewHandler(store, cfg)
+
+	runner := &testConcurrencyTrackingRemoteRunner{}
+	h.scanner.SetRemoteRunner(runner)
+
+	networks := []string{
+		"10.0.0.0/24", "10.0.1.0/24", // opnsense
+		"10.5.5.0/24", "10.5.6.0/24", // openwrt
+		"172.16.0.0/24",              // local
+	}
+
+	// opnsense: 10.0.0.0/24 is 30m old, 10.0.1.0/24 is 10m old -> pick 10.0.0.0/24
+	_ = store.SetLastScan("10.0.0.0/24", time.Now().Add(-30*time.Minute))
+	_ = store.SetLastScan("10.0.1.0/24", time.Now().Add(-10*time.Minute))
+
+	// openwrt: 10.5.5.0/24 is 5m old, 10.5.6.0/24 is never scanned -> pick 10.5.6.0/24
+	_ = store.SetLastScan("10.5.5.0/24", time.Now().Add(-5*time.Minute))
+
+	// local: 172.16.0.0/24 is 1h old -> pick 172.16.0.0/24
+	_ = store.SetLastScan("172.16.0.0/24", time.Now().Add(-60*time.Minute))
+
+	selected := selectOldestScannedNetworksPerGateway(h, networks)
+	if len(selected) != 3 {
+		t.Fatalf("expected 3 selected networks (1 per gateway), got %d: %v", len(selected), selected)
+	}
+
+	has := func(needle string) bool {
+		for _, n := range selected {
+			if n == needle {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !has("10.0.0.0/24") {
+		t.Errorf("expected opnsense oldest '10.0.0.0/24' to be selected: %v", selected)
+	}
+	if !has("10.5.6.0/24") {
+		t.Errorf("expected openwrt unscanned '10.5.6.0/24' to be selected: %v", selected)
+	}
+	if !has("172.16.0.0/24") {
+		t.Errorf("expected local '172.16.0.0/24' to be selected: %v", selected)
+	}
+}
+
 func TestWaitForBackgroundScanWaitsForCompletionBeforeDelay(t *testing.T) {
 	done := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

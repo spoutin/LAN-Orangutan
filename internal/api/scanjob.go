@@ -982,12 +982,12 @@ func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Dura
 				}
 				continue
 			}
-			network, ok := selectOldestScannedNetwork(h.store, networks)
-			if !ok {
+			selectedNetworks := selectOldestScannedNetworksPerGateway(h, networks)
+			if len(selectedNetworks) == 0 {
 				continue
 			}
 
-			job := h.startBackgroundNetwork(network, networks)
+			job := h.startBackgroundNetworks(selectedNetworks, networks)
 			wasNightlyDeep := job != nil && job.nightlyDeep
 			if job != nil && !waitForBackgroundScan(ctx, job.done, interval) {
 				return
@@ -1016,7 +1016,7 @@ func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Dura
 	}()
 }
 
-func (h *Handler) startBackgroundNetwork(network string, allNetworks []string) *scanJob {
+func (h *Handler) startBackgroundNetworks(selectedNetworks []string, allNetworks []string) *scanJob {
 	h.jobMu.Lock()
 	defer h.jobMu.Unlock()
 
@@ -1041,8 +1041,12 @@ func (h *Handler) startBackgroundNetwork(network string, allNetworks []string) *
 			}
 		}
 	}
-	h.job = h.startScanJobWithDeadline([]string{network}, true, scanModeBoth, deadline, deepNetworks, nil)
+	h.job = h.startScanJobWithDeadline(selectedNetworks, true, scanModeBoth, deadline, deepNetworks, nil)
 	return h.job
+}
+
+func (h *Handler) startBackgroundNetwork(network string, allNetworks []string) *scanJob {
+	return h.startBackgroundNetworks([]string{network}, allNetworks)
 }
 
 // runBackgroundScan preserves the immediate refresh when continuous scanning is
@@ -1056,11 +1060,36 @@ func (h *Handler) runBackgroundScan() {
 	if err != nil || len(networks) == 0 {
 		return
 	}
-	network, ok := selectOldestScannedNetwork(h.store, networks)
-	if !ok {
+	selected := selectOldestScannedNetworksPerGateway(h, networks)
+	if len(selected) == 0 {
 		return
 	}
-	h.startBackgroundNetwork(network, networks)
+	h.startBackgroundNetworks(selected, networks)
+}
+
+// selectOldestScannedNetworksPerGateway returns the single oldest scanned network for each gateway.
+// If multiple gateways are configured, each gateway gets one network to scan in parallel.
+func selectOldestScannedNetworksPerGateway(h *Handler, networks []string) []string {
+	if len(networks) == 0 {
+		return nil
+	}
+	gatewayOrder := make([]string, 0)
+	subnetsByGateway := make(map[string][]string)
+	for _, cidr := range networks {
+		gw := h.gatewayForTarget(cidr)
+		if len(subnetsByGateway[gw]) == 0 {
+			gatewayOrder = append(gatewayOrder, gw)
+		}
+		subnetsByGateway[gw] = append(subnetsByGateway[gw], cidr)
+	}
+
+	var selected []string
+	for _, gw := range gatewayOrder {
+		if net, ok := selectOldestScannedNetwork(h.store, subnetsByGateway[gw]); ok {
+			selected = append(selected, net)
+		}
+	}
+	return selected
 }
 
 func selectOldestScannedNetwork(store *storage.Storage, networks []string) (string, bool) {
