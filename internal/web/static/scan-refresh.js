@@ -20,5 +20,22 @@
         return `Scan failed for ${failedNames}: ${firstErr}`;
     }
 
-    return { completedNetworkKeys, automaticScanFailureMessage };
+    function scannedSubnetCount(progress) {
+        if (!progress) return 0;
+        if (typeof progress.scanned_network_count === 'number' && progress.scanned_network_count >= 0) {
+            return progress.scanned_network_count;
+        }
+        return (progress.networks || []).filter(n => !n.is_supplemental && n.status === 'scanned').length;
+    }
+
+    function formatScanCompletionSummary(progress) {
+        if (!progress) return '';
+        const count = scannedSubnetCount(progress);
+        const total = progress.network_count || count;
+        const where = total > 1 ? ` across ${count} network${count === 1 ? '' : 's'}` : '';
+        const devCount = progress.device_count || 0;
+        return `Found ${devCount} device${devCount === 1 ? '' : 's'}${where}`;
+    }
+
+    return { completedNetworkKeys, automaticScanFailureMessage, scannedSubnetCount, formatScanCompletionSummary };
 });

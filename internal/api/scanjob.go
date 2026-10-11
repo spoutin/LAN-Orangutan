@@ -43,6 +43,7 @@ type scanJob struct {
 	activeNetworks   map[string]string // CIDR -> gateway
 	networkIndex     int               // 1-based; 0 before the first network starts
 	deviceCount      int
+	discoveredIPs    map[string]bool
 	startedAt        time.Time
 	networkStartedAt time.Time
 	// estimatedSeconds is how long the current network took to scan last time,
@@ -96,9 +97,10 @@ type scanProgress struct {
 	CurrentNetwork     string   `json:"current_network,omitempty"`
 	CurrentNetworkName string   `json:"current_network_name,omitempty"`
 	ActiveNetworks     []string `json:"active_networks,omitempty"`
-	NetworkIndex       int      `json:"network_index"`
-	NetworkCount       int     `json:"network_count"`
-	DeviceCount        int     `json:"device_count"`
+	NetworkIndex        int      `json:"network_index"`
+	NetworkCount        int      `json:"network_count"`
+	ScannedNetworkCount int      `json:"scanned_network_count"`
+	DeviceCount         int      `json:"device_count"`
 	NewDeviceCount     int     `json:"new_device_count"`
 	Elapsed            float64 `json:"elapsed"`
 	// Percent is the estimated completion of the whole job, or -1 when the
@@ -152,6 +154,14 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 		DeepNetworks:     append([]deepNetworkProgress(nil), j.deepNetworkProgress...),
 		TargetedDeepScan: len(j.deepDevices) == 1,
 	}
+
+	scannedNetCount := 0
+	for _, res := range j.results {
+		if !res.IsSupplemental && res.Status == "scanned" {
+			scannedNetCount++
+		}
+	}
+	p.ScannedNetworkCount = scannedNetCount
 
 	var activeList []string
 	for n := range j.activeNetworks {
@@ -425,12 +435,15 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 				h.store.AddCompletedNetwork(cidr)
 
 				activeIPsMu.Lock()
+				var sweepIPs []string
 				for _, d := range result.Devices {
 					if d.IP != "" {
 						activeIPsMap[d.IP] = true
+						sweepIPs = append(sweepIPs, d.IP)
 					}
 				}
 				activeIPsMu.Unlock()
+				j.recordDiscoveredIPs(sweepIPs)
 
 				// Stage 2 begins after discovery has covered every requested network, so
 				// each result and progress indicator has one unambiguous network context.
@@ -491,24 +504,30 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	if ctx.Err() == nil {
 		if ipv6 := h.scanner.DiscoverIPv6(ctx); len(ipv6) > 0 {
 			if err := h.store.MergeIPv6Neighbors(ipv6); err == nil {
-				j.addResult(networkScanSummary{Network: "IPv6 neighbors", Status: "scanned", DeviceCount: len(ipv6)}, len(ipv6))
+				var ips []string
 				for _, d := range ipv6 {
 					if d.IP != "" {
 						activeIPsMap[d.IP] = true
+						ips = append(ips, d.IP)
 					}
 				}
+				j.recordDiscoveredIPs(ips)
+				j.addResult(networkScanSummary{Network: "IPv6 neighbors", Status: "scanned", DeviceCount: len(ipv6), IsSupplemental: true})
 			}
 		}
 	}
 	if ctx.Err() == nil {
 		if mdns := h.scanner.DiscoverMDNS(ctx); len(mdns) > 0 {
 			if err := h.store.MergeSupplemental(mdns); err == nil {
-				j.addResult(networkScanSummary{Network: "mDNS", Status: "scanned", DeviceCount: len(mdns)}, len(mdns))
+				var ips []string
 				for _, d := range mdns {
 					if d.IP != "" {
 						activeIPsMap[d.IP] = true
+						ips = append(ips, d.IP)
 					}
 				}
+				j.recordDiscoveredIPs(ips)
+				j.addResult(networkScanSummary{Network: "mDNS", Status: "scanned", DeviceCount: len(mdns), IsSupplemental: true})
 			}
 		}
 	}
@@ -546,11 +565,14 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 				allReservations = append(allReservations, reservations...)
 				if len(arpEntries) > 0 {
 					_ = h.store.MergeSupplemental(arpEntries)
+					var arpIPs []string
 					for _, d := range arpEntries {
 						if d.IP != "" {
 							activeIPsMap[d.IP] = true
+							arpIPs = append(arpIPs, d.IP)
 						}
 					}
+					j.recordDiscoveredIPs(arpIPs)
 				}
 				if routerName == "" {
 					routerName = "OPNsense"
@@ -565,11 +587,24 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		if len(allLeases) > 0 || len(allReservations) > 0 {
 			if err := h.store.MergeRouterDHCP(allLeases, allReservations); err == nil {
 				total := len(allLeases) + len(allReservations)
+				var dhcpIPs []string
+				for _, d := range allLeases {
+					if d.IP != "" {
+						dhcpIPs = append(dhcpIPs, d.IP)
+					}
+				}
+				for _, d := range allReservations {
+					if d.IP != "" {
+						dhcpIPs = append(dhcpIPs, d.IP)
+					}
+				}
+				j.recordDiscoveredIPs(dhcpIPs)
 				j.addResult(networkScanSummary{
-					Network:     routerName + " DHCP",
-					Status:      "scanned",
-					DeviceCount: total,
-				}, total)
+					Network:        routerName + " DHCP",
+					Status:         "scanned",
+					DeviceCount:    total,
+					IsSupplemental: true,
+				})
 			}
 		}
 	}
@@ -596,16 +631,20 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			if len(newIPs) > 0 || len(seenIPs) > 0 {
 				j.accumulate(newIPs, seenIPs)
 			}
+			var unifiIPs []string
 			for _, d := range unifiClients {
 				if d.IP != "" {
 					activeIPsMap[d.IP] = true
+					unifiIPs = append(unifiIPs, d.IP)
 				}
 			}
+			j.recordDiscoveredIPs(unifiIPs)
 			j.addResult(networkScanSummary{
-				Network:     "UniFi Controller",
-				Status:      "scanned",
-				DeviceCount: len(unifiClients),
-			}, len(unifiClients))
+				Network:        "UniFi Controller",
+				Status:         "scanned",
+				DeviceCount:    len(unifiClients),
+				IsSupplemental: true,
+			})
 		} else {
 			fmt.Printf("UniFi client fetch error: %v\n", err)
 		}
@@ -630,7 +669,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			seenSwitches[switchCfg.ID] = struct{}{}
 			if err := switchCfg.Validate(); err != nil {
 				fmt.Printf("Switch %s SNMP configuration invalid\n", switchCfg.ID)
-				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP configuration invalid"}, 0)
+				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP configuration invalid", IsSupplemental: true})
 				continue
 			}
 			connections, err := h.fetchSwitchConnections(ctx, switchCfg, vlanByMAC)
@@ -638,7 +677,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 				// SNMP failures can include transport details. Keep user-visible
 				// summaries and logs credential-safe.
 				fmt.Printf("Switch %s SNMP poll failed\n", switchCfg.ID)
-				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP polling failed"}, 0)
+				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP polling failed", IsSupplemental: true})
 				continue
 			}
 			storageConnections := make([]storage.SwitchConnection, len(connections))
@@ -652,11 +691,11 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			}
 			if err := h.store.MergeSwitchConnections(storageConnections, switchCfg.ID); err != nil {
 				fmt.Printf("Switch %s SNMP merge failed\n", switchCfg.ID)
-				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP result storage failed"}, 0)
+				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP result storage failed", IsSupplemental: true})
 				continue
 			}
 			fmt.Printf("Switch %s SNMP resolved %d connections\n", switchCfg.ID, len(connections))
-			j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "scanned", DeviceCount: len(connections)}, len(connections))
+			j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "scanned", DeviceCount: len(connections), IsSupplemental: true})
 		}
 	}
 
@@ -952,12 +991,31 @@ func (j *scanJob) beginNetwork(cidr string, index int, estimate float64) {
 	j.estimatedSeconds = estimate
 }
 
+// recordDiscoveredIPs records newly discovered active IPs and updates unique device count.
+func (j *scanJob) recordDiscoveredIPs(ips []string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.discoveredIPs == nil {
+		j.discoveredIPs = make(map[string]bool)
+	}
+	for _, ip := range ips {
+		if ip != "" {
+			j.discoveredIPs[ip] = true
+		}
+	}
+	j.deviceCount = len(j.discoveredIPs)
+}
+
 // addResult records the outcome of one network.
-func (j *scanJob) addResult(summary networkScanSummary, devices int) {
+func (j *scanJob) addResult(summary networkScanSummary, devices ...int) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.results = append(j.results, summary)
-	j.deviceCount += devices
+	if len(j.discoveredIPs) > 0 {
+		j.deviceCount = len(j.discoveredIPs)
+	} else if len(devices) > 0 && devices[0] > 0 {
+		j.deviceCount += devices[0]
+	}
 }
 
 func (j *scanJob) setActiveNetwork(cidr, gw string, active bool) {

@@ -291,8 +291,10 @@ function reportScanOutcome(p) {
         showToast(reason ? 'Scan failed: ' + reason : 'No networks could be scanned', 'warning');
         return;
     }
-    const where = p.network_count > 1 ? ` across ${scanned.length} network${scanned.length === 1 ? '' : 's'}` : '';
-    showToast(`Found ${p.device_count} device${p.device_count === 1 ? '' : 's'}${where}`, 'success');
+    const msg = window.scanRefresh?.formatScanCompletionSummary
+        ? window.scanRefresh.formatScanCompletionSummary(p)
+        : `Found ${p.device_count} device${p.device_count === 1 ? '' : 's'}`;
+    showToast(msg, 'success');
     setTimeout(refreshAfterScan, 1000);
 }
 

@@ -929,6 +929,71 @@ func TestScanJob_SnapshotReportsActiveNetworksDuringParallelSweep(t *testing.T) 
 	}
 }
 
+func TestScanJob_TelemetryExcludesSupplementalFromNetworkCountAndDeduplicatesDevices(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.0.1.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+
+	job := &scanJob{
+		id:             "test-job",
+		networks:       cfg.Scanning.Networks,
+		startedAt:      time.Now(),
+		status:         "running",
+		activeNetworks: make(map[string]string),
+	}
+
+	// Subnet 1 finds 10.0.0.1 and 10.0.0.2
+	job.recordDiscoveredIPs([]string{"10.0.0.1", "10.0.0.2"})
+	job.addResult(networkScanSummary{
+		Network:     "10.0.0.0/24",
+		Status:      "scanned",
+		DeviceCount: 2,
+	})
+
+	// Subnet 2 finds 10.0.1.1
+	job.recordDiscoveredIPs([]string{"10.0.1.1"})
+	job.addResult(networkScanSummary{
+		Network:     "10.0.1.0/24",
+		Status:      "scanned",
+		DeviceCount: 1,
+	})
+
+	// Supplemental source: DHCP finds 10.0.0.1 (existing) and 10.0.1.1 (existing)
+	job.recordDiscoveredIPs([]string{"10.0.0.1", "10.0.1.1"})
+	job.addResult(networkScanSummary{
+		Network:        "OPNsense DHCP",
+		Status:         "scanned",
+		DeviceCount:    2,
+		IsSupplemental: true,
+	})
+
+	// Supplemental source: switch SNMP reports 2 switch connections (MAC mapping)
+	job.addResult(networkScanSummary{
+		Network:        "switchy SNMP",
+		Status:         "scanned",
+		DeviceCount:    2,
+		IsSupplemental: true,
+	})
+
+	snap := job.snapshot(cfg, store)
+
+	// NetworkCount should be 2 (only the actual subnets)
+	if snap.NetworkCount != 2 {
+		t.Errorf("NetworkCount = %d, want 2", snap.NetworkCount)
+	}
+
+	// ScannedNetworkCount should be 2 (both subnets scanned, excluding supplemental)
+	if snap.ScannedNetworkCount != 2 {
+		t.Errorf("ScannedNetworkCount = %d, want 2", snap.ScannedNetworkCount)
+	}
+
+	// DeviceCount should be 3 (10.0.0.1, 10.0.0.2, 10.0.1.1 deduplicated, NOT 2+1+2+2=7!)
+	if snap.DeviceCount != 3 {
+		t.Errorf("DeviceCount = %d, want 3", snap.DeviceCount)
+	}
+}
+
 
 
 

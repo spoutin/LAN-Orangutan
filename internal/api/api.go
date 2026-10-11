@@ -438,12 +438,13 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 // networkScanSummary reports the outcome of scanning a single network as part
 // of a scan-all request.
 type networkScanSummary struct {
-	Network     string  `json:"network"`
-	NetworkName string  `json:"network_name,omitempty"`
-	Status      string  `json:"status"` // scanned, skipped or failed
-	DeviceCount int     `json:"device_count"`
-	Duration    float64 `json:"duration"`
-	Error       string  `json:"error,omitempty"`
+	Network        string  `json:"network"`
+	NetworkName    string  `json:"network_name,omitempty"`
+	Status         string  `json:"status"` // scanned, skipped or failed
+	DeviceCount    int     `json:"device_count"`
+	Duration       float64 `json:"duration"`
+	Error          string  `json:"error,omitempty"`
+	IsSupplemental bool    `json:"is_supplemental,omitempty"`
 }
 
 // scanAllResult aggregates the per-network outcomes of a scan-all request.
@@ -511,19 +512,15 @@ func (h *Handler) scanAllNetworks(w http.ResponseWriter, r *http.Request) {
 	if ipv6 := h.scanner.DiscoverIPv6(r.Context()); len(ipv6) > 0 {
 		if err := h.store.MergeIPv6Neighbors(ipv6); err == nil {
 			result.Networks = append(result.Networks, networkScanSummary{
-				Network: "IPv6 neighbors", Status: "scanned", DeviceCount: len(ipv6),
+				Network: "IPv6 neighbors", Status: "scanned", DeviceCount: len(ipv6), IsSupplemental: true,
 			})
-			result.ScannedCount++
-			result.DeviceCount += len(ipv6)
 		}
 	}
 	if mdns := h.scanner.DiscoverMDNS(r.Context()); len(mdns) > 0 {
 		if err := h.store.MergeSupplemental(mdns); err == nil {
 			result.Networks = append(result.Networks, networkScanSummary{
-				Network: "mDNS", Status: "scanned", DeviceCount: len(mdns),
+				Network: "mDNS", Status: "scanned", DeviceCount: len(mdns), IsSupplemental: true,
 			})
-			result.ScannedCount++
-			result.DeviceCount += len(mdns)
 		}
 	}
 
