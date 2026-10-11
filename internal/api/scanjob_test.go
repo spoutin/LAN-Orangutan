@@ -733,6 +733,74 @@ func TestScanJob_Stage2PerGatewayDeepScan(t *testing.T) {
 	}
 }
 
+type testBlockingRemoteRunner struct {
+	started      chan string
+	continueChan chan struct{}
+}
+
+func (r *testBlockingRemoteRunner) HasRemoteScannerForTarget(target string) bool {
+	return true
+}
+
+func (r *testBlockingRemoteRunner) GetGatewayForTarget(target string) string {
+	if strings.HasPrefix(target, "10.0.") {
+		return "opnsense"
+	}
+	return "openwrt"
+}
+
+func (r *testBlockingRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
+	r.started <- target
+	<-r.continueChan
+	return []byte(`<nmaprun></nmaprun>`), nil
+}
+
+func (r *testBlockingRemoteRunner) Close() error { return nil }
+
+func TestScanJob_SnapshotReportsActiveNetworksDuringParallelSweep(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.5.5.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+	h := NewHandler(store, cfg)
+
+	startedSweep := make(chan string, 2)
+	continueSweep := make(chan struct{})
+
+	h.scanner.SetRemoteRunner(&testBlockingRemoteRunner{
+		started:      startedSweep,
+		continueChan: continueSweep,
+	})
+
+	job := h.startScanJob(cfg.Scanning.Networks, false, scanModeQuick)
+	// Wait until both networks have started their sweep
+	<-startedSweep
+	<-startedSweep
+
+	// Both networks must be active in snapshot and storage!
+	snap := job.snapshot(cfg, store)
+	if len(snap.ActiveNetworks) != 2 {
+		t.Fatalf("expected 2 active_networks in snapshot, got %d: %v", len(snap.ActiveNetworks), snap.ActiveNetworks)
+	}
+	if !strings.Contains(snap.CurrentNetwork, "10.0.0.0/24") || !strings.Contains(snap.CurrentNetwork, "10.5.5.0/24") {
+		t.Fatalf("expected CurrentNetwork to list both active networks, got: %s", snap.CurrentNetwork)
+	}
+
+	if !store.IsNetworkScanning("10.0.0.0/24") || !store.IsNetworkScanning("10.5.5.0/24") {
+		t.Fatalf("expected both networks IsNetworkScanning=true in storage")
+	}
+
+	// Release sweeps
+	close(continueSweep)
+	<-job.done
+
+	// When job completes, storage active networks must be cleared
+	if store.IsNetworkScanning("10.0.0.0/24") || store.IsNetworkScanning("10.5.5.0/24") {
+		t.Fatalf("expected networks cleared from active scanning after job done")
+	}
+}
+
+
 
 
 func TestScanJob_SwitchesResolveUnknownVLANInventoryMACThroughBridgeFDB(t *testing.T) {

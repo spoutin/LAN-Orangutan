@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"sort"
@@ -39,7 +40,8 @@ type scanJob struct {
 	mu               sync.RWMutex
 	status           string // running, done, cancelled or failed
 	currentNetwork   string
-	networkIndex     int // 1-based; 0 before the first network starts
+	activeNetworks   map[string]string // CIDR -> gateway
+	networkIndex     int               // 1-based; 0 before the first network starts
 	deviceCount      int
 	startedAt        time.Time
 	networkStartedAt time.Time
@@ -89,11 +91,12 @@ type deepNetworkProgress struct {
 
 // scanProgress is the snapshot of a job returned to the UI.
 type scanProgress struct {
-	JobID              string  `json:"job_id"`
-	Status             string  `json:"status"`
-	CurrentNetwork     string  `json:"current_network,omitempty"`
-	CurrentNetworkName string  `json:"current_network_name,omitempty"`
-	NetworkIndex       int     `json:"network_index"`
+	JobID              string   `json:"job_id"`
+	Status             string   `json:"status"`
+	CurrentNetwork     string   `json:"current_network,omitempty"`
+	CurrentNetworkName string   `json:"current_network_name,omitempty"`
+	ActiveNetworks     []string `json:"active_networks,omitempty"`
+	NetworkIndex       int      `json:"network_index"`
 	NetworkCount       int     `json:"network_count"`
 	DeviceCount        int     `json:"device_count"`
 	NewDeviceCount     int     `json:"new_device_count"`
@@ -148,6 +151,16 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 		PortScanComplete: j.portScanComplete,
 		DeepNetworks:     append([]deepNetworkProgress(nil), j.deepNetworkProgress...),
 		TargetedDeepScan: len(j.deepDevices) == 1,
+	}
+
+	var activeList []string
+	for n := range j.activeNetworks {
+		activeList = append(activeList, n)
+	}
+	sort.Strings(activeList)
+	p.ActiveNetworks = activeList
+	if len(activeList) > 1 && !j.portScanActive && j.mode != scanModeDeep {
+		p.CurrentNetwork = strings.Join(activeList, ", ")
 	}
 	if j.portScanActive || j.mode == scanModeDeep {
 		for _, network := range j.deepNetworkProgress {
@@ -306,9 +319,10 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	deepTargets := make(map[string][]types.Device)
 
 	defer h.store.SetScanRunning(false)
+	defer h.store.ClearScanningNetworks()
+	defer h.store.SetCurrentScanningNetwork("")
 
 	defer func() {
-		h.store.SetCurrentScanningNetwork("")
 		dur := time.Since(j.startedAt).Seconds()
 		networkName := "All Networks"
 		if len(j.networks) == 1 {
@@ -365,12 +379,16 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 
 				cidr := item.cidr
 				j.beginNetwork(cidr, item.index, h.store.GetLastDuration(cidr))
-				h.store.SetCurrentScanningNetwork(cidr)
+				j.setActiveNetwork(cidr, gwName, true)
+				h.store.SetNetworkScanning(cidr, true)
+				log.Printf("[scan] starting discovery sweep on %s via gateway %s", cidr, gwName)
 
 				summary := networkScanSummary{Network: cidr}
 
 				lastScan := h.store.GetLastScan(cidr)
 				if canScan, waitTime := h.scanner.CheckRateLimit(lastScan); !canScan {
+					j.setActiveNetwork(cidr, gwName, false)
+					h.store.SetNetworkScanning(cidr, false)
 					summary.Status = "skipped"
 					summary.Error = "rate limited, wait " + waitTime.Round(time.Second).String()
 					j.addResult(summary, 0)
@@ -380,6 +398,8 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 
 				// scanNetwork applies its own per-network timeout.
 				result, err := h.scanNetwork(ctx, cidr)
+				j.setActiveNetwork(cidr, gwName, false)
+				h.store.SetNetworkScanning(cidr, false)
 
 				if err != nil {
 					// A cancelled job surfaces as a scan error, but it is not a failure.
@@ -388,6 +408,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 					}
 					summary.Status = "failed"
 					summary.Error = err.Error()
+					log.Printf("[scan] discovery sweep failed on %s via gateway %s: %v", cidr, gwName, err)
 					j.addResult(summary, 0)
 					h.store.AddCompletedNetwork(cidr)
 					continue
@@ -396,6 +417,8 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 				summary.Status = "scanned"
 				summary.DeviceCount = result.DeviceCount
 				summary.Duration = result.Duration
+				log.Printf("[scan] completed discovery sweep on %s via gateway %s (found %d devices in %.2fs)",
+					cidr, gwName, result.DeviceCount, result.Duration)
 				j.addResult(summary, result.DeviceCount)
 				h.store.AddCompletedNetwork(cidr)
 
@@ -924,6 +947,27 @@ func (j *scanJob) addResult(summary networkScanSummary, devices int) {
 	j.deviceCount += devices
 }
 
+func (j *scanJob) setActiveNetwork(cidr, gw string, active bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.activeNetworks == nil {
+		j.activeNetworks = make(map[string]string)
+	}
+	if active {
+		j.activeNetworks[cidr] = gw
+		j.currentNetwork = cidr
+	} else {
+		delete(j.activeNetworks, cidr)
+		if j.currentNetwork == cidr {
+			j.currentNetwork = ""
+			for n := range j.activeNetworks {
+				j.currentNetwork = n
+				break
+			}
+		}
+	}
+}
+
 // finish marks the job as no longer running.
 func (j *scanJob) finish(status, err string) {
 	j.mu.Lock()
@@ -931,6 +975,7 @@ func (j *scanJob) finish(status, err string) {
 	j.status = status
 	j.err = err
 	j.currentNetwork = ""
+	j.activeNetworks = make(map[string]string)
 }
 
 // isRunning reports whether the job is still in progress.
