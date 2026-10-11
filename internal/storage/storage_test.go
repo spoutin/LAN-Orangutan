@@ -1387,6 +1387,3 @@ func TestStorage_NetworkDeepScanning(t *testing.T) {
 		t.Fatal("expected 10.5.5.0/24 not deep scanning after clear")
 	}
 }
-
-
-

@@ -598,6 +598,3 @@ func TestSSHRunner_AuthFailureIncludesUserAndFingerprint(t *testing.T) {
 		t.Fatalf("expected error to include key fingerprint 'SHA256:', got: %v", errMsg)
 	}
 }
-
-
-

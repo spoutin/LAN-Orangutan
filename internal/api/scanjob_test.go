@@ -83,7 +83,7 @@ func TestSelectOldestScannedNetworksPerGateway(t *testing.T) {
 	networks := []string{
 		"10.0.0.0/24", "10.0.1.0/24", // opnsense
 		"10.5.5.0/24", "10.5.6.0/24", // openwrt
-		"172.16.0.0/24",              // local
+		"172.16.0.0/24", // local
 	}
 
 	// opnsense: 10.0.0.0/24 is 30m old, 10.0.1.0/24 is 10m old -> pick 10.0.0.0/24
@@ -266,6 +266,11 @@ func TestScanPortHostUpdatesPresence(t *testing.T) {
 	cfg := config.Default()
 	cfg.Scanning.PortScanRange = "80"
 	h := NewHandler(store, cfg)
+	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			return []byte(`<nmaprun><host><ports><port protocol="tcp" portid="80"><state state="open"/></port></ports></host></nmaprun>`), nil
+		},
+	})
 
 	job := &scanJob{
 		deepNetworkProgress: []deepNetworkProgress{
@@ -843,7 +848,12 @@ func TestScanJob_Stage2PerSubnetDeepScanningLifecycle(t *testing.T) {
 	// Wait until openwrt is running and opnsense has completed
 	<-openwrtRunning
 	<-opnDone
-	time.Sleep(20 * time.Millisecond)
+
+	// Wait until opnsense (10.0.0.0/24) has finished its subnet deep scan queue
+	deadline := time.Now().Add(5 * time.Second)
+	for store.IsNetworkDeepScanning("10.0.0.0/24") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	// At this point, opnsense deep scan is complete, so 10.0.0.0/24 should NOT be deep scanning!
 	// But 10.5.5.0/24 is still waiting, so it SHOULD be deep scanning!
@@ -1028,9 +1038,6 @@ func TestScanJob_BriefRateLimitWaitsAndProceeds(t *testing.T) {
 		t.Fatalf("expected network status = scanned, got: %+v", snap.Networks)
 	}
 }
-
-
-
 
 func TestScanJob_SwitchesResolveUnknownVLANInventoryMACThroughBridgeFDB(t *testing.T) {
 	store := newScanJobTestStore(t)

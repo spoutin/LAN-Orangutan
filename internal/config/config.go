@@ -86,10 +86,10 @@ func GetDefaultConfigFile() string {
 
 // Config holds all application configuration
 type Config struct {
-	Server    ServerConfig
-	Scanning  ScanningConfig
-	Storage   StorageConfig
-	Tailscale TailscaleConfig
+	Server         ServerConfig
+	Scanning       ScanningConfig
+	Storage        StorageConfig
+	Tailscale      TailscaleConfig
 	UI             UIConfig
 	OpenWrt        OpenWrtConfig
 	OpenWrts       OpenWrtsConfig

@@ -1075,5 +1075,3 @@ networks = 10.0.4.0/24
 		t.Fatalf("opn scanner = %+v, want User='ipam' Sudo=true SSHKeyFile='/var/secrets/opnsense.key'", opn)
 	}
 }
-
-

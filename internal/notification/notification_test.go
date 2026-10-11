@@ -57,4 +57,3 @@ func TestFormatRemoteScannerRecoverySlackMessage(t *testing.T) {
 		}
 	}
 }
-

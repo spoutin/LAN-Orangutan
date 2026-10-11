@@ -871,5 +871,3 @@ func TestHandler_NetworkDeepScanningState(t *testing.T) {
 		t.Fatalf("expected 'Services...' status indicator in HTML, got:\n%s", body)
 	}
 }
-
-

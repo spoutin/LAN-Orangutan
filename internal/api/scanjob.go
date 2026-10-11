@@ -92,17 +92,17 @@ type deepNetworkProgress struct {
 
 // scanProgress is the snapshot of a job returned to the UI.
 type scanProgress struct {
-	JobID              string   `json:"job_id"`
-	Status             string   `json:"status"`
-	CurrentNetwork     string   `json:"current_network,omitempty"`
-	CurrentNetworkName string   `json:"current_network_name,omitempty"`
-	ActiveNetworks     []string `json:"active_networks,omitempty"`
+	JobID               string   `json:"job_id"`
+	Status              string   `json:"status"`
+	CurrentNetwork      string   `json:"current_network,omitempty"`
+	CurrentNetworkName  string   `json:"current_network_name,omitempty"`
+	ActiveNetworks      []string `json:"active_networks,omitempty"`
 	NetworkIndex        int      `json:"network_index"`
 	NetworkCount        int      `json:"network_count"`
 	ScannedNetworkCount int      `json:"scanned_network_count"`
 	DeviceCount         int      `json:"device_count"`
-	NewDeviceCount     int     `json:"new_device_count"`
-	Elapsed            float64 `json:"elapsed"`
+	NewDeviceCount      int      `json:"new_device_count"`
+	Elapsed             float64  `json:"elapsed"`
 	// Percent is the estimated completion of the whole job, or -1 when the
 	// current network has no timing history and progress cannot be estimated.
 	Percent float64 `json:"percent"`

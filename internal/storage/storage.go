@@ -20,13 +20,13 @@ import (
 
 // Storage manages device data persistence using SQLite
 type Storage struct {
-	devicesFile            string
-	stateFile              string
-	db                     *sql.DB
-	mu                     sync.RWMutex
-	networkNames           map[string]string
-	scanRunning            int32
-	scanInterval           int32
+	devicesFile                string
+	stateFile                  string
+	db                         *sql.DB
+	mu                         sync.RWMutex
+	networkNames               map[string]string
+	scanRunning                int32
+	scanInterval               int32
 	currentScanningNetwork     string
 	activeScanningNetworks     map[string]bool
 	activeDeepScanningNetworks map[string]bool
@@ -287,7 +287,6 @@ func (s *Storage) GetNetworkScanError(cidr string) string {
 func (s *Storage) ClearNetworkScanError(cidr string) {
 	s.SetNetworkScanError(cidr, "")
 }
-
 
 // GetCurrentScanningNetwork returns the network CIDR currently being scanned
 func (s *Storage) GetCurrentScanningNetwork() string {
