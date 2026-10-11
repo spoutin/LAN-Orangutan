@@ -32,9 +32,29 @@
         if (!progress) return '';
         const count = scannedSubnetCount(progress);
         const total = progress.network_count || count;
-        const where = total > 1 ? ` across ${count} network${count === 1 ? '' : 's'}` : '';
         const devCount = progress.device_count || 0;
-        return `Found ${devCount} device${devCount === 1 ? '' : 's'}${where}`;
+        const devText = `Found ${devCount} device${devCount === 1 ? '' : 's'}`;
+
+        if (total <= 1) {
+            return devText;
+        }
+
+        if (count === total) {
+            return `${devText} across ${total} networks`;
+        }
+
+        const skipped = (progress.networks || []).filter(n => !n.is_supplemental && n.status === 'skipped');
+        const failed = (progress.networks || []).filter(n => !n.is_supplemental && n.status === 'failed');
+        const details = [];
+        if (skipped.length > 0) {
+            const reason = skipped[0].error ? `: ${skipped[0].error}` : '';
+            details.push(`${skipped.length} skipped${reason}`);
+        }
+        if (failed.length > 0) {
+            details.push(`${failed.length} failed`);
+        }
+        const note = details.length > 0 ? ` (${details.join(', ')})` : '';
+        return `${devText} across ${count} of ${total} networks${note}`;
     }
 
     return { completedNetworkKeys, automaticScanFailureMessage, scannedSubnetCount, formatScanCompletionSummary };

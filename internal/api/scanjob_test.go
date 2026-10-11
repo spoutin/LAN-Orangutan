@@ -994,6 +994,41 @@ func TestScanJob_TelemetryExcludesSupplementalFromNetworkCountAndDeduplicatesDev
 	}
 }
 
+func TestScanJob_BriefRateLimitWaitsAndProceeds(t *testing.T) {
+	store := newScanJobTestStore(t)
+	// Network was scanned 29.95s ago, with minInterval=30s, wait is ~50ms
+	_ = store.SetLastScan("10.0.0.0/24", time.Now().Add(-29950*time.Millisecond))
+
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+	h := NewHandler(store, cfg)
+
+	scanned := false
+	runner := &testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			scanned = true
+			return []byte(`<nmaprun><host><address addr="10.0.0.5" addrtype="ipv4"/><status state="up"/></host></nmaprun>`), nil
+		},
+	}
+	h.scanner.SetRemoteRunner(runner)
+
+	job := h.startScanJob(cfg.Scanning.Networks, false, scanModeQuick)
+	<-job.done
+
+	if !scanned {
+		t.Fatal("expected network to be scanned after brief wait, but it was skipped")
+	}
+
+	snap := job.snapshot(cfg, store)
+	if snap.ScannedNetworkCount != 1 {
+		t.Fatalf("ScannedNetworkCount = %d, want 1", snap.ScannedNetworkCount)
+	}
+	if len(snap.Networks) == 0 || snap.Networks[0].Status != "scanned" {
+		t.Fatalf("expected network status = scanned, got: %+v", snap.Networks)
+	}
+}
+
 
 
 

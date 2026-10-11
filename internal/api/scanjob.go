@@ -397,13 +397,21 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 
 				lastScan := h.store.GetLastScan(cidr)
 				if canScan, waitTime := h.scanner.CheckRateLimit(lastScan); !canScan {
-					j.setActiveNetwork(cidr, gwName, false)
-					h.store.SetNetworkScanning(cidr, false)
-					summary.Status = "skipped"
-					summary.Error = "rate limited, wait " + waitTime.Round(time.Second).String()
-					j.addResult(summary, 0)
-					h.store.AddCompletedNetwork(cidr)
-					continue
+					if waitTime > 0 && waitTime <= 5*time.Second {
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(waitTime):
+						}
+					} else {
+						j.setActiveNetwork(cidr, gwName, false)
+						h.store.SetNetworkScanning(cidr, false)
+						summary.Status = "skipped"
+						summary.Error = "rate limited, wait " + waitTime.Round(time.Second).String()
+						j.addResult(summary, 0)
+						h.store.AddCompletedNetwork(cidr)
+						continue
+					}
 				}
 
 				// scanNetwork applies its own per-network timeout.

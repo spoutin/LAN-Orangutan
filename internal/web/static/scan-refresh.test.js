@@ -60,4 +60,23 @@ test('formatScanCompletionSummary formats correct device and subnet count', () =
     }), 'Found 91 devices across 7 networks');
 });
 
+test('formatScanCompletionSummary explains partial completion when a network was skipped', () => {
+    assert.equal(formatScanCompletionSummary({
+        network_count: 7,
+        scanned_network_count: 6,
+        device_count: 101,
+        networks: [
+            { network: '10.5.5.0/24', network_name: 'black', status: 'skipped', error: 'rate limited, wait 10s' },
+            { network: '10.0.0.0/24', status: 'scanned' },
+            { network: '10.0.1.0/24', status: 'scanned' },
+            { network: '10.0.3.0/24', status: 'scanned' },
+            { network: '10.0.4.0/24', status: 'scanned' },
+            { network: '192.168.1.0/24', status: 'scanned' },
+            { network: '192.168.111.0/24', status: 'scanned' },
+            { network: 'mDNS', status: 'scanned', is_supplemental: true }
+        ]
+    }), 'Found 101 devices across 6 of 7 networks (1 skipped: rate limited, wait 10s)');
+});
+
+
 
