@@ -1312,3 +1312,43 @@ func TestUpdateDevicePreservesExistingSwitchTelemetryWhenOmitted(t *testing.T) {
 		t.Errorf("SwitchUpdatedAt = %v, want %v", got.SwitchUpdatedAt, updatedAt)
 	}
 }
+
+func TestStorage_MultiNetworkScanning(t *testing.T) {
+	s := newTestStorage(t)
+
+	if s.IsNetworkScanning("10.0.0.0/24") {
+		t.Fatal("expected 10.0.0.0/24 not scanning initially")
+	}
+
+	// Activate both networks concurrently
+	s.SetNetworkScanning("10.0.0.0/24", true)
+	s.SetNetworkScanning("10.5.5.0/24", true)
+
+	if !s.IsNetworkScanning("10.0.0.0/24") {
+		t.Error("expected 10.0.0.0/24 is scanning")
+	}
+	if !s.IsNetworkScanning("10.5.5.0/24") {
+		t.Error("expected 10.5.5.0/24 is scanning")
+	}
+
+	active := s.GetActiveScanningNetworks()
+	if len(active) != 2 || active[0] != "10.0.0.0/24" || active[1] != "10.5.5.0/24" {
+		t.Fatalf("unexpected active networks: %v", active)
+	}
+
+	// Deactivate one
+	s.SetNetworkScanning("10.0.0.0/24", false)
+	if s.IsNetworkScanning("10.0.0.0/24") {
+		t.Error("expected 10.0.0.0/24 no longer scanning")
+	}
+	if !s.IsNetworkScanning("10.5.5.0/24") {
+		t.Error("expected 10.5.5.0/24 still scanning")
+	}
+
+	// Clear all
+	s.ClearScanningNetworks()
+	if s.IsNetworkScanning("10.5.5.0/24") {
+		t.Error("expected 10.5.5.0/24 no longer scanning after clear")
+	}
+}
+

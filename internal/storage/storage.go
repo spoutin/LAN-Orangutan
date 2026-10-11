@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,7 @@ type Storage struct {
 	scanRunning            int32
 	scanInterval           int32
 	currentScanningNetwork string
+	activeScanningNetworks map[string]bool
 	completedNetworks      []string
 }
 
@@ -161,6 +163,66 @@ func (s *Storage) SetCurrentScanningNetwork(cidr string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.currentScanningNetwork = cidr
+	if s.activeScanningNetworks == nil {
+		s.activeScanningNetworks = make(map[string]bool)
+	}
+	if cidr != "" {
+		s.activeScanningNetworks[cidr] = true
+	} else {
+		s.activeScanningNetworks = make(map[string]bool)
+	}
+}
+
+// SetNetworkScanning marks a network CIDR as actively scanning or completed/idle
+func (s *Storage) SetNetworkScanning(cidr string, active bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeScanningNetworks == nil {
+		s.activeScanningNetworks = make(map[string]bool)
+	}
+	if active {
+		s.activeScanningNetworks[cidr] = true
+		s.currentScanningNetwork = cidr
+	} else {
+		delete(s.activeScanningNetworks, cidr)
+		if s.currentScanningNetwork == cidr {
+			s.currentScanningNetwork = ""
+			for n := range s.activeScanningNetworks {
+				s.currentScanningNetwork = n
+				break
+			}
+		}
+	}
+}
+
+// IsNetworkScanning reports whether a network CIDR is currently being scanned
+func (s *Storage) IsNetworkScanning(cidr string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.activeScanningNetworks != nil && s.activeScanningNetworks[cidr] {
+		return true
+	}
+	return s.currentScanningNetwork == cidr
+}
+
+// GetActiveScanningNetworks returns a list of all network CIDRs currently being scanned
+func (s *Storage) GetActiveScanningNetworks() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var list []string
+	for n := range s.activeScanningNetworks {
+		list = append(list, n)
+	}
+	sort.Strings(list)
+	return list
+}
+
+// ClearScanningNetworks clears all active scanning networks
+func (s *Storage) ClearScanningNetworks() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeScanningNetworks = make(map[string]bool)
+	s.currentScanningNetwork = ""
 }
 
 // GetCurrentScanningNetwork returns the network CIDR currently being scanned
