@@ -769,6 +769,99 @@ func TestScanJob_Stage2PerGatewayDeepScan(t *testing.T) {
 	}
 }
 
+type testControlledRemoteRunner struct {
+	fn func(ctx context.Context, target string, args []string) ([]byte, error)
+}
+
+func (r *testControlledRemoteRunner) HasRemoteScannerForTarget(target string) bool {
+	return true
+}
+
+func (r *testControlledRemoteRunner) GetGatewayForTarget(target string) string {
+	if strings.HasPrefix(target, "10.0.") {
+		return "opnsense"
+	}
+	if strings.HasPrefix(target, "10.5.") {
+		return "openwrt"
+	}
+	return "local"
+}
+
+func (r *testControlledRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
+	if r.fn != nil {
+		return r.fn(ctx, target, args)
+	}
+	return nil, nil
+}
+
+func (r *testControlledRemoteRunner) Close() error { return nil }
+
+func TestScanJob_Stage2PerSubnetDeepScanningLifecycle(t *testing.T) {
+	store := newScanJobTestStore(t)
+	// Seed 1 device on opnsense (fast) and 1 device on openwrt (slow)
+	_ = store.UpdateDevice(&types.Device{
+		IP:       "10.0.0.10",
+		MAC:      "aa:bb:cc:dd:ee:01",
+		LastSeen: time.Now(),
+	})
+	_ = store.UpdateDevice(&types.Device{
+		IP:       "10.5.5.10",
+		MAC:      "aa:bb:cc:dd:ee:02",
+		LastSeen: time.Now(),
+	})
+
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.5.5.0/24"}
+	cfg.Scanning.PortScanRange = "80"
+	cfg.Scanning.EnablePortScan = true
+	h := NewHandler(store, cfg)
+
+	opnDone := make(chan struct{})
+	unblockOpenwrt := make(chan struct{})
+	openwrtRunning := make(chan struct{})
+
+	runner := &testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			if strings.Contains(target, "10.0.0.10") {
+				// Fast opnsense completes after brief sleep
+				time.Sleep(10 * time.Millisecond)
+				defer close(opnDone)
+				return []byte(`<nmaprun><host><ports><port protocol="tcp" portid="80"><state state="open"/></port></ports></host></nmaprun>`), nil
+			}
+			if strings.Contains(target, "10.5.5.10") {
+				close(openwrtRunning)
+				<-unblockOpenwrt
+				return []byte(`<nmaprun><host><ports><port protocol="tcp" portid="80"><state state="open"/></port></ports></host></nmaprun>`), nil
+			}
+			return nil, fmt.Errorf("unexpected target %s", target)
+		},
+	}
+	h.scanner.SetRemoteRunner(runner)
+
+	job := h.startScanJob(cfg.Scanning.Networks, false, scanModeDeep)
+
+	// Wait until openwrt is running and opnsense has completed
+	<-openwrtRunning
+	<-opnDone
+	time.Sleep(20 * time.Millisecond)
+
+	// At this point, opnsense deep scan is complete, so 10.0.0.0/24 should NOT be deep scanning!
+	// But 10.5.5.0/24 is still waiting, so it SHOULD be deep scanning!
+	if store.IsNetworkDeepScanning("10.0.0.0/24") {
+		t.Error("expected 10.0.0.0/24 deep scanning to be false after its subnet finished")
+	}
+	if !store.IsNetworkDeepScanning("10.5.5.0/24") {
+		t.Error("expected 10.5.5.0/24 deep scanning to be true while still running")
+	}
+
+	close(unblockOpenwrt)
+	<-job.done
+
+	if store.IsNetworkDeepScanning("10.5.5.0/24") {
+		t.Error("expected 10.5.5.0/24 deep scanning to be false after completion")
+	}
+}
+
 type testBlockingRemoteRunner struct {
 	started      chan string
 	continueChan chan struct{}

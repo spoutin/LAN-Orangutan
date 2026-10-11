@@ -1370,4 +1370,23 @@ func TestStorage_NetworkScanErrors(t *testing.T) {
 	}
 }
 
+func TestStorage_NetworkDeepScanning(t *testing.T) {
+	s := newTestStorage(t)
+
+	if s.IsNetworkDeepScanning("10.5.5.0/24") {
+		t.Fatal("expected 10.5.5.0/24 not deep scanning initially")
+	}
+
+	s.SetNetworkDeepScanning("10.5.5.0/24", true)
+	if !s.IsNetworkDeepScanning("10.5.5.0/24") {
+		t.Fatal("expected 10.5.5.0/24 deep scanning after set")
+	}
+
+	s.SetNetworkDeepScanning("10.5.5.0/24", false)
+	if s.IsNetworkDeepScanning("10.5.5.0/24") {
+		t.Fatal("expected 10.5.5.0/24 not deep scanning after clear")
+	}
+}
+
+
 

@@ -27,10 +27,11 @@ type Storage struct {
 	networkNames           map[string]string
 	scanRunning            int32
 	scanInterval           int32
-	currentScanningNetwork string
-	activeScanningNetworks map[string]bool
-	networkScanErrors      map[string]string
-	completedNetworks      []string
+	currentScanningNetwork     string
+	activeScanningNetworks     map[string]bool
+	activeDeepScanningNetworks map[string]bool
+	networkScanErrors          map[string]string
+	completedNetworks          []string
 }
 
 // SwitchConnection is a current switch forwarding-table match for a device MAC.
@@ -223,7 +224,39 @@ func (s *Storage) ClearScanningNetworks() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.activeScanningNetworks = make(map[string]bool)
+	s.activeDeepScanningNetworks = make(map[string]bool)
 	s.currentScanningNetwork = ""
+}
+
+// SetNetworkDeepScanning marks a network CIDR as actively performing Stage 2 deep scans
+func (s *Storage) SetNetworkDeepScanning(cidr string, active bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeDeepScanningNetworks == nil {
+		s.activeDeepScanningNetworks = make(map[string]bool)
+	}
+	if active {
+		s.activeDeepScanningNetworks[cidr] = true
+	} else {
+		delete(s.activeDeepScanningNetworks, cidr)
+	}
+}
+
+// IsNetworkDeepScanning reports whether a network CIDR is currently undergoing Stage 2 deep scans
+func (s *Storage) IsNetworkDeepScanning(cidr string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.activeDeepScanningNetworks == nil {
+		return false
+	}
+	return s.activeDeepScanningNetworks[cidr]
+}
+
+// ClearDeepScanningNetworks clears all active deep scanning networks
+func (s *Storage) ClearDeepScanningNetworks() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeDeepScanningNetworks = make(map[string]bool)
 }
 
 // SetNetworkScanError records a scan error for a network

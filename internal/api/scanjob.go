@@ -787,6 +787,12 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 				}
 				targets = prioritizeDeepScanDevices(targets)
 
+				if len(j.deepDevices) != 1 {
+					h.store.SetNetworkDeepScanning(network, true)
+					h.store.SetNetworkScanning(network, true)
+				}
+				log.Printf("[scan] starting service scan queue on %s via gateway %s (%d hosts)", network, gwName, len(targets))
+
 				concurrency := 2
 				if j.nightlyDeep || len(j.deepDevices) == 1 {
 					concurrency = 1
@@ -802,9 +808,6 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 							if ctx.Err() != nil {
 								return
 							}
-							if len(j.deepDevices) != 1 {
-								h.store.SetCurrentScanningNetwork(network)
-							}
 							j.scanPortHost(ctx, h, network, dev)
 						}
 					}()
@@ -818,13 +821,21 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 				}
 				close(hostChan)
 				subnetWG.Wait()
+
+				if len(j.deepDevices) != 1 {
+					h.store.SetNetworkDeepScanning(network, false)
+					h.store.SetNetworkScanning(network, false)
+					h.store.AddCompletedNetwork(network)
+				}
+				log.Printf("[scan] completed service scan queue on %s via gateway %s", network, gwName)
 			}
 		}(gw, subnets)
 	}
 	gatewayWG.Wait()
 
 	if len(j.deepDevices) != 1 {
-		h.store.SetCurrentScanningNetwork("")
+		h.store.ClearDeepScanningNetworks()
+		h.store.ClearScanningNetworks()
 	}
 
 	j.mu.Lock()
@@ -1221,12 +1232,22 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 	}
 	j.mu.Unlock()
 
+	gwName := h.gatewayForTarget(network)
+	start := time.Now()
+	name := device.Hostname
+	if name == "" {
+		name = "-"
+	}
+	log.Printf("[scan] starting service scan on %s (%s) via gateway %s", device.IP, name, gwName)
+
 	ports, sshPorts, services, err := h.scanner.ScanHostPortsWithTiming(ctx, device.IP, h.cfg.Scanning.PortScanRange, j.nightlyDeep)
+	dur := time.Since(start).Seconds()
 	if err != nil {
 		h.notifyRemoteScannerFailure(network, device.IP, err)
-		fmt.Printf("[DEBUG-PORT-SCAN] Failed to scan ports for %s: %v\n", device.IP, err)
+		log.Printf("[scan] service scan failed for %s via gateway %s: %v (%.2fs)", device.IP, gwName, err, dur)
 	} else {
 		h.notifyRemoteScannerSuccess(network, device.IP)
+		log.Printf("[scan] completed service scan for %s via gateway %s (found %d ports in %.2fs)", device.IP, gwName, len(ports), dur)
 		// Fetch current device from store to preserve customized fields
 		current := h.store.GetDevice(device.IP)
 		if current == nil {

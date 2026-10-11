@@ -38,14 +38,15 @@ type Handler struct {
 // NetworkView holds network info and device statistics for rendering
 type NetworkView struct {
 	types.Network
-	DeviceCount   int
-	IsScanning    bool
-	IsCompleted   bool
-	ScanError     string
-	LastScanUnix  int64
-	LastScanAgo   string
-	SlackWebhook  string
-	NotifyEnabled bool
+	DeviceCount    int
+	IsScanning     bool
+	IsDeepScanning bool
+	IsCompleted    bool
+	ScanError      string
+	LastScanUnix   int64
+	LastScanAgo    string
+	SlackWebhook   string
+	NotifyEnabled  bool
 }
 
 // PageData holds data passed to templates
@@ -442,17 +443,19 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 
 		isScanning := h.store.IsNetworkScanning(n.CIDR)
+		isDeepScanning := h.store.IsNetworkDeepScanning(n.CIDR)
 		isCompleted := h.store.IsNetworkCompletedInCurrentRun(n.CIDR)
 		scanError := h.store.GetNetworkScanError(n.CIDR)
 
 		networkViews = append(networkViews, NetworkView{
-			Network:      n,
-			DeviceCount:  networkCounts[friendlyLower],
-			IsScanning:   isScanning,
-			IsCompleted:  isCompleted,
-			ScanError:    scanError,
-			LastScanUnix: lastScanUnix,
-			LastScanAgo:  lastScanAgo,
+			Network:        n,
+			DeviceCount:    networkCounts[friendlyLower],
+			IsScanning:     isScanning,
+			IsDeepScanning: isDeepScanning,
+			IsCompleted:    isCompleted,
+			ScanError:      scanError,
+			LastScanUnix:   lastScanUnix,
+			LastScanAgo:    lastScanAgo,
 		})
 	}
 

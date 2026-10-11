@@ -844,3 +844,32 @@ func TestHandler_NetworkScanErrorState(t *testing.T) {
 	}
 }
 
+func TestHandler_NetworkDeepScanningState(t *testing.T) {
+	h, authn := newTestHandler(t, testPassword)
+	h.cfg.Scanning.Networks = []string{"10.5.5.0/24"}
+	h.cfg.Scanning.OnlyConfiguredNetworks = true
+
+	// Mark scan running and network as deep scanning
+	h.store.SetScanRunning(true)
+	h.store.SetNetworkDeepScanning("10.5.5.0/24", true)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	token, ok := authn.Login("127.0.0.1:5000", testPassword)
+	if !ok {
+		t.Fatal("login failed")
+	}
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
+
+	h.handleIndex(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "Services...") {
+		t.Fatalf("expected 'Services...' status indicator in HTML, got:\n%s", body)
+	}
+}
+
+
