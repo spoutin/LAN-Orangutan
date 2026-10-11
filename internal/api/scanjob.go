@@ -334,83 +334,118 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		return
 	}
 
+	type gatewaySubnet struct {
+		cidr  string
+		index int
+	}
+	gatewayOrder := make([]string, 0)
+	subnetsByGateway := make(map[string][]gatewaySubnet)
+
 	for i, cidr := range j.networks {
-		if ctx.Err() != nil {
-			j.finish("cancelled", "")
-			return
+		gw := h.gatewayForTarget(cidr)
+		if len(subnetsByGateway[gw]) == 0 {
+			gatewayOrder = append(gatewayOrder, gw)
 		}
+		subnetsByGateway[gw] = append(subnetsByGateway[gw], gatewaySubnet{cidr: cidr, index: i + 1})
+	}
 
-		j.beginNetwork(cidr, i+1, h.store.GetLastDuration(cidr))
-		h.store.SetCurrentScanningNetwork(cidr)
+	var stage1WG sync.WaitGroup
+	var deepMu sync.Mutex
+	var activeIPsMu sync.Mutex
 
-		summary := networkScanSummary{Network: cidr}
-
-		lastScan := h.store.GetLastScan(cidr)
-		if canScan, waitTime := h.scanner.CheckRateLimit(lastScan); !canScan {
-			summary.Status = "skipped"
-			summary.Error = "rate limited, wait " + waitTime.Round(time.Second).String()
-			j.addResult(summary, 0)
-			h.store.AddCompletedNetwork(cidr)
-			continue
-		}
-
-		// scanNetwork applies its own per-network timeout.
-		result, err := h.scanNetwork(ctx, cidr)
-
-		if err != nil {
-			// A cancelled job surfaces as a scan error, but it is not a failure.
-			if ctx.Err() != nil {
-				j.finish("cancelled", "")
-				return
-			}
-			summary.Status = "failed"
-			summary.Error = err.Error()
-			j.addResult(summary, 0)
-			h.store.AddCompletedNetwork(cidr)
-			continue
-		}
-
-		summary.Status = "scanned"
-		summary.DeviceCount = result.DeviceCount
-		summary.Duration = result.Duration
-		j.addResult(summary, result.DeviceCount)
-		h.store.AddCompletedNetwork(cidr)
-
-		for _, d := range result.Devices {
-			if d.IP != "" {
-				activeIPsMap[d.IP] = true
-			}
-		}
-
-		// Stage 2 begins after discovery has covered every requested network, so
-		// each result and progress indicator has one unambiguous network context.
-		if j.mode == scanModeBoth && h.cfg.Scanning.PortScanRange != "" && (!j.automatic || h.cfg.Scanning.EnablePortScan) {
-			shouldPortScan := false
-			if !j.automatic {
-				// Keep manual scans immediate
-				shouldPortScan = true
-			} else if !j.nightlyDeep {
-				// Automatic background scan: quiet-hour 3:00 AM Eastern Time prober
-				loc, err := time.LoadLocation("America/New_York")
-				if err != nil {
-					// Fallback to UTC if America/New_York is not loaded/available
-					loc = time.UTC
+	for _, gw := range gatewayOrder {
+		subnets := subnetsByGateway[gw]
+		stage1WG.Add(1)
+		go func(gwName string, list []gatewaySubnet) {
+			defer stage1WG.Done()
+			for _, item := range list {
+				if ctx.Err() != nil {
+					return
 				}
-				nowET := time.Now().In(loc)
-				if nowET.Hour() == 3 {
-					todayStr := nowET.Format("2006-01-02")
-					lastDeepScan, _ := h.store.GetSetting("last_deep_scan_date")
-					if lastDeepScan != todayStr {
+
+				cidr := item.cidr
+				j.beginNetwork(cidr, item.index, h.store.GetLastDuration(cidr))
+				h.store.SetCurrentScanningNetwork(cidr)
+
+				summary := networkScanSummary{Network: cidr}
+
+				lastScan := h.store.GetLastScan(cidr)
+				if canScan, waitTime := h.scanner.CheckRateLimit(lastScan); !canScan {
+					summary.Status = "skipped"
+					summary.Error = "rate limited, wait " + waitTime.Round(time.Second).String()
+					j.addResult(summary, 0)
+					h.store.AddCompletedNetwork(cidr)
+					continue
+				}
+
+				// scanNetwork applies its own per-network timeout.
+				result, err := h.scanNetwork(ctx, cidr)
+
+				if err != nil {
+					// A cancelled job surfaces as a scan error, but it is not a failure.
+					if ctx.Err() != nil {
+						return
+					}
+					summary.Status = "failed"
+					summary.Error = err.Error()
+					j.addResult(summary, 0)
+					h.store.AddCompletedNetwork(cidr)
+					continue
+				}
+
+				summary.Status = "scanned"
+				summary.DeviceCount = result.DeviceCount
+				summary.Duration = result.Duration
+				j.addResult(summary, result.DeviceCount)
+				h.store.AddCompletedNetwork(cidr)
+
+				activeIPsMu.Lock()
+				for _, d := range result.Devices {
+					if d.IP != "" {
+						activeIPsMap[d.IP] = true
+					}
+				}
+				activeIPsMu.Unlock()
+
+				// Stage 2 begins after discovery has covered every requested network, so
+				// each result and progress indicator has one unambiguous network context.
+				if j.mode == scanModeBoth && h.cfg.Scanning.PortScanRange != "" && (!j.automatic || h.cfg.Scanning.EnablePortScan) {
+					shouldPortScan := false
+					if !j.automatic {
+						// Keep manual scans immediate
 						shouldPortScan = true
-						_ = h.store.SetSetting("last_deep_scan_date", todayStr)
+					} else if !j.nightlyDeep {
+						// Automatic background scan: quiet-hour 3:00 AM Eastern Time prober
+						loc, err := time.LoadLocation("America/New_York")
+						if err != nil {
+							// Fallback to UTC if America/New_York is not loaded/available
+							loc = time.UTC
+						}
+						nowET := time.Now().In(loc)
+						if nowET.Hour() == 3 {
+							todayStr := nowET.Format("2006-01-02")
+							lastDeepScan, _ := h.store.GetSetting("last_deep_scan_date")
+							if lastDeepScan != todayStr {
+								shouldPortScan = true
+								_ = h.store.SetSetting("last_deep_scan_date", todayStr)
+							}
+						}
+					}
+
+					if shouldPortScan {
+						deepMu.Lock()
+						deepTargets[cidr] = append(deepTargets[cidr], result.Devices...)
+						deepMu.Unlock()
 					}
 				}
 			}
+		}(gw, subnets)
+	}
+	stage1WG.Wait()
 
-			if shouldPortScan {
-				deepTargets[cidr] = append(deepTargets[cidr], result.Devices...)
-			}
-		}
+	if ctx.Err() != nil {
+		j.finish("cancelled", "")
+		return
 	}
 
 	if j.nightlyDeep && ctx.Err() == nil {

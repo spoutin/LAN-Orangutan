@@ -89,6 +89,14 @@ func (h *Handler) Close() error {
 	return nil
 }
 
+// gatewayForTarget returns the remote gateway name responsible for target, or "local" if not offloaded.
+func (h *Handler) gatewayForTarget(target string) string {
+	if r := h.scanner.GetRemoteRunner(); r != nil && r.HasRemoteScannerForTarget(target) {
+		return r.GetGatewayForTarget(target)
+	}
+	return "local"
+}
+
 // ServeHTTP implements http.Handler
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Set JSON content type for all API responses

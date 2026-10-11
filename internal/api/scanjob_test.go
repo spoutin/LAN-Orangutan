@@ -454,6 +454,99 @@ func TestPrioritizeDeepScanDevices(t *testing.T) {
 	}
 }
 
+type testConcurrencyTrackingRemoteRunner struct {
+	mu           sync.Mutex
+	activePerGW  map[string]int
+	maxPerGW     map[string]int
+	activeGlobal int
+	maxGlobal    int
+}
+
+func (r *testConcurrencyTrackingRemoteRunner) HasRemoteScannerForTarget(target string) bool {
+	return strings.HasPrefix(target, "10.0.") || strings.HasPrefix(target, "10.5.")
+}
+
+func (r *testConcurrencyTrackingRemoteRunner) GetGatewayForTarget(target string) string {
+	if strings.HasPrefix(target, "10.0.") {
+		return "opnsense"
+	}
+	if strings.HasPrefix(target, "10.5.") {
+		return "openwrt"
+	}
+	return "local"
+}
+
+func (r *testConcurrencyTrackingRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
+	gw := r.GetGatewayForTarget(target)
+	r.mu.Lock()
+	if r.activePerGW == nil {
+		r.activePerGW = make(map[string]int)
+		r.maxPerGW = make(map[string]int)
+	}
+	r.activePerGW[gw]++
+	if r.activePerGW[gw] > r.maxPerGW[gw] {
+		r.maxPerGW[gw] = r.activePerGW[gw]
+	}
+	r.activeGlobal++
+	if r.activeGlobal > r.maxGlobal {
+		r.maxGlobal = r.activeGlobal
+	}
+	r.mu.Unlock()
+
+	// Sleep briefly to allow concurrent execution across gateways
+	time.Sleep(50 * time.Millisecond)
+
+	r.mu.Lock()
+	r.activePerGW[gw]--
+	r.activeGlobal--
+	r.mu.Unlock()
+
+	return []byte(`<nmaprun></nmaprun>`), nil
+}
+
+func (r *testConcurrencyTrackingRemoteRunner) Close() error { return nil }
+
+func TestScanJob_Stage1PerGatewayParallelSweep(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.0.1.0/24", "10.5.5.0/24", "10.5.6.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+	cfg.Scanning.MinScanInterval = 1
+	h := NewHandler(store, cfg)
+
+	runner := &testConcurrencyTrackingRemoteRunner{}
+	h.scanner.SetRemoteRunner(runner)
+
+	job := h.startScanJob(cfg.Scanning.Networks, false, scanModeQuick)
+	<-job.done
+
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+
+	if runner.maxPerGW["opnsense"] != 1 {
+		t.Fatalf("expected opnsense max concurrent subnets = 1, got %d", runner.maxPerGW["opnsense"])
+	}
+	if runner.maxPerGW["openwrt"] != 1 {
+		t.Fatalf("expected openwrt max concurrent subnets = 1, got %d", runner.maxPerGW["openwrt"])
+	}
+	if runner.maxGlobal != 2 {
+		t.Fatalf("expected global concurrent subnets = 2 (1 per gateway), got %d", runner.maxGlobal)
+	}
+
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	subnetsDone := 0
+	for _, res := range job.results {
+		if strings.HasPrefix(res.Network, "10.") {
+			subnetsDone++
+		}
+	}
+	if subnetsDone != 4 {
+		t.Fatalf("expected 4 subnet results, got %d (all: %v)", subnetsDone, job.results)
+	}
+}
+
+
 func TestScanJob_SwitchesResolveUnknownVLANInventoryMACThroughBridgeFDB(t *testing.T) {
 	store := newScanJobTestStore(t)
 	if err := store.UpdateDevice(&types.Device{IP: "192.168.1.11", MAC: "AA:BB:CC:DD:EE:02"}); err != nil {
