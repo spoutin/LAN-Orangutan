@@ -712,19 +712,10 @@ func prioritizeDeepScanDevices(devices []types.Device) []types.Device {
 }
 
 func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork map[string][]types.Device) {
-	type deepTarget struct {
-		network string
-		device  types.Device
-	}
 	progress := make([]deepNetworkProgress, 0, len(j.networks))
-	queue := make([]deepTarget, 0)
 	for _, network := range j.networks {
 		if targets := targetsByNetwork[network]; len(targets) > 0 {
-			targets = prioritizeDeepScanDevices(targets)
 			progress = append(progress, deepNetworkProgress{Network: network, Total: len(targets)})
-			for _, target := range targets {
-				queue = append(queue, deepTarget{network: network, device: target})
-			}
 		}
 	}
 	if len(progress) == 0 {
@@ -740,32 +731,72 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 	}
 	j.mu.Unlock()
 
-	jobs := make(chan deepTarget)
-	var wg sync.WaitGroup
-	concurrency := 3
-	if j.nightlyDeep {
-		concurrency = 1
-	}
-	for range concurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for target := range jobs {
-				if len(j.deepDevices) != 1 {
-					h.store.SetCurrentScanningNetwork(target.network)
-				}
-				j.scanPortHost(ctx, h, target.network, target.device)
-			}
-		}()
-	}
-	for _, target := range queue {
-		if ctx.Err() != nil {
-			break
+	// Group networks with targets by gateway
+	gatewayOrder := make([]string, 0)
+	subnetsByGateway := make(map[string][]string)
+	for _, network := range j.networks {
+		if len(targetsByNetwork[network]) == 0 {
+			continue
 		}
-		jobs <- target
+		gw := h.gatewayForTarget(network)
+		if len(subnetsByGateway[gw]) == 0 {
+			gatewayOrder = append(gatewayOrder, gw)
+		}
+		subnetsByGateway[gw] = append(subnetsByGateway[gw], network)
 	}
-	close(jobs)
-	wg.Wait()
+
+	var gatewayWG sync.WaitGroup
+	for _, gw := range gatewayOrder {
+		subnets := subnetsByGateway[gw]
+		gatewayWG.Add(1)
+		go func(gwName string, netList []string) {
+			defer gatewayWG.Done()
+			// Process ONE subnet at a time for this gateway!
+			for _, network := range netList {
+				if ctx.Err() != nil {
+					return
+				}
+				targets := targetsByNetwork[network]
+				if len(targets) == 0 {
+					continue
+				}
+				targets = prioritizeDeepScanDevices(targets)
+
+				concurrency := 2
+				if j.nightlyDeep || len(j.deepDevices) == 1 {
+					concurrency = 1
+				}
+
+				hostChan := make(chan types.Device)
+				var subnetWG sync.WaitGroup
+				for range concurrency {
+					subnetWG.Add(1)
+					go func() {
+						defer subnetWG.Done()
+						for dev := range hostChan {
+							if ctx.Err() != nil {
+								return
+							}
+							if len(j.deepDevices) != 1 {
+								h.store.SetCurrentScanningNetwork(network)
+							}
+							j.scanPortHost(ctx, h, network, dev)
+						}
+					}()
+				}
+
+				for _, dev := range targets {
+					if ctx.Err() != nil {
+						break
+					}
+					hostChan <- dev
+				}
+				close(hostChan)
+				subnetWG.Wait()
+			}
+		}(gw, subnets)
+	}
+	gatewayWG.Wait()
 
 	if len(j.deepDevices) != 1 {
 		h.store.SetCurrentScanningNetwork("")
