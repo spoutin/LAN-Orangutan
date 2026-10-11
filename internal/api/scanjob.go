@@ -408,12 +408,14 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 					}
 					summary.Status = "failed"
 					summary.Error = err.Error()
+					h.store.SetNetworkScanError(cidr, err.Error())
 					log.Printf("[scan] discovery sweep failed on %s via gateway %s: %v", cidr, gwName, err)
 					j.addResult(summary, 0)
 					h.store.AddCompletedNetwork(cidr)
 					continue
 				}
 
+				h.store.ClearNetworkScanError(cidr)
 				summary.Status = "scanned"
 				summary.DeviceCount = result.DeviceCount
 				summary.Duration = result.Duration

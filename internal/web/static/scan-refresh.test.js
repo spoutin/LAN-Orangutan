@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { completedNetworkKeys } = require('./scan-refresh.js');
+const { completedNetworkKeys, automaticScanFailureMessage } = require('./scan-refresh.js');
 
 test('completed network keys include completed quick scan results', () => {
     assert.deepEqual(completedNetworkKeys({
@@ -16,3 +16,21 @@ test('completed network keys wait for all deep probes in a network', () => {
         ]
     }), ['deep:10.1.0.0/24']);
 });
+
+test('automatic scan failure message returns null when automatic scan succeeds', () => {
+    assert.equal(automaticScanFailureMessage({
+        automatic: true,
+        networks: [{ network: '10.0.0.0/24', status: 'scanned' }]
+    }), null);
+});
+
+test('automatic scan failure message formats warning when network fails', () => {
+    assert.equal(automaticScanFailureMessage({
+        automatic: true,
+        networks: [
+            { network: '10.5.5.0/24', network_name: 'black', status: 'failed', error: 'stat /var/secrets/openwwrt.key: no such file or directory' },
+            { network: '10.0.4.0/24', network_name: 'SemiPrivate', status: 'scanned' }
+        ]
+    }), 'Scan failed for black: stat /var/secrets/openwwrt.key: no such file or directory');
+});
+

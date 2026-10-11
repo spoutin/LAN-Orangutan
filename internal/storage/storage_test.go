@@ -1352,3 +1352,22 @@ func TestStorage_MultiNetworkScanning(t *testing.T) {
 	}
 }
 
+func TestStorage_NetworkScanErrors(t *testing.T) {
+	s := newTestStorage(t)
+
+	if errStr := s.GetNetworkScanError("10.5.5.0/24"); errStr != "" {
+		t.Fatalf("expected empty scan error initially, got %q", errStr)
+	}
+
+	s.SetNetworkScanError("10.5.5.0/24", "connection refused")
+	if got := s.GetNetworkScanError("10.5.5.0/24"); got != "connection refused" {
+		t.Fatalf("expected 'connection refused', got %q", got)
+	}
+
+	s.ClearNetworkScanError("10.5.5.0/24")
+	if got := s.GetNetworkScanError("10.5.5.0/24"); got != "" {
+		t.Fatalf("expected empty after clear, got %q", got)
+	}
+}
+
+

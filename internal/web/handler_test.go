@@ -813,3 +813,34 @@ func TestHandler_MultipleNetworksScanningState(t *testing.T) {
 		t.Fatalf("expected 2 'sidebar-net-status scanning' status indicators in HTML, got %d", count)
 	}
 }
+
+func TestHandler_NetworkScanErrorState(t *testing.T) {
+	h, authn := newTestHandler(t, testPassword)
+	h.cfg.Scanning.Networks = []string{"10.5.5.0/24"}
+	h.cfg.Scanning.OnlyConfiguredNetworks = true
+
+	// Record a scan error on 10.5.5.0/24
+	h.store.SetNetworkScanError("10.5.5.0/24", "SSH connection refused")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	token, ok := authn.Login("127.0.0.1:5000", testPassword)
+	if !ok {
+		t.Fatal("login failed")
+	}
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
+
+	h.handleIndex(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "sidebar-net-status failed") {
+		t.Fatalf("expected 'sidebar-net-status failed' in HTML body, got:\n%s", body)
+	}
+	if !strings.Contains(body, "SSH connection refused") {
+		t.Fatalf("expected error message 'SSH connection refused' in title/tooltip, got:\n%s", body)
+	}
+}
+

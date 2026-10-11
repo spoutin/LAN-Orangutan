@@ -2921,6 +2921,12 @@ img.login-logo {
     opacity: 0.75;
 }
 
+.sidebar-net-status.failed {
+    color: var(--danger, #ef4444);
+    font-weight: 500;
+    cursor: help;
+}
+
 /* Presence Chart and Timeline Styling */
 .presence-chart-container {
     margin-bottom: 1.5rem;

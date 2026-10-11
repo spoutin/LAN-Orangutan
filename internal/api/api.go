@@ -407,16 +407,19 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 	result, err := h.scanner.Scan(ctx, cidr)
 	if err != nil {
 		h.notifyRemoteScannerFailure(cidr, cidr, err)
+		h.store.SetNetworkScanError(cidr, err.Error())
 		h.error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	if !result.Success {
 		h.notifyRemoteScannerFailure(cidr, cidr, errors.New(result.Error))
+		h.store.SetNetworkScanError(cidr, result.Error)
 		h.error(w, http.StatusInternalServerError, result.Error)
 		return
 	}
 	h.notifyRemoteScannerSuccess(cidr, cidr)
+	h.store.ClearNetworkScanError(cidr)
 
 	// Merge devices into storage
 	newDevs, seenDevs, err := h.store.MergeDevices(result.Devices)
@@ -681,13 +684,16 @@ func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResu
 	result, err := h.scanner.Scan(ctx, cidr)
 	if err != nil {
 		h.notifyRemoteScannerFailure(cidr, cidr, err)
+		h.store.SetNetworkScanError(cidr, err.Error())
 		return nil, err
 	}
 	if !result.Success {
 		h.notifyRemoteScannerFailure(cidr, cidr, errors.New(result.Error))
+		h.store.SetNetworkScanError(cidr, result.Error)
 		return nil, errors.New(result.Error)
 	}
 	h.notifyRemoteScannerSuccess(cidr, cidr)
+	h.store.ClearNetworkScanError(cidr)
 
 	newDevs, seenDevs, err := h.store.MergeDevices(result.Devices)
 	if err != nil {

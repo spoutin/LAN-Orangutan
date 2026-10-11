@@ -123,7 +123,11 @@ orangutan export out.csv</code></pre>
                                     </span>
                                 {{end}}
                             {{else}}
-                                {{if .LastScanAgo}}
+                                {{if .ScanError}}
+                                    <span class="sidebar-net-status failed" title="{{.ScanError}}">
+                                        ⚠ Failed{{if .LastScanAgo}} · {{.LastScanAgo}}{{end}}
+                                    </span>
+                                {{else if .LastScanAgo}}
                                     <span class="sidebar-net-status last-scan" data-relative-time="{{.LastScanUnix}}">
                                         scanned {{.LastScanAgo}}
                                     </span>

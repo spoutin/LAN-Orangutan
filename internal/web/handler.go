@@ -41,6 +41,7 @@ type NetworkView struct {
 	DeviceCount   int
 	IsScanning    bool
 	IsCompleted   bool
+	ScanError     string
 	LastScanUnix  int64
 	LastScanAgo   string
 	SlackWebhook  string
@@ -442,12 +443,14 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 		isScanning := h.store.IsNetworkScanning(n.CIDR)
 		isCompleted := h.store.IsNetworkCompletedInCurrentRun(n.CIDR)
+		scanError := h.store.GetNetworkScanError(n.CIDR)
 
 		networkViews = append(networkViews, NetworkView{
 			Network:      n,
 			DeviceCount:  networkCounts[friendlyLower],
 			IsScanning:   isScanning,
 			IsCompleted:  isCompleted,
+			ScanError:    scanError,
 			LastScanUnix: lastScanUnix,
 			LastScanAgo:  lastScanAgo,
 		})

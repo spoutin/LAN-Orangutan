@@ -29,6 +29,7 @@ type Storage struct {
 	scanInterval           int32
 	currentScanningNetwork string
 	activeScanningNetworks map[string]bool
+	networkScanErrors      map[string]string
 	completedNetworks      []string
 }
 
@@ -224,6 +225,36 @@ func (s *Storage) ClearScanningNetworks() {
 	s.activeScanningNetworks = make(map[string]bool)
 	s.currentScanningNetwork = ""
 }
+
+// SetNetworkScanError records a scan error for a network
+func (s *Storage) SetNetworkScanError(cidr, err string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.networkScanErrors == nil {
+		s.networkScanErrors = make(map[string]string)
+	}
+	if err != "" {
+		s.networkScanErrors[cidr] = err
+	} else {
+		delete(s.networkScanErrors, cidr)
+	}
+}
+
+// GetNetworkScanError returns the latest scan error for a network, if any
+func (s *Storage) GetNetworkScanError(cidr string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.networkScanErrors == nil {
+		return ""
+	}
+	return s.networkScanErrors[cidr]
+}
+
+// ClearNetworkScanError clears any recorded scan error for a network
+func (s *Storage) ClearNetworkScanError(cidr string) {
+	s.SetNetworkScanError(cidr, "")
+}
+
 
 // GetCurrentScanningNetwork returns the network CIDR currently being scanned
 func (s *Storage) GetCurrentScanningNetwork() string {

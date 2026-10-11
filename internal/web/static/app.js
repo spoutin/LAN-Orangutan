@@ -226,6 +226,11 @@ const scanCoordinator = {
                 this.stop();
                 if (!progress.automatic) {
                     reportScanOutcome(progress);
+                } else if (window.scanRefresh?.automaticScanFailureMessage) {
+                    const failMsg = window.scanRefresh.automaticScanFailureMessage(progress);
+                    if (failMsg) {
+                        showToast(failMsg, 'warning');
+                    }
                 }
                 await refreshInPlace();
                 return;

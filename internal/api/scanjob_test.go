@@ -460,6 +460,42 @@ func TestRemoteScannerAlertOnceAndRecoveryNotification(t *testing.T) {
 	mu.Unlock()
 }
 
+func TestScanJob_RecordsAndClearsNetworkScanError(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+	h := NewHandler(store, cfg)
+	runner := &testSwitchableRemoteRunner{
+		gateway: "opnsense (10.0.0.1)",
+		target:  "10.0.0.0/24",
+		fail:    true,
+		err:     fmt.Errorf("dial tcp: connection refused"),
+	}
+	h.scanner.SetRemoteRunner(runner)
+	ctx := context.Background()
+
+	// Initial state: no error
+	if got := store.GetNetworkScanError("10.0.0.0/24"); got != "" {
+		t.Fatalf("expected empty error initially, got %q", got)
+	}
+
+	// 1. Scan fails -> records error in store
+	_, _ = h.scanNetwork(ctx, "10.0.0.0/24")
+	if got := store.GetNetworkScanError("10.0.0.0/24"); !strings.Contains(got, "connection refused") {
+		t.Fatalf("expected error containing 'connection refused', got %q", got)
+	}
+
+	// 2. Scan recovers -> clears error in store
+	runner.fail = false
+	_, err := h.scanNetwork(ctx, "10.0.0.0/24")
+	if err != nil {
+		t.Fatalf("scanNetwork: %v", err)
+	}
+	if got := store.GetNetworkScanError("10.0.0.0/24"); got != "" {
+		t.Fatalf("expected empty error after recovery, got %q", got)
+	}
+}
 
 func TestScanJob_MultiOpenWrtRouters(t *testing.T) {
 	cfg := config.Default()

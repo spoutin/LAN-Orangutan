@@ -11,5 +11,14 @@
         return [...quick, ...deep];
     }
 
-    return { completedNetworkKeys };
+    function automaticScanFailureMessage(progress) {
+        if (!progress || !progress.automatic) return null;
+        const failed = (progress.networks || []).filter(n => n.status === 'failed');
+        if (failed.length === 0) return null;
+        const failedNames = failed.map(n => n.network_name || n.network).join(', ');
+        const firstErr = failed[0].error || 'scanner failure';
+        return `Scan failed for ${failedNames}: ${firstErr}`;
+    }
+
+    return { completedNetworkKeys, automaticScanFailureMessage };
 });
