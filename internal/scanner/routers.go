@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -177,6 +178,17 @@ func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []t
 	client := &http.Client{
 		Timeout:   10 * time.Second,
 		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			if len(via) > 0 && req.URL.Hostname() == via[0].URL.Hostname() {
+				if auth := via[0].Header.Get("Authorization"); auth != "" {
+					req.Header.Set("Authorization", auth)
+				}
+			}
+			return nil
+		},
 	}
 
 	// 1. Fetch Active Leases

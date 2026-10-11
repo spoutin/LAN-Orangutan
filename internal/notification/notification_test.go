@@ -57,3 +57,30 @@ func TestFormatRemoteScannerRecoverySlackMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatRouterAPIFailureAndRecoverySlackMessage(t *testing.T) {
+	msg := FormatRouterAPIFailureSlackMessage("OpenWrt", "10.5.5.1", "401 Unauthorized")
+	for _, want := range []string{
+		"Router API Failure",
+		"OpenWrt",
+		"10.5.5.1",
+		"401 Unauthorized",
+		"DHCP lease & host discovery failed",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("failure msg %q does not contain %q", msg, want)
+		}
+	}
+
+	recovery := FormatRouterAPIRecoverySlackMessage("OpenWrt", "10.5.5.1")
+	for _, want := range []string{
+		"Router API Recovered",
+		"OpenWrt",
+		"10.5.5.1",
+		"DHCP telemetry resumed",
+	} {
+		if !strings.Contains(recovery, want) {
+			t.Errorf("recovery msg %q does not contain %q", recovery, want)
+		}
+	}
+}

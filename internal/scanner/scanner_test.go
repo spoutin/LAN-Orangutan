@@ -61,6 +61,7 @@ type mockRemoteRunner struct {
 	runOutput []byte
 	runErr    error
 	called    bool
+	lastArgs  []string
 }
 
 func (m *mockRemoteRunner) HasRemoteScannerForTarget(target string) bool {
@@ -73,6 +74,7 @@ func (m *mockRemoteRunner) GetGatewayForTarget(target string) string {
 
 func (m *mockRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
 	m.called = true
+	m.lastArgs = args
 	return m.runOutput, m.runErr
 }
 
@@ -142,5 +144,44 @@ func TestScanHostPortsWithTimingUsesRemoteRunner(t *testing.T) {
 	}
 	if len(services) != 1 || services[0].Name != "https" {
 		t.Fatalf("expected service https, got %+v", services)
+	}
+}
+
+func TestRemoteScanOmitsNoDNSFlag(t *testing.T) {
+	mock := &mockRemoteRunner{
+		hasTarget: true,
+		runOutput: []byte(`<nmaprun><host><status state="up"/><address addr="10.5.5.10" addrtype="ipv4"/><hostnames><hostname name="beacon.black.internal" type="PTR"/></hostnames></host></nmaprun>`),
+	}
+	s := New(30, false, false, "")
+	s.SetRemoteRunner(mock)
+
+	result, err := s.Scan(context.Background(), "10.5.5.0/24")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	for _, arg := range mock.lastArgs {
+		if arg == "-n" {
+			t.Errorf("expected remote scan args not to include '-n' (disable DNS), but found it in %v", mock.lastArgs)
+		}
+	}
+	if len(result.Devices) != 1 || result.Devices[0].Hostname != "beacon.black.internal" {
+		t.Fatalf("expected device hostname 'beacon.black.internal', got %+v", result.Devices)
+	}
+}
+
+func TestExtractHostFromGateway(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"openwrt (10.5.5.1)", "10.5.5.1"},
+		{"opnsense (10.0.0.1)", "10.0.0.1"},
+		{"router", ""},
+		{"gateway (  192.168.1.1  )", "192.168.1.1"},
+	}
+	for _, tt := range tests {
+		if got := extractHostFromGateway(tt.input); got != tt.want {
+			t.Errorf("extractHostFromGateway(%q) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }

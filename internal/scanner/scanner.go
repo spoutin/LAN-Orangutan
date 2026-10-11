@@ -235,7 +235,9 @@ func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device
 
 	if s.remoteRunner != nil && s.remoteRunner.HasRemoteScannerForTarget(cidr) {
 		scannerName = "remote-nmap"
-		output, err = s.remoteRunner.RunScan(ctx, cidr, args)
+		// On the edge router, omit -n so Nmap uses the router's local resolver to resolve hostnames
+		remoteArgs := []string{"-sn", "-oX", "-", cidr}
+		output, err = s.remoteRunner.RunScan(ctx, cidr, remoteArgs)
 		if err != nil {
 			return nil, "", err
 		}
@@ -299,7 +301,7 @@ func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device
 
 		// Try reverse DNS if no hostname
 		if device.Hostname == "" {
-			device.Hostname = reverseDNS(device.IP)
+			device.Hostname = s.reverseDNSForTarget(device.IP, cidr)
 		}
 
 		// Parse response time
@@ -386,7 +388,7 @@ func (s *Scanner) scanWithArpScan(ctx context.Context, cidr string) ([]types.Dev
 		}
 
 		// Try reverse DNS
-		device.Hostname = reverseDNS(ip)
+		device.Hostname = s.reverseDNSForTarget(ip, cidr)
 
 		device.Type = Classify(device.Vendor, device.Hostname, nil)
 
@@ -396,21 +398,54 @@ func (s *Scanner) scanWithArpScan(ctx context.Context, cidr string) ([]types.Dev
 	return devices, "arp-scan", nil
 }
 
-// reverseDNS performs a reverse DNS lookup
-func reverseDNS(ip string) string {
+func extractHostFromGateway(gw string) string {
+	start := strings.Index(gw, "(")
+	end := strings.Index(gw, ")")
+	if start != -1 && end != -1 && end > start+1 {
+		return strings.TrimSpace(gw[start+1 : end])
+	}
+	return ""
+}
+
+func (s *Scanner) reverseDNSForTarget(ip, cidr string) string {
+	dnsServer := ""
+	if s.remoteRunner != nil && s.remoteRunner.HasRemoteScannerForTarget(cidr) {
+		gw := s.remoteRunner.GetGatewayForTarget(cidr)
+		dnsServer = extractHostFromGateway(gw)
+	}
+	return reverseDNSWithServer(ip, dnsServer)
+}
+
+func reverseDNSWithServer(ip, dnsServer string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	done := make(chan string, 1)
 	go func() {
-		names, err := net.LookupAddr(ip)
+		var resolver *net.Resolver
+		if dnsServer != "" {
+			resolver = &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					d := net.Dialer{Timeout: 2 * time.Second}
+					return d.DialContext(ctx, "udp", net.JoinHostPort(dnsServer, "53"))
+				},
+			}
+		} else {
+			resolver = net.DefaultResolver
+		}
+		names, err := resolver.LookupAddr(ctx, ip)
 		if err != nil || len(names) == 0 {
+			if dnsServer != "" {
+				if defNames, defErr := net.DefaultResolver.LookupAddr(ctx, ip); defErr == nil && len(defNames) > 0 {
+					done <- strings.TrimSuffix(defNames[0], ".")
+					return
+				}
+			}
 			done <- ""
 			return
 		}
-		// Remove trailing dot
-		hostname := strings.TrimSuffix(names[0], ".")
-		done <- hostname
+		done <- strings.TrimSuffix(names[0], ".")
 	}()
 
 	select {
@@ -419,6 +454,11 @@ func reverseDNS(ip string) string {
 	case hostname := <-done:
 		return hostname
 	}
+}
+
+// reverseDNS performs a reverse DNS lookup
+func reverseDNS(ip string) string {
+	return reverseDNSWithServer(ip, "")
 }
 
 // parseResponseTime parses nmap SRTT value (microseconds) to milliseconds

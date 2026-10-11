@@ -553,6 +553,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			}
 			leases, reservations, err := scanner.FetchOpenWrtDHCP(ctx, wrt)
 			if err == nil {
+				h.notifyRouterAPISuccess("OpenWrt", wrt.ID, wrt.Networks)
 				allLeases = append(allLeases, leases...)
 				allReservations = append(allReservations, reservations...)
 				if routerName == "" {
@@ -561,7 +562,14 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 					routerName += " & OpenWrt"
 				}
 			} else {
-				fmt.Printf("Router OpenWrt (%s) DHCP fetch error: %v\n", wrt.ID, err)
+				h.notifyRouterAPIFailure("OpenWrt", wrt.ID, wrt.Networks, err)
+				log.Printf("[scan] router OpenWrt (%s) DHCP fetch error: %v", wrt.ID, err)
+				j.addResult(networkScanSummary{
+					Network:        fmt.Sprintf("OpenWrt (%s) DHCP", wrt.ID),
+					Status:         "failed",
+					Error:          err.Error(),
+					IsSupplemental: true,
+				})
 			}
 		}
 
@@ -569,6 +577,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		if h.cfg.OPNsense.Enable {
 			leases, reservations, arpEntries, err := scanner.FetchOPNsenseDHCP(ctx, h.cfg.OPNsense)
 			if err == nil {
+				h.notifyRouterAPISuccess("OPNsense", "OPNsense", h.cfg.OPNsense.Networks)
 				allLeases = append(allLeases, leases...)
 				allReservations = append(allReservations, reservations...)
 				if len(arpEntries) > 0 {
@@ -588,7 +597,14 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 					routerName += " & OPNsense"
 				}
 			} else {
-				fmt.Printf("Router OPNsense DHCP fetch error: %v\n", err)
+				h.notifyRouterAPIFailure("OPNsense", "OPNsense", h.cfg.OPNsense.Networks, err)
+				log.Printf("[scan] router OPNsense DHCP fetch error: %v", err)
+				j.addResult(networkScanSummary{
+					Network:        "OPNsense DHCP",
+					Status:         "failed",
+					Error:          err.Error(),
+					IsSupplemental: true,
+				})
 			}
 		}
 

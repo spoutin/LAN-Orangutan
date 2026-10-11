@@ -467,3 +467,46 @@ func TestExtendedRouterTelemetry_EdgeCases(t *testing.T) {
 		}
 	})
 }
+
+func TestFetchOpenWrtDHCP_PreservesAuthOnHTTPRedirectToHTTPS(t *testing.T) {
+	httpsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer secret-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"code":"unauthorized","message":"missing or invalid token"}`))
+			return
+		}
+		if r.URL.Path == "/api/v3/dhcp/leases" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[{"ip":"10.5.5.10","mac":"00:11:22:33:44:55","hostname":"my-host"}]`))
+			return
+		}
+		if r.URL.Path == "/api/v3/dhcp/hosts" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[]`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer httpsServer.Close()
+
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, httpsServer.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer httpServer.Close()
+
+	cfg := config.OpenWrtConfig{
+		Enable:    true,
+		URL:       httpServer.URL,
+		APIToken:  "secret-token",
+		VerifySSL: false,
+	}
+
+	leases, _, err := FetchOpenWrtDHCP(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("expected FetchOpenWrtDHCP to succeed despite HTTP->HTTPS redirect, got: %v", err)
+	}
+	if len(leases) != 1 || leases[0].Hostname != "my-host" {
+		t.Fatalf("unexpected leases: %+v", leases)
+	}
+}

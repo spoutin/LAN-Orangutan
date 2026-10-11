@@ -132,3 +132,24 @@ func FormatRemoteScannerRecoverySlackMessage(gateway, target string) string {
 		gateway, target,
 	)
 }
+
+// FormatRouterAPIFailureSlackMessage formats an alert when a router DHCP/hosts API poll fails
+func FormatRouterAPIFailureSlackMessage(routerType, routerID, errorMsg string) string {
+	return fmt.Sprintf(
+		"🚨 *LAN-Orangutan: Router API Failure*\n"+
+			"*Router:* %s (%s)\n"+
+			"*Error:* %s\n"+
+			"*Action:* DHCP lease & host discovery failed. Please check router API URL, SSL certificate, and token credentials.",
+		routerType, routerID, errorMsg,
+	)
+}
+
+// FormatRouterAPIRecoverySlackMessage formats an alert when a router DHCP/hosts API recovers
+func FormatRouterAPIRecoverySlackMessage(routerType, routerID string) string {
+	return fmt.Sprintf(
+		"✅ *LAN-Orangutan: Router API Recovered*\n"+
+			"*Router:* %s (%s)\n"+
+			"*Status:* Router API poll succeeded. Normal DHCP telemetry resumed.",
+		routerType, routerID,
+	)
+}

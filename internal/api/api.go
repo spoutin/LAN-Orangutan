@@ -1061,3 +1061,67 @@ func (h *Handler) notifyRemoteScannerSuccess(networkCIDR string, target string) 
 	msg := notification.FormatRemoteScannerRecoverySlackMessage(gateway, target)
 	_ = h.sendSlackNotification(conf.SlackWebhook, msg)
 }
+
+func (h *Handler) notifyRouterAPIFailure(routerType string, routerID string, networkCIDRs []string, err error) {
+	if err == nil {
+		return
+	}
+	debounceKey := fmt.Sprintf("router:%s:%s", routerType, routerID)
+	h.alertMu.Lock()
+	if h.failedGateways == nil {
+		h.failedGateways = make(map[string]bool)
+	}
+	if h.failedGateways[debounceKey] {
+		h.alertMu.Unlock()
+		return
+	}
+	h.failedGateways[debounceKey] = true
+	h.alertMu.Unlock()
+
+	var webhooks []string
+	seen := make(map[string]bool)
+	for _, cidr := range networkCIDRs {
+		conf, sErr := h.store.GetNetworkNotification(cidr)
+		if sErr == nil && conf != nil && conf.Enabled && conf.SlackWebhook != "" && !seen[conf.SlackWebhook] {
+			seen[conf.SlackWebhook] = true
+			webhooks = append(webhooks, conf.SlackWebhook)
+		}
+	}
+	if len(webhooks) == 0 {
+		return
+	}
+
+	msg := notification.FormatRouterAPIFailureSlackMessage(routerType, routerID, err.Error())
+	for _, wh := range webhooks {
+		_ = h.sendSlackNotification(wh, msg)
+	}
+}
+
+func (h *Handler) notifyRouterAPISuccess(routerType string, routerID string, networkCIDRs []string) {
+	debounceKey := fmt.Sprintf("router:%s:%s", routerType, routerID)
+	h.alertMu.Lock()
+	if h.failedGateways == nil || !h.failedGateways[debounceKey] {
+		h.alertMu.Unlock()
+		return
+	}
+	delete(h.failedGateways, debounceKey)
+	h.alertMu.Unlock()
+
+	var webhooks []string
+	seen := make(map[string]bool)
+	for _, cidr := range networkCIDRs {
+		conf, sErr := h.store.GetNetworkNotification(cidr)
+		if sErr == nil && conf != nil && conf.Enabled && conf.SlackWebhook != "" && !seen[conf.SlackWebhook] {
+			seen[conf.SlackWebhook] = true
+			webhooks = append(webhooks, conf.SlackWebhook)
+		}
+	}
+	if len(webhooks) == 0 {
+		return
+	}
+
+	msg := notification.FormatRouterAPIRecoverySlackMessage(routerType, routerID)
+	for _, wh := range webhooks {
+		_ = h.sendSlackNotification(wh, msg)
+	}
+}

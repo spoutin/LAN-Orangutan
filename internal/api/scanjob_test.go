@@ -1039,6 +1039,52 @@ func TestScanJob_BriefRateLimitWaitsAndProceeds(t *testing.T) {
 	}
 }
 
+func TestScanJob_RouterAPIFailureAlertAndRecovery(t *testing.T) {
+	store := newScanJobTestStore(t)
+	_ = store.SaveNetworkNotification("10.5.5.0/24", "https://example.test/slack-openwrt", true)
+
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.5.5.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+	cfg.OpenWrt.Enable = true
+	cfg.OpenWrt.ID = "openwrt"
+	cfg.OpenWrt.Networks = []string{"10.5.5.0/24"}
+	cfg.OpenWrt.URL = "http://127.0.0.1:1"
+	h := NewHandler(store, cfg)
+
+	var mu sync.Mutex
+	var slackMessages []string
+	h.sendSlackNotification = func(webhook, text string) error {
+		mu.Lock()
+		slackMessages = append(slackMessages, text)
+		mu.Unlock()
+		return nil
+	}
+
+	h.notifyRouterAPIFailure("OpenWrt", "openwrt", cfg.OpenWrt.Networks, fmt.Errorf("401 Unauthorized"))
+	mu.Lock()
+	if len(slackMessages) != 1 || !strings.Contains(slackMessages[0], "Router API Failure") {
+		t.Fatalf("expected 1 Router API Failure message, got: %v", slackMessages)
+	}
+	mu.Unlock()
+
+	// Second failure -> suppressed (no repeat spam)
+	h.notifyRouterAPIFailure("OpenWrt", "openwrt", cfg.OpenWrt.Networks, fmt.Errorf("401 Unauthorized"))
+	mu.Lock()
+	if len(slackMessages) != 1 {
+		t.Fatalf("expected failure alert to be debounced, got %d messages", len(slackMessages))
+	}
+	mu.Unlock()
+
+	// Recovery -> 1 recovery alert
+	h.notifyRouterAPISuccess("OpenWrt", "openwrt", cfg.OpenWrt.Networks)
+	mu.Lock()
+	if len(slackMessages) != 2 || !strings.Contains(slackMessages[1], "Router API Recovered") {
+		t.Fatalf("expected recovery alert, got: %v", slackMessages)
+	}
+	mu.Unlock()
+}
+
 func TestScanJob_SwitchesResolveUnknownVLANInventoryMACThroughBridgeFDB(t *testing.T) {
 	store := newScanJobTestStore(t)
 	if err := store.UpdateDevice(&types.Device{IP: "192.168.1.11", MAC: "AA:BB:CC:DD:EE:02"}); err != nil {
