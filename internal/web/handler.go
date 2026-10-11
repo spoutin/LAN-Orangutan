@@ -424,8 +424,6 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	currentScanning := h.store.GetCurrentScanningNetwork()
-
 	var networkViews []NetworkView
 	for _, n := range networks {
 		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
@@ -442,7 +440,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 			lastScanAgo = timeAgo(lastScanTime)
 		}
 
-		isScanning := currentScanning == n.CIDR
+		isScanning := h.store.IsNetworkScanning(n.CIDR)
 		isCompleted := h.store.IsNetworkCompletedInCurrentRun(n.CIDR)
 
 		networkViews = append(networkViews, NetworkView{

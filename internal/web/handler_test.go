@@ -783,3 +783,33 @@ func TestIndexPageRendersSwitchConnection(t *testing.T) {
 		}
 	}
 }
+
+func TestHandler_MultipleNetworksScanningState(t *testing.T) {
+	h, authn := newTestHandler(t, testPassword)
+	h.cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.5.5.0/24"}
+	h.cfg.Scanning.OnlyConfiguredNetworks = true
+
+	// Mark scan running and both networks as currently scanning
+	h.store.SetScanRunning(true)
+	h.store.SetNetworkScanning("10.0.0.0/24", true)
+	h.store.SetNetworkScanning("10.5.5.0/24", true)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	token, ok := authn.Login("127.0.0.1:5000", testPassword)
+	if !ok {
+		t.Fatal("login failed")
+	}
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
+
+	h.handleIndex(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	count := strings.Count(body, "sidebar-net-status scanning")
+	if count != 2 {
+		t.Fatalf("expected 2 'sidebar-net-status scanning' status indicators in HTML, got %d", count)
+	}
+}
