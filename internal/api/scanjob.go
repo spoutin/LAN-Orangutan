@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -657,6 +658,24 @@ func (j *scanJob) runNewDeviceDeepScan(ctx context.Context, h *Handler) {
 	j.nightlyDeep = wasNightly
 }
 
+func prioritizeDeepScanDevices(devices []types.Device) []types.Device {
+	res := append([]types.Device(nil), devices...)
+	sort.SliceStable(res, func(i, j int) bool {
+		iZero := res[i].LastDeepScanAt.IsZero()
+		jZero := res[j].LastDeepScanAt.IsZero()
+		if iZero != jZero {
+			return iZero // zero (never scanned) comes first
+		}
+		if !iZero && !jZero {
+			if !res[i].LastDeepScanAt.Equal(res[j].LastDeepScanAt) {
+				return res[i].LastDeepScanAt.Before(res[j].LastDeepScanAt)
+			}
+		}
+		return res[i].IP < res[j].IP
+	})
+	return res
+}
+
 func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork map[string][]types.Device) {
 	type deepTarget struct {
 		network string
@@ -666,6 +685,7 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 	queue := make([]deepTarget, 0)
 	for _, network := range j.networks {
 		if targets := targetsByNetwork[network]; len(targets) > 0 {
+			targets = prioritizeDeepScanDevices(targets)
 			progress = append(progress, deepNetworkProgress{Network: network, Total: len(targets)})
 			for _, target := range targets {
 				queue = append(queue, deepTarget{network: network, device: target})

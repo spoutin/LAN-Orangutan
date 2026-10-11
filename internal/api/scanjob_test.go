@@ -434,6 +434,26 @@ func TestScanJob_MultiOpenWrtRouters(t *testing.T) {
 	}
 }
 
+func TestPrioritizeDeepScanDevices(t *testing.T) {
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+
+	devices := []types.Device{
+		{IP: "10.0.0.3", LastDeepScanAt: t2},          // scanned recently
+		{IP: "10.0.0.1", LastDeepScanAt: time.Time{}}, // never scanned
+		{IP: "10.0.0.4", LastDeepScanAt: t1},          // scanned older
+		{IP: "10.0.0.2", LastDeepScanAt: time.Time{}}, // never scanned
+	}
+
+	sorted := prioritizeDeepScanDevices(devices)
+	wantIPs := []string{"10.0.0.1", "10.0.0.2", "10.0.0.4", "10.0.0.3"}
+	for i, dev := range sorted {
+		if dev.IP != wantIPs[i] {
+			t.Fatalf("at index %d got IP %s, want %s (sorted: %+v)", i, dev.IP, wantIPs[i], sorted)
+		}
+	}
+}
+
 func TestScanJob_SwitchesResolveUnknownVLANInventoryMACThroughBridgeFDB(t *testing.T) {
 	store := newScanJobTestStore(t)
 	if err := store.UpdateDevice(&types.Device{IP: "192.168.1.11", MAC: "AA:BB:CC:DD:EE:02"}); err != nil {
