@@ -1387,3 +1387,14 @@ func TestStorage_NetworkDeepScanning(t *testing.T) {
 		t.Fatal("expected 10.5.5.0/24 not deep scanning after clear")
 	}
 }
+
+func TestMigration_00012_ScanHistoryDevicesColumn(t *testing.T) {
+	s := newTestStorage(t)
+
+	var defVal string
+	err := s.db.QueryRow("SELECT devices_found FROM scan_history LIMIT 1").Scan(&defVal)
+	// If no rows, sql.ErrNoRows is fine; it means the column exists!
+	if err != nil && err.Error() != "sql: no rows in result set" {
+		t.Fatalf("expected devices_found column to exist in scan_history: %v", err)
+	}
+}

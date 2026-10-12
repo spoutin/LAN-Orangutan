@@ -247,18 +247,30 @@ type APIResponse struct {
 	Error   string      `json:"error,omitempty"`
 }
 
+// ScanDeviceRecord represents a device snapshot discovered during a scan
+type ScanDeviceRecord struct {
+	IP           string   `json:"ip"`
+	MAC          string   `json:"mac,omitempty"`
+	Hostname     string   `json:"hostname,omitempty"`
+	Vendor       string   `json:"vendor,omitempty"`
+	Status       string   `json:"status,omitempty"`
+	ResponseTime *float64 `json:"response_time,omitempty"`
+	OpenPorts    []int    `json:"open_ports,omitempty"`
+}
+
 // ScanHistoryRecord represents a past scan execution log
 type ScanHistoryRecord struct {
-	ID              int       `json:"id"`
-	Network         string    `json:"network"`
-	Success         bool      `json:"success"`
-	Error           string    `json:"error,omitempty"`
-	DevicesOnline   int       `json:"devices_online"`
-	DevicesJoined   int       `json:"devices_joined"`
-	DevicesReturned int       `json:"devices_returned"`
-	DevicesLeft     int       `json:"devices_left"`
-	Duration        float64   `json:"duration"`
-	Timestamp       time.Time `json:"timestamp"`
+	ID              int                `json:"id"`
+	Network         string             `json:"network"`
+	Success         bool               `json:"success"`
+	Error           string             `json:"error,omitempty"`
+	DevicesOnline   int                `json:"devices_online"`
+	DevicesJoined   int                `json:"devices_joined"`
+	DevicesReturned int                `json:"devices_returned"`
+	DevicesLeft     int                `json:"devices_left"`
+	Duration        float64            `json:"duration"`
+	Timestamp       time.Time          `json:"timestamp"`
+	DevicesFound    []ScanDeviceRecord `json:"devices_found,omitempty"`
 }
 
 // PresenceEventRecord represents a device presence history log
