@@ -991,6 +991,42 @@ func (h *Handler) dispatchNotifications(cidr string, newDevices []types.Device, 
 	}()
 }
 
+func (h *Handler) getEffectiveSlackWebhook(networkCIDR string) string {
+	if networkCIDR != "" {
+		conf, err := h.store.GetNetworkNotification(networkCIDR)
+		if err == nil && conf != nil && conf.Enabled && conf.SlackWebhook != "" {
+			return conf.SlackWebhook
+		}
+	}
+	all, err := h.store.GetNetworkNotifications()
+	if err == nil {
+		for _, n := range all {
+			if n.Enabled && n.SlackWebhook != "" {
+				return n.SlackWebhook
+			}
+		}
+	}
+	return ""
+}
+
+func (h *Handler) getEffectiveSlackWebhooks(networkCIDRs []string) []string {
+	var webhooks []string
+	seen := make(map[string]bool)
+	for _, cidr := range networkCIDRs {
+		conf, sErr := h.store.GetNetworkNotification(cidr)
+		if sErr == nil && conf != nil && conf.Enabled && conf.SlackWebhook != "" && !seen[conf.SlackWebhook] {
+			seen[conf.SlackWebhook] = true
+			webhooks = append(webhooks, conf.SlackWebhook)
+		}
+	}
+	if len(webhooks) == 0 {
+		if fallback := h.getEffectiveSlackWebhook(""); fallback != "" {
+			webhooks = append(webhooks, fallback)
+		}
+	}
+	return webhooks
+}
+
 func (h *Handler) notifyRemoteScannerFailure(networkCIDR string, target string, err error) {
 	if err == nil {
 		return
@@ -1011,7 +1047,11 @@ func (h *Handler) notifyRemoteScannerFailure(networkCIDR string, target string, 
 			isMissingNmap = true
 		}
 	} else {
-		return
+		gateway = "scanner"
+		errorMsg = err.Error()
+		if strings.Contains(strings.ToLower(errorMsg), "not found") || strings.Contains(strings.ToLower(errorMsg), "no such file") {
+			isMissingNmap = true
+		}
 	}
 
 	debounceKey := fmt.Sprintf("%s:%s", gateway, networkCIDR)
@@ -1027,13 +1067,13 @@ func (h *Handler) notifyRemoteScannerFailure(networkCIDR string, target string, 
 	h.failedGateways[debounceKey] = true
 	h.alertMu.Unlock()
 
-	conf, storeErr := h.store.GetNetworkNotification(networkCIDR)
-	if storeErr != nil || conf == nil || !conf.Enabled || conf.SlackWebhook == "" {
+	webhook := h.getEffectiveSlackWebhook(networkCIDR)
+	if webhook == "" {
 		return
 	}
 
 	msg := notification.FormatRemoteScannerFailureSlackMessage(gateway, target, errorMsg, isMissingNmap)
-	_ = h.sendSlackNotification(conf.SlackWebhook, msg)
+	_ = h.sendSlackNotification(webhook, msg)
 }
 
 func (h *Handler) notifyRemoteScannerSuccess(networkCIDR string, target string) {
@@ -1041,7 +1081,7 @@ func (h *Handler) notifyRemoteScannerSuccess(networkCIDR string, target string) 
 	if r := h.scanner.GetRemoteRunner(); r != nil && r.HasRemoteScannerForTarget(target) {
 		gateway = r.GetGatewayForTarget(target)
 	} else {
-		return
+		gateway = "scanner"
 	}
 
 	debounceKey := fmt.Sprintf("%s:%s", gateway, networkCIDR)
@@ -1053,13 +1093,13 @@ func (h *Handler) notifyRemoteScannerSuccess(networkCIDR string, target string) 
 	delete(h.failedGateways, debounceKey)
 	h.alertMu.Unlock()
 
-	conf, storeErr := h.store.GetNetworkNotification(networkCIDR)
-	if storeErr != nil || conf == nil || !conf.Enabled || conf.SlackWebhook == "" {
+	webhook := h.getEffectiveSlackWebhook(networkCIDR)
+	if webhook == "" {
 		return
 	}
 
 	msg := notification.FormatRemoteScannerRecoverySlackMessage(gateway, target)
-	_ = h.sendSlackNotification(conf.SlackWebhook, msg)
+	_ = h.sendSlackNotification(webhook, msg)
 }
 
 func (h *Handler) notifyRouterAPIFailure(routerType string, routerID string, networkCIDRs []string, err error) {
@@ -1078,15 +1118,7 @@ func (h *Handler) notifyRouterAPIFailure(routerType string, routerID string, net
 	h.failedGateways[debounceKey] = true
 	h.alertMu.Unlock()
 
-	var webhooks []string
-	seen := make(map[string]bool)
-	for _, cidr := range networkCIDRs {
-		conf, sErr := h.store.GetNetworkNotification(cidr)
-		if sErr == nil && conf != nil && conf.Enabled && conf.SlackWebhook != "" && !seen[conf.SlackWebhook] {
-			seen[conf.SlackWebhook] = true
-			webhooks = append(webhooks, conf.SlackWebhook)
-		}
-	}
+	webhooks := h.getEffectiveSlackWebhooks(networkCIDRs)
 	if len(webhooks) == 0 {
 		return
 	}
@@ -1107,15 +1139,7 @@ func (h *Handler) notifyRouterAPISuccess(routerType string, routerID string, net
 	delete(h.failedGateways, debounceKey)
 	h.alertMu.Unlock()
 
-	var webhooks []string
-	seen := make(map[string]bool)
-	for _, cidr := range networkCIDRs {
-		conf, sErr := h.store.GetNetworkNotification(cidr)
-		if sErr == nil && conf != nil && conf.Enabled && conf.SlackWebhook != "" && !seen[conf.SlackWebhook] {
-			seen[conf.SlackWebhook] = true
-			webhooks = append(webhooks, conf.SlackWebhook)
-		}
-	}
+	webhooks := h.getEffectiveSlackWebhooks(networkCIDRs)
 	if len(webhooks) == 0 {
 		return
 	}

@@ -589,6 +589,48 @@ func TestScanJob_RecordsPerNetworkScanHistoryOnSuccessAndFailure(t *testing.T) {
 	}
 }
 
+func TestNotifyFailure_FallbackWebhook(t *testing.T) {
+	store := newScanJobTestStore(t)
+	// Only 10.0.0.0/24 has a webhook configured
+	_ = store.SaveNetworkNotification("10.0.0.0/24", "https://example.test/primary-slack", true)
+
+	cfg := config.Default()
+	h := NewHandler(store, cfg)
+	h.scanner.SetRemoteRunner(&testSwitchableRemoteRunner{
+		gateway: "openwrt (10.5.5.1)",
+		target:  "10.5.5.0/24",
+	})
+
+	var sentWebhooks []string
+	var sentMessages []string
+	h.sendSlackNotification = func(webhook, text string) error {
+		sentWebhooks = append(sentWebhooks, webhook)
+		sentMessages = append(sentMessages, text)
+		return nil
+	}
+
+	// 1. Failure on 10.5.5.0/24 (which has no dedicated webhook)
+	h.notifyRemoteScannerFailure("10.5.5.0/24", "10.5.5.0/24", fmt.Errorf("connection refused"))
+	if len(sentWebhooks) != 1 {
+		t.Fatalf("expected 1 alert sent via fallback, got %d", len(sentWebhooks))
+	}
+	if sentWebhooks[0] != "https://example.test/primary-slack" {
+		t.Errorf("expected fallback webhook 'https://example.test/primary-slack', got %q", sentWebhooks[0])
+	}
+	if !strings.Contains(sentMessages[0], "openwrt (10.5.5.1)") {
+		t.Errorf("expected message to mention gateway, got %q", sentMessages[0])
+	}
+
+	// 2. Recovery on 10.5.5.0/24
+	h.notifyRemoteScannerSuccess("10.5.5.0/24", "10.5.5.0/24")
+	if len(sentWebhooks) != 2 {
+		t.Fatalf("expected recovery alert sent via fallback, got %d", len(sentWebhooks))
+	}
+	if sentWebhooks[1] != "https://example.test/primary-slack" {
+		t.Errorf("expected recovery webhook 'https://example.test/primary-slack', got %q", sentWebhooks[1])
+	}
+}
+
 func TestScanJob_MultiOpenWrtRouters(t *testing.T) {
 	cfg := config.Default()
 	cfg.OpenWrts.Names = []string{"core", "branch"}
