@@ -58,24 +58,50 @@
             <div style="display: flex; flex-direction: column; gap: 2rem;">
                 <!-- Execution History Table -->
                 <section class="section">
-                    <h2 class="section-title">Execution History</h2>
+                    <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+                        <h2 class="section-title" style="margin-bottom: 0;">Execution History</h2>
+                        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                            <input type="text" id="scan-history-search" class="input search-input" style="max-width: 170px; height: 32px; font-size: 0.85rem;" placeholder="Search history..." oninput="handleScanHistoryFilter()">
+                            <select id="scan-history-type" class="input" style="width: auto; height: 32px; font-size: 0.85rem; padding: 0 0.5rem;" onchange="handleScanHistoryFilter()">
+                                <option value="all">All types</option>
+                                <option value="sweep">Sweep only</option>
+                                <option value="deep">Deep only</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Day Pagination Toolbar -->
+                    <div id="scan-history-day-toolbar" style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; background: var(--bg-card); padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: 6px;">
+                        <div style="display: flex; gap: 0.35rem; align-items: center;">
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="changeHistoryDay(-1)" title="Previous Day">«</button>
+                            <span id="history-current-day-label" style="font-weight: 600; font-size: 0.85rem; min-width: 110px; text-align: center;">Today</span>
+                            <button type="button" class="btn btn-secondary btn-sm" id="history-next-day-btn" onclick="changeHistoryDay(1)" title="Next Day" disabled>»</button>
+                            <button type="button" class="btn btn-secondary btn-sm" id="history-today-btn" onclick="jumpHistoryToday()" style="margin-left: 0.25rem;">Today</button>
+                        </div>
+                        <div style="display: flex; gap: 0.4rem; align-items: center;">
+                            <input type="date" id="history-date-picker" class="input" style="height: 28px; font-size: 0.8rem; padding: 0 0.4rem;" onchange="handleHistoryDatePicker(this.value)">
+                            <button type="button" class="btn btn-secondary btn-sm" id="history-show-all-btn" onclick="toggleHistoryAllDays()">Show All</button>
+                        </div>
+                    </div>
+
                     <div class="card" style="padding: 0; overflow-x: auto;">
                         <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;">
                             <thead>
                                 <tr style="background: var(--bg-card-hover); border-bottom: 1px solid var(--border);">
-                                    <th style="padding: 0.8rem; font-weight: bold; color: var(--text-muted);">Timestamp</th>
-                                    <th style="padding: 0.8rem; font-weight: bold; color: var(--text-muted);">Network</th>
-                                    <th style="padding: 0.8rem; font-weight: bold; color: var(--text-muted);">Status</th>
-                                    <th style="padding: 0.8rem; font-weight: bold; color: var(--text-muted);" title="Devices Online">Online</th>
-                                    <th style="padding: 0.8rem; font-weight: bold; color: #2c9e6b;" title="New Joins">New</th>
-                                    <th style="padding: 0.8rem; font-weight: bold; color: #2f7fd4;" title="Returns">Return</th>
-                                    <th style="padding: 0.8rem; font-weight: bold; color: #e0842c;" title="Leaves">Leave</th>
-                                    <th style="padding: 0.8rem; font-weight: bold; color: var(--text-muted);">Duration</th>
+                                    <th style="padding: 0.7rem; font-weight: bold; color: var(--text-muted);">Time</th>
+                                    <th style="padding: 0.7rem; font-weight: bold; color: var(--text-muted);">Network</th>
+                                    <th style="padding: 0.7rem; font-weight: bold; color: var(--text-muted);">Type</th>
+                                    <th style="padding: 0.7rem; font-weight: bold; color: var(--text-muted);">Status</th>
+                                    <th style="padding: 0.7rem; font-weight: bold; color: var(--text-muted);" title="Devices Online">Online</th>
+                                    <th style="padding: 0.7rem; font-weight: bold; color: #2c9e6b;" title="New Joins">New</th>
+                                    <th style="padding: 0.7rem; font-weight: bold; color: #2f7fd4;" title="Returns">Return</th>
+                                    <th style="padding: 0.7rem; font-weight: bold; color: #e0842c;" title="Leaves">Leave</th>
+                                    <th style="padding: 0.7rem; font-weight: bold; color: var(--text-muted);">Duration</th>
                                 </tr>
                             </thead>
                             <tbody id="scan-history-tbody">
                                 <tr>
-                                    <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+                                    <td colspan="9" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
                                         Loading scan history...
                                     </td>
                                 </tr>
@@ -329,7 +355,8 @@
 
     <div id="toast" class="toast"></div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/scans-view.js?v={{.Version}}"></script>
+    <script src="/static/app.js?v={{.Version}}"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function () {
             initScansPage();

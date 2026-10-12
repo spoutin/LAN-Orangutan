@@ -262,7 +262,9 @@ type ScanDeviceRecord struct {
 type ScanHistoryRecord struct {
 	ID              int                `json:"id"`
 	Network         string             `json:"network"`
+	ScanType        string             `json:"scan_type"`
 	Success         bool               `json:"success"`
+	Status          string             `json:"status"`
 	Error           string             `json:"error,omitempty"`
 	DevicesOnline   int                `json:"devices_online"`
 	DevicesJoined   int                `json:"devices_joined"`

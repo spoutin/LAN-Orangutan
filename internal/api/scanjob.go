@@ -344,10 +344,6 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		} else {
 			j.finish("done", "")
 		}
-		dur := time.Since(j.startedAt).Seconds()
-		for _, netName := range j.deepNetworks {
-			_ = h.store.RecordScanHistory(netName, ctx.Err() == nil, "", j.startedAt, dur, nil)
-		}
 		return
 	}
 
@@ -870,6 +866,12 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 					log.Printf("[scan] starting service scan queue on %s via gateway %s (%d hosts)", network, gwName, len(targets))
 				}
 
+				subnetStarted := time.Now()
+				var deepResultsMu sync.Mutex
+				var scanDevs []types.ScanDeviceRecord
+				var succeededCount, failedCount int
+				var firstError string
+
 				concurrency := 2
 				if j.nightlyDeep || len(j.deepDevices) == 1 {
 					concurrency = 1
@@ -885,7 +887,35 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 							if ctx.Err() != nil {
 								return
 							}
-							j.scanPortHost(ctx, h, network, dev)
+							ports, err := j.scanPortHost(ctx, h, network, dev)
+							dur := time.Since(subnetStarted).Seconds()
+							deepResultsMu.Lock()
+							if err != nil {
+								failedCount++
+								if firstError == "" {
+									firstError = err.Error()
+								}
+								scanDevs = append(scanDevs, types.ScanDeviceRecord{
+									IP:           dev.IP,
+									MAC:          dev.MAC,
+									Hostname:     dev.Hostname,
+									Vendor:       dev.Vendor,
+									Status:       "failed: " + err.Error(),
+									ResponseTime: &dur,
+								})
+							} else {
+								succeededCount++
+								scanDevs = append(scanDevs, types.ScanDeviceRecord{
+									IP:           dev.IP,
+									MAC:          dev.MAC,
+									Hostname:     dev.Hostname,
+									Vendor:       dev.Vendor,
+									Status:       "scanned",
+									ResponseTime: &dur,
+									OpenPorts:    ports,
+								})
+							}
+							deepResultsMu.Unlock()
 						}
 					}()
 				}
@@ -899,12 +929,28 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 				close(hostChan)
 				subnetWG.Wait()
 
+				deepDur := time.Since(subnetStarted).Seconds()
+				status := "success"
+				errSummary := ""
+				if ctx.Err() != nil {
+					status = "failed"
+					errSummary = "scan cancelled"
+				} else if failedCount > 0 && succeededCount == 0 {
+					status = "failed"
+					errSummary = firstError
+				} else if failedCount > 0 && succeededCount > 0 {
+					status = "warning"
+					errSummary = fmt.Sprintf("%d of %d host service scans failed: %s", failedCount, len(targets), firstError)
+				}
+
 				if len(j.deepDevices) == 1 {
+					_ = h.store.RecordScanHistoryWithDetails(network, "deep", status, errSummary, subnetStarted, deepDur, scanDevs)
 					log.Printf("[scan] completed single-device service scan on %s via gateway %s", j.deepDevices[0].IP, gwName)
 				} else {
 					h.store.SetNetworkDeepScanning(network, false)
 					h.store.SetNetworkScanning(network, false)
 					h.store.AddCompletedNetwork(network)
+					_ = h.store.RecordScanHistoryWithDetails(network, "deep", status, errSummary, subnetStarted, deepDur, scanDevs)
 					log.Printf("[scan] completed service scan queue on %s via gateway %s", network, gwName)
 				}
 			}
@@ -1311,7 +1357,7 @@ func (j *scanJob) startPortScan(ctx context.Context, h *Handler, network string,
 	}
 }
 
-func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, device types.Device) {
+func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, device types.Device) ([]int, error) {
 	j.mu.Lock()
 	for i := range j.deepNetworkProgress {
 		if j.deepNetworkProgress[i].Network == network {
@@ -1377,6 +1423,7 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 		j.lastPortScanHost.Error = err.Error()
 	}
 	j.mu.Unlock()
+	return ports, err
 }
 
 // StartBackgroundCleanup runs a daily task to delete history older than a year.

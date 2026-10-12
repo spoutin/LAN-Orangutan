@@ -3159,35 +3159,171 @@ function startProgressClock() {
 
 let currentScanHistory = [];
 let currentScanModalDevices = [];
+let rawScanHistory = [];
+let historySelectedDay = new Date();
+let historyShowAll = false;
+
+function handleScanHistoryFilter() {
+    renderScanHistory(rawScanHistory);
+}
+
+function changeHistoryDay(offset) {
+    if (!historySelectedDay) {
+        historySelectedDay = new Date();
+    }
+    historyShowAll = false;
+    const d = new Date(historySelectedDay);
+    d.setDate(d.getDate() + offset);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    if (d > today) return;
+    historySelectedDay = d;
+    renderScanHistory(rawScanHistory);
+}
+
+function jumpHistoryToday() {
+    historyShowAll = false;
+    historySelectedDay = new Date();
+    renderScanHistory(rawScanHistory);
+}
+
+function handleHistoryDatePicker(val) {
+    if (!val) return;
+    historyShowAll = false;
+    const parts = val.split('-');
+    if (parts.length === 3) {
+        historySelectedDay = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        renderScanHistory(rawScanHistory);
+    }
+}
+
+function toggleHistoryAllDays() {
+    historyShowAll = !historyShowAll;
+    renderScanHistory(rawScanHistory);
+}
+
+function isSameDay(d1, d2) {
+    if (!d1 || !d2) return false;
+    return d1.getFullYear() === d2.getFullYear() &&
+           d1.getMonth() === d2.getMonth() &&
+           d1.getDate() === d2.getDate();
+}
 
 function renderScanHistory(history) {
     const tbody = document.getElementById('scan-history-tbody');
     if (!tbody) return;
 
-    currentScanHistory = history || [];
+    if (history) {
+        rawScanHistory = history;
+    }
+    const all = rawScanHistory || [];
 
-    if (!history || history.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No scan history recorded yet</td></tr>`;
+    const searchInput = document.getElementById('scan-history-search');
+    const typeSelect = document.getElementById('scan-history-type');
+    const q = (searchInput?.value || '').toLowerCase().trim();
+    const typeFilter = typeSelect?.value || 'all';
+
+    // Update Day Toolbar UI
+    const dayLabelEl = document.getElementById('history-current-day-label');
+    const nextBtn = document.getElementById('history-next-day-btn');
+    const datePicker = document.getElementById('history-date-picker');
+    const showAllBtn = document.getElementById('history-show-all-btn');
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    if (showAllBtn) {
+        showAllBtn.textContent = historyShowAll ? "Day View" : "Show All";
+        showAllBtn.style.color = historyShowAll ? "var(--accent)" : "inherit";
+    }
+
+    if (historyShowAll) {
+        if (dayLabelEl) dayLabelEl.textContent = "All Days";
+        if (nextBtn) nextBtn.disabled = true;
+    } else {
+        if (datePicker && historySelectedDay) {
+            const y = historySelectedDay.getFullYear();
+            const m = String(historySelectedDay.getMonth() + 1).padStart(2, '0');
+            const d = String(historySelectedDay.getDate()).padStart(2, '0');
+            datePicker.value = `${y}-${m}-${d}`;
+        }
+        if (isSameDay(historySelectedDay, today)) {
+            if (dayLabelEl) dayLabelEl.textContent = "Today";
+            if (nextBtn) nextBtn.disabled = true;
+        } else if (isSameDay(historySelectedDay, yesterday)) {
+            if (dayLabelEl) dayLabelEl.textContent = "Yesterday";
+            if (nextBtn) nextBtn.disabled = false;
+        } else if (historySelectedDay) {
+            if (dayLabelEl) dayLabelEl.textContent = historySelectedDay.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+            if (nextBtn) nextBtn.disabled = false;
+        }
+    }
+
+    // Filter by day, type, and search query
+    let filtered = (typeof filterScanHistoryRows === 'function')
+        ? filterScanHistoryRows(all, { selectedDay: historySelectedDay, showAll: historyShowAll, typeFilter, query: q })
+        : all.filter(row => {
+            const rowDate = new Date(row.timestamp);
+            if (!historyShowAll && historySelectedDay && !isSameDay(rowDate, historySelectedDay)) {
+                return false;
+            }
+            if (typeFilter === 'sweep' && row.scan_type && row.scan_type !== 'sweep') {
+                return false;
+            }
+            if (typeFilter === 'deep' && row.scan_type !== 'deep') {
+                return false;
+            }
+            if (q) {
+                const netMatch = row.network && row.network.toLowerCase().includes(q);
+                const errMatch = row.error && row.error.toLowerCase().includes(q);
+                const devMatch = row.devices_found && row.devices_found.some(d => 
+                    (d.ip && d.ip.toLowerCase().includes(q)) ||
+                    (d.hostname && d.hostname.toLowerCase().includes(q)) ||
+                    (d.mac && d.mac.toLowerCase().includes(q))
+                );
+                if (!netMatch && !errMatch && !devMatch) return false;
+            }
+            return true;
+        });
+
+    currentScanHistory = filtered;
+
+    if (filtered.length === 0) {
+        const emptyMsg = q ? "No scan history matches your search" : historyShowAll ? "No scan history recorded yet" : "No scans recorded on this day";
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">${emptyMsg}</td></tr>`;
         return;
     }
 
-    tbody.innerHTML = history.map(row => {
+    tbody.innerHTML = filtered.map(row => {
         const date = new Date(row.timestamp);
-        const dateStr = date.toLocaleString();
-        const successBadge = row.success 
-            ? `<span class="badge badge-success" style="background: rgba(44, 158, 107, 0.15); color: #2c9e6b; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.8rem;">Success</span>` 
-            : `<span class="badge badge-failed" style="background: rgba(224, 132, 44, 0.15); color: #e0842c; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.8rem;" title="${escapeHtml(row.error || '')}">Failed</span>`;
-        
+        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const isDeep = row.scan_type === 'deep';
+        const typeBadge = isDeep 
+            ? `<span class="scan-type-badge scan-type-deep">Deep</span>`
+            : `<span class="scan-type-badge scan-type-sweep">Sweep</span>`;
+
+        let statusBadge = '';
+        if (row.status === 'failed' || (!row.success && !row.status)) {
+            statusBadge = `<span class="badge badge-failed" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.8rem;" title="${escapeHtml(row.error || '')}">✗ Failed</span>`;
+        } else if (row.status === 'warning') {
+            statusBadge = `<span class="badge badge-warning" style="background: rgba(224, 132, 44, 0.15); color: #e0842c; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.8rem;" title="${escapeHtml(row.error || '')}">⚠ Warning</span>`;
+        } else {
+            statusBadge = `<span class="badge badge-success" style="background: rgba(44, 158, 107, 0.15); color: #2c9e6b; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.8rem;">✓ Success</span>`;
+        }
+
         return `
             <tr class="scan-history-row" onclick="openScanDetailModal(${row.id})" title="Click to view scan details">
-                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);">${dateStr}</td>
-                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><strong>${escapeHtml(row.network)}</strong></td>
-                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);">${successBadge}</td>
-                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: var(--accent); font-weight: bold;">${row.devices_online}</span></td>
-                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: #2c9e6b; font-weight: bold;">+${row.devices_joined}</span></td>
-                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: #2f7fd4; font-weight: bold;">+${row.devices_returned}</span></td>
-                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: #e0842c; font-weight: bold;">-${row.devices_left}</span></td>
-                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);">${row.duration.toFixed(1)}s</td>
+                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums;">${timeStr}</td>
+                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border);"><strong>${escapeHtml(row.network)}</strong></td>
+                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border);">${typeBadge}</td>
+                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border);">${statusBadge}</td>
+                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border);"><span style="color: var(--accent); font-weight: bold;">${row.devices_online}</span></td>
+                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border);"><span style="color: #2c9e6b; font-weight: bold;">+${row.devices_joined}</span></td>
+                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border);"><span style="color: #2f7fd4; font-weight: bold;">+${row.devices_returned}</span></td>
+                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border);"><span style="color: #e0842c; font-weight: bold;">-${row.devices_left}</span></td>
+                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums;">${row.duration.toFixed(1)}s</td>
             </tr>
         `;
     }).join('');
@@ -3281,6 +3417,18 @@ function renderScanModalDevices(devices) {
     }).join('');
 }
 
+function formatRelativeTime(date) {
+    if (!date || isNaN(date.getTime())) return '';
+    const diffSec = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+    if (diffSec < 60) return 'just now';
+    const mins = Math.floor(diffSec / 60);
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+}
+
 function renderPresenceTimeline(events) {
     const container = document.getElementById('presence-timeline');
     if (!container) return;
@@ -3290,55 +3438,78 @@ function renderPresenceTimeline(events) {
         return;
     }
 
-    container.innerHTML = events.map(evt => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    let currentDayHeader = null;
+    let html = `<div class="timeline-stream">`;
+
+    events.forEach(evt => {
         const date = new Date(evt.created_at);
-        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-        
-        let icon = '';
-        let color = '';
-        let bg = '';
-        let description = '';
+        const eventDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        let dayTitle = '';
+        if (isSameDay(eventDay, today)) {
+            dayTitle = 'Today';
+        } else if (isSameDay(eventDay, yesterday)) {
+            dayTitle = 'Yesterday';
+        } else {
+            dayTitle = date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
+        if (dayTitle !== currentDayHeader) {
+            currentDayHeader = dayTitle;
+            html += `<div class="timeline-day-divider">${dayTitle}</div>`;
+        }
+
+        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const relativeTime = formatRelativeTime(date);
+        let badgeText = '';
+        let dotClass = 'timeline-dot-join';
+        let pillClass = 'timeline-pill-join';
+        let durPill = '';
 
         if (evt.event === 'join') {
-            icon = '✦';
-            color = '#2c9e6b';
-            bg = 'rgba(44, 158, 107, 0.1)';
-            description = `joined the network for the first time`;
+            badgeText = '✦ Joined';
+            dotClass = 'timeline-dot-join';
+            pillClass = 'timeline-pill-join';
         } else if (evt.event === 'return') {
-            icon = '✓';
-            color = '#2f7fd4';
-            bg = 'rgba(47, 127, 212, 0.1)';
-            const durStr = formatEventDuration(evt.duration);
-            description = `returned (offline for ${durStr})`;
+            badgeText = '↺ Returned';
+            dotClass = 'timeline-dot-return';
+            pillClass = 'timeline-pill-return';
+            if (evt.duration > 0) {
+                durPill = `<span style="background: var(--bg-card-hover); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem;">away ${formatEventDuration(evt.duration)}</span>`;
+            }
         } else if (evt.event === 'leave') {
-            icon = '✗';
-            color = '#e0842c';
-            bg = 'rgba(224, 132, 44, 0.1)';
-            const durStr = formatEventDuration(evt.duration);
-            description = `went offline (online session: ${durStr})`;
+            badgeText = '✗ Went offline';
+            dotClass = 'timeline-dot-leave';
+            pillClass = 'timeline-pill-leave';
+            if (evt.duration > 0) {
+                durPill = `<span style="background: var(--bg-card-hover); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem;">online ${formatEventDuration(evt.duration)}</span>`;
+            }
         }
 
         const name = evt.hostname || evt.mac || 'Unknown Device';
 
-        return `
-            <div class="timeline-item" style="display: flex; gap: 1rem; margin-bottom: 1.5rem; position: relative;">
-                <div class="timeline-badge" style="width: 32px; height: 32px; border-radius: 50%; background: ${bg}; color: ${color}; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; border: 1px solid ${color};">
-                    ${icon}
+        html += `
+            <div class="timeline-stream-item" onclick="editDevice('${evt.ip}')" title="${escapeHtml(name)} (${evt.ip}) on ${dayTitle} at ${timeStr}">
+                <span class="timeline-stream-dot ${dotClass}"></span>
+                <div class="timeline-stream-main">
+                    <strong style="color: var(--accent);">${escapeHtml(name)}</strong>
+                    <code style="color: var(--text-muted); font-size: 0.78rem;">${evt.ip}</code>
+                    <span class="timeline-pill ${pillClass}">${badgeText}</span>
                 </div>
-                <div class="timeline-content" 
-                     onclick="editDevice('${evt.ip}')"
-                     style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; flex-grow: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.05); cursor: pointer; transition: transform 0.2s, border-color 0.2s, background-color 0.2s;"
-                     onmouseover="this.style.borderColor='var(--accent)'; this.style.transform='translateY(-1px)'; this.style.backgroundColor='var(--bg-card-hover)';"
-                     onmouseout="this.style.borderColor='var(--border)'; this.style.transform='none'; this.style.backgroundColor='var(--bg-card)';">
-                    <div class="timeline-header" style="font-size: 0.95rem; margin-bottom: 0.25rem;">
-                        <strong style="color: var(--accent);">${name}</strong> <span style="color: var(--text-muted); font-size: 0.85rem;">(${evt.ip})</span> ${description}
-                    </div>
-                    <div class="timeline-time" style="font-size: 0.8rem; color: var(--text-muted);">${dateStr} at ${timeStr}</div>
+                <div class="timeline-stream-meta">
+                    ${durPill}
+                    <span title="${date.toLocaleString()}">${relativeTime}</span>
                 </div>
             </div>
         `;
-    }).join('');
+    });
+
+    html += `</div>`;
+    container.innerHTML = html;
 }
 
 function formatEventDuration(seconds) {

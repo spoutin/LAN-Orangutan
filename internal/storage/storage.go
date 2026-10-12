@@ -1934,8 +1934,24 @@ func (s *Storage) ProcessMissingDevices(scannedNetworks []string, activeIPs []st
 
 // RecordScanHistory records execution history metrics of a scan job
 func (s *Storage) RecordScanHistory(network string, success bool, errStr string, startedAt time.Time, duration float64, devices []types.ScanDeviceRecord) error {
+	status := "success"
+	if !success {
+		status = "failed"
+	}
+	return s.RecordScanHistoryWithDetails(network, "sweep", status, errStr, startedAt, duration, devices)
+}
+
+// RecordScanHistoryWithDetails records execution history metrics of a scan job with scan_type and status
+func (s *Storage) RecordScanHistoryWithDetails(network string, scanType string, status string, errStr string, startedAt time.Time, duration float64, devices []types.ScanDeviceRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if scanType == "" {
+		scanType = "sweep"
+	}
+	if status == "" {
+		status = "success"
+	}
 
 	_, ipNet, parseErr := net.ParseCIDR(network)
 
@@ -2008,9 +2024,9 @@ func (s *Storage) RecordScanHistory(network string, success bool, errStr string,
 		_ = s.db.QueryRow("SELECT COUNT(*) FROM devices WHERE is_online = 1").Scan(&online)
 	}
 
-	successVal := 0
-	if success {
-		successVal = 1
+	successVal := 1
+	if status == "failed" {
+		successVal = 0
 	}
 
 	if devices == nil {
@@ -2020,9 +2036,9 @@ func (s *Storage) RecordScanHistory(network string, success bool, errStr string,
 	devJSON := string(devBytes)
 
 	_, err := s.db.Exec(`
-		INSERT INTO scan_history (network, success, error, devices_online, devices_joined, devices_returned, devices_left, duration, timestamp, devices_found)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, network, successVal, errStr, online, joined, returned, left, duration, time.Now(), devJSON)
+		INSERT INTO scan_history (network, scan_type, success, status, error, devices_online, devices_joined, devices_returned, devices_left, duration, timestamp, devices_found)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, network, scanType, successVal, status, errStr, online, joined, returned, left, duration, time.Now(), devJSON)
 	return err
 }
 
@@ -2631,14 +2647,43 @@ func (s *Storage) GetNewDevicesCount(since time.Time) int {
 
 // GetScanHistory returns the chronological scan history records, newest first
 func (s *Storage) GetScanHistory() ([]types.ScanHistoryRecord, error) {
+	return s.GetScanHistoryFiltered("", "", "")
+}
+
+// GetScanHistoryFiltered returns filtered scan history records
+func (s *Storage) GetScanHistoryFiltered(dateStr string, scanType string, query string) ([]types.ScanHistoryRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	rows, err := s.db.Query(`
-		SELECT id, network, success, error, devices_online, devices_joined, devices_returned, devices_left, duration, timestamp, devices_found
+	var conditions []string
+	var args []interface{}
+
+	if dateStr != "" {
+		conditions = append(conditions, "SUBSTR(timestamp, 1, 10) = ?")
+		args = append(args, dateStr)
+	}
+
+	if scanType != "" && scanType != "all" {
+		conditions = append(conditions, "scan_type = ?")
+		args = append(args, scanType)
+	}
+
+	if query != "" {
+		conditions = append(conditions, "(network LIKE ? OR error LIKE ? OR devices_found LIKE ?)")
+		searchTerm := "%" + query + "%"
+		args = append(args, searchTerm, searchTerm, searchTerm)
+	}
+
+	baseQuery := `
+		SELECT id, network, scan_type, success, status, error, devices_online, devices_joined, devices_returned, devices_left, duration, timestamp, devices_found
 		FROM scan_history
-		ORDER BY timestamp DESC
-	`)
+	`
+	if len(conditions) > 0 {
+		baseQuery += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	baseQuery += " ORDER BY timestamp DESC LIMIT 200"
+
+	rows, err := s.db.Query(baseQuery, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -2649,7 +2694,7 @@ func (s *Storage) GetScanHistory() ([]types.ScanHistoryRecord, error) {
 		var r types.ScanHistoryRecord
 		var successVal int
 		var devicesFoundJSON string
-		err := rows.Scan(&r.ID, &r.Network, &successVal, &r.Error, &r.DevicesOnline, &r.DevicesJoined, &r.DevicesReturned, &r.DevicesLeft, &r.Duration, &r.Timestamp, &devicesFoundJSON)
+		err := rows.Scan(&r.ID, &r.Network, &r.ScanType, &successVal, &r.Status, &r.Error, &r.DevicesOnline, &r.DevicesJoined, &r.DevicesReturned, &r.DevicesLeft, &r.Duration, &r.Timestamp, &devicesFoundJSON)
 		if err == nil {
 			r.Success = successVal != 0
 			if devicesFoundJSON != "" {

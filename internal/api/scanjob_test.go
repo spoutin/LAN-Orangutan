@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -407,6 +408,94 @@ func TestSingleDeviceScan_LogsSingleDeviceCompletion(t *testing.T) {
 	}
 	if strings.Contains(logOutput, "completed service scan queue on 10.5.5.0/24") {
 		t.Errorf("did not expect log to say 'completed service scan queue on 10.5.5.0/24'")
+	}
+}
+
+func TestDeepScan_TracksFailedAndWarningStatus(t *testing.T) {
+	store := newScanJobTestStore(t)
+	dev1 := types.Device{IP: "10.5.5.10", Hostname: "host1", LastSeen: time.Now()}
+	dev2 := types.Device{IP: "10.5.5.20", Hostname: "host2", LastSeen: time.Now()}
+	_ = store.UpdateDevice(&dev1)
+	_ = store.UpdateDevice(&dev2)
+
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.5.5.0/24"}
+	cfg.Scanning.PortScanRange = "22"
+	h := NewHandler(store, cfg)
+
+	// Case 1: All hosts fail (e.g. fatal scanner error)
+	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			return nil, fmt.Errorf("nsock_pool_dtls_init called with no OpenSSL DTLS support")
+		},
+	})
+
+	job1 := &scanJob{
+		networks: []string{"10.5.5.0/24"},
+	}
+	job1.runDeepQueue(context.Background(), h, map[string][]types.Device{"10.5.5.0/24": {dev1, dev2}})
+
+	history, err := store.GetScanHistory()
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("expected 1 history entry, got %d", len(history))
+	}
+	if history[0].Status != "failed" {
+		t.Errorf("expected status 'failed', got %q", history[0].Status)
+	}
+	if history[0].ScanType != "deep" {
+		t.Errorf("expected scan_type 'deep', got %q", history[0].ScanType)
+	}
+	if !strings.Contains(history[0].Error, "DTLS support") {
+		t.Errorf("expected error to mention DTLS support, got: %s", history[0].Error)
+	}
+
+	// Case 2: Partial failure (one host passes, one host fails)
+	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			if target == "10.5.5.10" {
+				return []byte(`<nmaprun><host><ports><port protocol="tcp" portid="22"><state state="open"/></port></ports></host></nmaprun>`), nil
+			}
+			return nil, fmt.Errorf("connection timed out")
+		},
+	})
+
+	job2 := &scanJob{
+		networks: []string{"10.5.5.0/24"},
+	}
+	job2.runDeepQueue(context.Background(), h, map[string][]types.Device{"10.5.5.0/24": {dev1, dev2}})
+
+	history, _ = store.GetScanHistory()
+	if len(history) != 2 {
+		t.Fatalf("expected 2 history entries, got %d", len(history))
+	}
+	// history[0] is newest
+	if history[0].Status != "warning" {
+		t.Errorf("expected status 'warning', got %q", history[0].Status)
+	}
+	if history[0].ScanType != "deep" {
+		t.Errorf("expected scan_type 'deep', got %q", history[0].ScanType)
+	}
+	if !strings.Contains(history[0].Error, "1 of 2 host service scans failed") {
+		t.Errorf("expected error summary to mention 1 of 2 failed, got: %s", history[0].Error)
+	}
+
+	// Test API endpoint with filter ?type=deep
+	req := httptest.NewRequest(http.MethodGet, "/api/scans/history?type=deep", nil)
+	w := httptest.NewRecorder()
+	h.handleScansHistory(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleScansHistory returned %d", w.Code)
+	}
+	var resp struct {
+		Success bool                      `json:"success"`
+		Data    []types.ScanHistoryRecord `json:"data"`
+	}
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Data) != 2 {
+		t.Errorf("expected 2 deep records from API, got %d", len(resp.Data))
 	}
 }
 

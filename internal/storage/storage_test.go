@@ -1459,3 +1459,76 @@ func TestRecordScanHistory_ScopedMetrics(t *testing.T) {
 		t.Errorf("DevicesFound[0] mismatch: %+v", h.DevicesFound[0])
 	}
 }
+
+func TestRecordScanHistoryWithDetails_Filtered(t *testing.T) {
+	s := newTestStorage(t)
+
+	now := time.Now()
+	// Record 1 sweep scan
+	err := s.RecordScanHistoryWithDetails("10.0.0.0/24", "sweep", "success", "", now.Add(-2*time.Hour), 1.2, []types.ScanDeviceRecord{
+		{IP: "10.0.0.10", Hostname: "desktop"},
+	})
+	if err != nil {
+		t.Fatalf("record sweep: %v", err)
+	}
+
+	// Record 1 deep scan with warning (partial)
+	err = s.RecordScanHistoryWithDetails("10.5.5.0/24", "deep", "warning", "1 of 4 failed", now.Add(-1*time.Hour), 5.4, []types.ScanDeviceRecord{
+		{IP: "10.5.5.142", Hostname: "proxmox"},
+	})
+	if err != nil {
+		t.Fatalf("record deep warning: %v", err)
+	}
+
+	// Record 1 deep scan failed
+	err = s.RecordScanHistoryWithDetails("10.5.5.0/24", "deep", "failed", "DTLS crash", now, 0.4, nil)
+	if err != nil {
+		t.Fatalf("record deep failed: %v", err)
+	}
+
+	// Test default unfiltered
+	all, err := s.GetScanHistory()
+	if err != nil {
+		t.Fatalf("GetScanHistory: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 records, got %d", len(all))
+	}
+	if all[0].Status != "failed" || all[0].ScanType != "deep" {
+		t.Errorf("all[0] mismatch: status=%s, type=%s", all[0].Status, all[0].ScanType)
+	}
+	if all[1].Status != "warning" || all[1].ScanType != "deep" {
+		t.Errorf("all[1] mismatch: status=%s, type=%s", all[1].Status, all[1].ScanType)
+	}
+	if all[2].Status != "success" || all[2].ScanType != "sweep" {
+		t.Errorf("all[2] mismatch: status=%s, type=%s", all[2].Status, all[2].ScanType)
+	}
+
+	// Test filter by scan_type = "sweep"
+	sweeps, err := s.GetScanHistoryFiltered("", "sweep", "")
+	if err != nil {
+		t.Fatalf("filter sweep: %v", err)
+	}
+	if len(sweeps) != 1 || sweeps[0].Network != "10.0.0.0/24" {
+		t.Errorf("expected 1 sweep record for 10.0.0.0/24, got %d", len(sweeps))
+	}
+
+	// Test filter by query = "proxmox"
+	matches, err := s.GetScanHistoryFiltered("", "", "proxmox")
+	if err != nil {
+		t.Fatalf("filter query: %v", err)
+	}
+	if len(matches) != 1 || matches[0].Status != "warning" {
+		t.Errorf("expected 1 record matching 'proxmox', got %d", len(matches))
+	}
+
+	// Test filter by today's date
+	todayStr := now.Format("2006-01-02")
+	todayRecs, err := s.GetScanHistoryFiltered(todayStr, "", "")
+	if err != nil {
+		t.Fatalf("filter date: %v", err)
+	}
+	if len(todayRecs) != 3 {
+		t.Errorf("expected 3 records today (%s), got %d", todayStr, len(todayRecs))
+	}
+}

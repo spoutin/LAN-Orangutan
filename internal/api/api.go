@@ -848,7 +848,11 @@ func (h *Handler) handleScansHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, err := h.store.GetScanHistory()
+	dateStr := r.URL.Query().Get("date")
+	scanType := r.URL.Query().Get("type")
+	query := r.URL.Query().Get("q")
+
+	history, err := h.store.GetScanHistoryFiltered(dateStr, scanType, query)
 	if err != nil {
 		h.error(w, http.StatusInternalServerError, err.Error())
 		return
