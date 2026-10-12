@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/logging"
 	"github.com/spoutin/LAN-Orangutan/internal/network"
 	"github.com/spoutin/LAN-Orangutan/internal/notification"
 	"github.com/spoutin/LAN-Orangutan/internal/remotescan"
@@ -170,6 +172,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleScansHistory(w, r)
 	case path == "scans/events":
 		h.handleScansEvents(w, r)
+	case path == "logs":
+		h.handleLogs(w, r)
 	default:
 		h.error(w, http.StatusNotFound, "endpoint not found")
 	}
@@ -871,6 +875,23 @@ func (h *Handler) handleScansEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.success(w, events)
+}
+
+// handleLogs handles GET /api/logs
+func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	q := r.URL.Query().Get("q")
+	level := r.URL.Query().Get("level")
+	limitStr := r.URL.Query().Get("limit")
+	limit := 100
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		limit = l
+	}
+	entries := logging.GlobalBuffer.GetEntries(q, level, limit)
+	h.success(w, entries)
 }
 
 // handleDevicesClear handles POST /api/devices/clear

@@ -307,6 +307,13 @@ a:hover { color: var(--accent-hover); }
     font-size: 0.9rem;
 }
 
+button.nav-link {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+}
+
 .nav-link:hover, .nav-link.active {
     opacity: 1;
     background: rgba(255,255,255,0.15);
@@ -1721,8 +1728,13 @@ textarea.input {
     color: white;
 }
 
+.toast.warning {
+    background: #e0842c;
+    color: white;
+}
+
 .toast.error {
-    background: var(--danger);
+    background: var(--danger, #d9483f);
     color: white;
 }
 

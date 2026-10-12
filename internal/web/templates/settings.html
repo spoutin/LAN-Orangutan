@@ -64,6 +64,7 @@ orangutan export out.csv</code></pre>
             <a href="/" class="nav-link">Dashboard</a>
             <a href="/scans" class="nav-link">Scans</a>
             <a href="/settings" class="nav-link active">Settings</a>
+            <button type="button" class="nav-link" onclick="openLogsModal()" title="View System &amp; Scan Logs">Logs</button>
             {{if .AuthEnabled}}<a href="/logout" class="nav-link">Sign out</a>{{end}}
             <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">◐</button>
         </nav>
@@ -249,6 +250,68 @@ orangutan export out.csv</code></pre>
             </div>
         </section>
     </main>
+
+    <!-- Dedicated Error Details Modal -->
+    <div id="error-details-modal" class="modal" style="display:none">
+        <div class="modal-content modal-medium" style="max-width: 650px; width: 92%;">
+            <div class="modal-header">
+                <div>
+                    <h3 id="error-modal-title" style="margin-bottom: 0.25rem; color: var(--danger, #d9483f);">Error Details</h3>
+                    <div id="error-modal-meta" style="font-size: 0.85rem; color: var(--text-muted);"></div>
+                </div>
+                <button class="modal-close" onclick="closeErrorDetailsModal()">×</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <div id="error-modal-target-box" style="display:none; margin-bottom: 1rem; font-size: 0.9rem;">
+                    <strong>Target:</strong> <code id="error-modal-target"></code>
+                </div>
+                <div style="margin-bottom: 0.5rem; font-size: 0.85rem; font-weight: bold; color: var(--text-muted);">Error Output:</div>
+                <pre id="error-modal-text" style="background: var(--bg-main); border: 1px solid var(--border); padding: 1rem; border-radius: 6px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; color: var(--text);"></pre>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+                <button class="btn btn-secondary" id="error-modal-logs-btn" onclick="openLogsModalForError()">Search in Logs</button>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn" onclick="copyErrorDetails()">Copy Error</button>
+                    <button class="btn btn-primary" onclick="closeErrorDetailsModal()">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dedicated System & Scan Logs Modal -->
+    <div id="logs-modal" class="modal" style="display:none">
+        <div class="modal-content modal-large" style="max-width: 950px; width: 95%; max-height: 90vh; display: flex; flex-direction: column;">
+            <div class="modal-header">
+                <div>
+                    <h3 style="margin-bottom: 0.25rem;">System &amp; Scan Logs</h3>
+                    <div style="font-size: 0.85rem; color: var(--text-muted);">Real-time server events, discovery sweeps, SSH connections, and scan diagnostics</div>
+                </div>
+                <button class="modal-close" onclick="closeLogsModal()">×</button>
+            </div>
+            <div class="modal-body" style="padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; flex-grow: 1; min-height: 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+                    <input type="text" id="logs-search-input" class="input search-input" style="max-width: 340px; flex-grow: 1;" placeholder="Search logs (IP, gateway, error)..." oninput="filterLogsDebounced()">
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <select id="logs-level-select" class="select" style="width: auto;" onchange="fetchAndRenderLogs()">
+                            <option value="all">All Levels</option>
+                            <option value="error">Errors Only</option>
+                            <option value="warn">Warnings &amp; Errors</option>
+                            <option value="info">Info Only</option>
+                        </select>
+                        <button class="btn" onclick="fetchAndRenderLogs()" title="Refresh logs">↻ Refresh</button>
+                        <button class="btn" onclick="copyLogsToClipboard()" title="Copy visible logs">Copy</button>
+                    </div>
+                </div>
+                <div style="flex-grow: 1; min-height: 350px; max-height: 520px; overflow-y: auto; background: var(--bg-main); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; line-height: 1.5;" id="logs-terminal-container">
+                    <div id="logs-terminal-content">Loading logs...</div>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+                <span id="logs-status-counter" style="font-size: 0.85rem; color: var(--text-muted);"></span>
+                <button class="btn btn-primary" onclick="closeLogsModal()">Close</button>
+            </div>
+        </div>
+    </div>
 
     <div id="toast" class="toast"></div>
 

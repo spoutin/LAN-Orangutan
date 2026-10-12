@@ -120,13 +120,195 @@ function setAccent(name) {
     });
 })();
 
-// Toast notifications
-function showToast(message, type = 'info', duration = 3000) {
+// Toast notifications & Error Details
+let currentToastDetails = null;
+let toastTimeout = null;
+
+function showToast(message, type = 'info', duration = null, details = null) {
     const toast = document.getElementById('toast');
     if (!toast) return;
-    toast.textContent = message;
+
+    if (toastTimeout) {
+        clearTimeout(toastTimeout);
+        toastTimeout = null;
+    }
+
+    currentToastDetails = details || (type === 'error' ? { title: 'Error Details', error: message } : null);
+
+    const isError = type === 'error';
+    const isWarning = type === 'warning';
+
+    if (duration == null) {
+        duration = (isError || isWarning) ? 10000 : 3500;
+    }
+
+    const clickHint = (isError || currentToastDetails) ? ' <span style="opacity: 0.85; font-size: 0.8rem; margin-left: 0.5rem; text-decoration: underline;">(Click for details)</span>' : '';
+    toast.innerHTML = `<span class="toast-message">${escapeHtml(message)}</span>${clickHint}`;
     toast.className = 'toast ' + type + ' show';
-    setTimeout(() => toast.classList.remove('show'), duration);
+
+    if (isError || currentToastDetails) {
+        toast.style.cursor = 'pointer';
+        toast.title = 'Click to view full error details';
+        toast.onclick = () => openErrorDetailsModal(currentToastDetails);
+    } else {
+        toast.style.cursor = 'default';
+        toast.removeAttribute('title');
+        toast.onclick = null;
+    }
+
+    toastTimeout = setTimeout(() => {
+        toast.classList.remove('show');
+        toastTimeout = null;
+    }, duration);
+}
+
+function openErrorDetailsModal(details) {
+    if (!details) return;
+    const modal = document.getElementById('error-details-modal');
+    if (!modal) return;
+
+    const titleEl = document.getElementById('error-modal-title');
+    const metaEl = document.getElementById('error-modal-meta');
+    const targetBox = document.getElementById('error-modal-target-box');
+    const targetEl = document.getElementById('error-modal-target');
+    const textEl = document.getElementById('error-modal-text');
+
+    if (titleEl) titleEl.textContent = details.title || 'Error Details';
+    if (metaEl) {
+        const timeStr = details.timestamp ? new Date(details.timestamp).toLocaleString() : new Date().toLocaleString();
+        metaEl.textContent = `Occurred: ${timeStr}`;
+    }
+
+    if (details.ip || details.target) {
+        if (targetBox) targetBox.style.display = 'block';
+        if (targetEl) targetEl.textContent = details.ip || details.target;
+    } else if (targetBox) {
+        targetBox.style.display = 'none';
+    }
+
+    if (textEl) {
+        textEl.textContent = details.error || details.message || 'No additional error details recorded';
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closeErrorDetailsModal() {
+    const modal = document.getElementById('error-details-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function copyErrorDetails() {
+    const textEl = document.getElementById('error-modal-text');
+    if (textEl && textEl.textContent) {
+        navigator.clipboard.writeText(textEl.textContent).then(() => {
+            showToast('Error copied to clipboard', 'success');
+        });
+    }
+}
+
+function openLogsModalForError() {
+    const target = document.getElementById('error-modal-target')?.textContent;
+    closeErrorDetailsModal();
+    openLogsModal(target || '');
+}
+
+// Logs Modal
+let currentLogsQuery = '';
+let logsFilterTimeout = null;
+
+function openLogsModal(initialQuery = '') {
+    const modal = document.getElementById('logs-modal');
+    if (!modal) return;
+
+    const searchInput = document.getElementById('logs-search-input');
+    if (searchInput) {
+        searchInput.value = initialQuery;
+        currentLogsQuery = initialQuery;
+    }
+
+    modal.style.display = 'flex';
+    fetchAndRenderLogs();
+}
+
+function closeLogsModal() {
+    const modal = document.getElementById('logs-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function filterLogsDebounced() {
+    if (logsFilterTimeout) clearTimeout(logsFilterTimeout);
+    logsFilterTimeout = setTimeout(() => {
+        currentLogsQuery = (document.getElementById('logs-search-input')?.value || '').trim();
+        fetchAndRenderLogs();
+    }, 250);
+}
+
+async function fetchAndRenderLogs() {
+    const container = document.getElementById('logs-terminal-content');
+    const counter = document.getElementById('logs-status-counter');
+    const levelSelect = document.getElementById('logs-level-select');
+    const level = levelSelect ? levelSelect.value : 'all';
+    const q = currentLogsQuery;
+
+    let url = `/api/logs?limit=300`;
+    if (q) url += `&q=${encodeURIComponent(q)}`;
+    if (level && level !== 'all') url += `&level=${encodeURIComponent(level)}`;
+
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!data.success) {
+            if (container) container.innerHTML = `<div style="color: var(--danger, #d9483f);">Failed to load logs: ${escapeHtml(data.error || 'Server error')}</div>`;
+            return;
+        }
+
+        const entries = data.data || [];
+        if (counter) {
+            counter.textContent = `${entries.length} log line${entries.length === 1 ? '' : 's'}${q ? ` matching "${q}"` : ''}`;
+        }
+
+        if (entries.length === 0) {
+            if (container) container.innerHTML = `<div style="color: var(--text-muted); padding: 2rem 0; text-align: center;">No log entries found${q ? ` matching "${escapeHtml(q)}"` : ''}</div>`;
+            return;
+        }
+
+        const reversed = [...entries].reverse();
+        if (container) {
+            container.innerHTML = reversed.map(e => {
+                const date = new Date(e.timestamp);
+                const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                let levelBadge = '';
+                if (e.level === 'error') {
+                    levelBadge = `<span style="background: rgba(217, 72, 63, 0.2); color: #e05c5c; padding: 1px 5px; border-radius: 3px; font-weight: bold; font-size: 0.75rem;">ERROR</span>`;
+                } else if (e.level === 'warn') {
+                    levelBadge = `<span style="background: rgba(224, 132, 44, 0.2); color: #e0842c; padding: 1px 5px; border-radius: 3px; font-weight: bold; font-size: 0.75rem;">WARN</span>`;
+                } else {
+                    levelBadge = `<span style="background: rgba(47, 127, 212, 0.15); color: #2f7fd4; padding: 1px 5px; border-radius: 3px; font-weight: bold; font-size: 0.75rem;">INFO</span>`;
+                }
+                return `<div class="log-line" style="margin-bottom: 4px; display: flex; gap: 0.75rem; align-items: baseline;">
+                    <span style="color: var(--text-muted); flex-shrink: 0; font-size: 0.8rem;">${timeStr}</span>
+                    <span style="flex-shrink: 0;">${levelBadge}</span>
+                    <span style="word-break: break-all; flex-grow: 1;">${escapeHtml(e.message)}</span>
+                </div>`;
+            }).join('');
+            const terminalContainer = document.getElementById('logs-terminal-container');
+            if (terminalContainer) {
+                terminalContainer.scrollTop = terminalContainer.scrollHeight;
+            }
+        }
+    } catch (err) {
+        if (container) container.innerHTML = `<div style="color: var(--danger, #d9483f);">Error loading logs: ${escapeHtml(err.message)}</div>`;
+    }
+}
+
+function copyLogsToClipboard() {
+    const lines = Array.from(document.querySelectorAll('#logs-terminal-content .log-line'));
+    if (!lines || lines.length === 0) return;
+    const text = lines.map(l => l.innerText.replace(/\s+/g, ' ').trim()).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('Logs copied to clipboard', 'success');
+    });
 }
 
 // API helper
@@ -274,7 +456,12 @@ function reportScanOutcome(p) {
 		}
 		const host = p.last_port_scan_host || {};
 		if (host.error) {
-			showToast('Service rescan failed: ' + host.error, 'warning');
+			showToast('Service rescan failed: ' + host.error, 'error', 10000, {
+				title: `Service Rescan Failed (${host.ip || 'Device'})`,
+				target: host.ip,
+				error: host.error,
+				timestamp: new Date().toISOString()
+			});
 			return;
 		}
 		showToast('Service rescan complete', 'success');
@@ -1500,7 +1687,7 @@ function closeServiceDetails() {
 	document.getElementById('service-details-modal').style.display = 'none';
 }
 
-function updateSidebarDeepScanState(ip, isRunning) {
+function updateSidebarDeepScanState(ip, isRunning, error = null) {
 	const currentIp = document.getElementById('sb-edit-ip')?.value;
 	if (currentIp !== ip) return;
 
@@ -1515,6 +1702,8 @@ function updateSidebarDeepScanState(ip, isRunning) {
 			? window.deviceOperationState.formatLastDeepScan(null, true)
 			: { html: '<span class="deep-scan-progress">Scanning services...</span>' };
 		lastDeepScan.innerHTML = res.html;
+	} else if (error) {
+		lastDeepScan.innerHTML = `<span style="color: var(--danger, #d9483f); cursor: pointer; font-weight: 600;" onclick="openErrorDetailsModal({ title: 'Service Rescan Failed (${escapeHtml(ip)})', target: '${escapeHtml(ip)}', error: '${escapeHtml(error)}' })" title="${escapeHtml(error)}">⚠ Scan Failed</span>`;
 	} else {
 		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
 		const res = window.deviceOperationState?.formatLastDeepScan
@@ -1527,7 +1716,9 @@ function updateSidebarDeepScanState(ip, isRunning) {
 
 scanCoordinator.addListener(progress => {
 	if (progress?.targeted_deep_scan && progress?.targeted_device_ip) {
-		updateSidebarDeepScanState(progress.targeted_device_ip, progress.status === 'running');
+		const isRunning = progress.status === 'running';
+		const error = !isRunning ? progress.last_port_scan_host?.error : null;
+		updateSidebarDeepScanState(progress.targeted_device_ip, isRunning, error);
 	}
 });
 

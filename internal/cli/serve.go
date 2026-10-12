@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/spoutin/LAN-Orangutan/internal/api"
 	"github.com/spoutin/LAN-Orangutan/internal/auth"
+	"github.com/spoutin/LAN-Orangutan/internal/logging"
 	"github.com/spoutin/LAN-Orangutan/internal/network"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/web"
@@ -43,6 +46,9 @@ func init() {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
+	// Capture server logs into both os.Stderr and in-memory ring buffer
+	log.SetOutput(io.MultiWriter(os.Stderr, logging.GlobalBuffer))
+
 	// Flags parsed cleanly, so anything that fails from here is a runtime
 	// problem, not a usage error. Report it without the flag listing.
 	cmd.SilenceUsage = true

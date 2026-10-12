@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/logging"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
@@ -114,5 +116,43 @@ func TestDevice_PUT_UpdateEndpoint(t *testing.T) {
 	}
 	if !updated.AnsibleManaged {
 		t.Errorf("AnsibleManaged = false, want true")
+	}
+}
+
+func TestLogs_APIEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	cfg := config.Default()
+	h := NewHandler(store, cfg)
+
+	logging.GlobalBuffer.Add("info", "test normal info log")
+	logging.GlobalBuffer.Add("error", "service scan failed for 10.5.5.143: connection refused")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?q=10.5.5.143", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	var resp struct {
+		Success bool               `json:"success"`
+		Data    []logging.LogEntry `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Success {
+		t.Fatal("expected success: true")
+	}
+	if len(resp.Data) == 0 {
+		t.Fatal("expected at least 1 log entry matching 10.5.5.143")
+	}
+	if !strings.Contains(resp.Data[0].Message, "10.5.5.143") {
+		t.Errorf("expected message containing 10.5.5.143, got %q", resp.Data[0].Message)
 	}
 }
