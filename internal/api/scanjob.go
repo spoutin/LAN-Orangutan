@@ -862,11 +862,13 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 				}
 				targets = prioritizeDeepScanDevices(targets)
 
-				if len(j.deepDevices) != 1 {
+				if len(j.deepDevices) == 1 {
+					log.Printf("[scan] starting single-device service scan on %s via gateway %s", j.deepDevices[0].IP, gwName)
+				} else {
 					h.store.SetNetworkDeepScanning(network, true)
 					h.store.SetNetworkScanning(network, true)
+					log.Printf("[scan] starting service scan queue on %s via gateway %s (%d hosts)", network, gwName, len(targets))
 				}
-				log.Printf("[scan] starting service scan queue on %s via gateway %s (%d hosts)", network, gwName, len(targets))
 
 				concurrency := 2
 				if j.nightlyDeep || len(j.deepDevices) == 1 {
@@ -897,12 +899,14 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 				close(hostChan)
 				subnetWG.Wait()
 
-				if len(j.deepDevices) != 1 {
+				if len(j.deepDevices) == 1 {
+					log.Printf("[scan] completed single-device service scan on %s via gateway %s", j.deepDevices[0].IP, gwName)
+				} else {
 					h.store.SetNetworkDeepScanning(network, false)
 					h.store.SetNetworkScanning(network, false)
 					h.store.AddCompletedNetwork(network)
+					log.Printf("[scan] completed service scan queue on %s via gateway %s", network, gwName)
 				}
-				log.Printf("[scan] completed service scan queue on %s via gateway %s", network, gwName)
 			}
 		}(gw, subnets)
 	}

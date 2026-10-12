@@ -1,11 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -364,6 +367,46 @@ func TestSingleDeviceScan_DoesNotAlertSlackOrTriggerFalseRecovery(t *testing.T) 
 	// Successful sweep should NOT trigger a false recovery message!
 	if len(slackMessages) != 0 {
 		t.Fatalf("expected 0 Slack alerts (no false recovery), got %d: %v", len(slackMessages), slackMessages)
+	}
+}
+
+func TestSingleDeviceScan_LogsSingleDeviceCompletion(t *testing.T) {
+	store := newScanJobTestStore(t)
+	device := types.Device{
+		IP:       "10.5.5.142",
+		Hostname: "proxmox",
+		LastSeen: time.Now(),
+	}
+	_ = store.UpdateDevice(&device)
+
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.5.5.0/24"}
+	cfg.Scanning.PortScanRange = "22"
+	h := NewHandler(store, cfg)
+
+	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			return []byte(`<nmaprun><host><ports><port protocol="tcp" portid="22"><state state="open"/></port></ports></host></nmaprun>`), nil
+		},
+	})
+
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	job := &scanJob{
+		networks:    []string{"10.5.5.0/24"},
+		deepDevices: []types.Device{device},
+	}
+	targets := map[string][]types.Device{"10.5.5.0/24": {device}}
+	job.runDeepQueue(context.Background(), h, targets)
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "completed single-device service scan on 10.5.5.142") {
+		t.Errorf("expected log to contain 'completed single-device service scan on 10.5.5.142', got:\n%s", logOutput)
+	}
+	if strings.Contains(logOutput, "completed service scan queue on 10.5.5.0/24") {
+		t.Errorf("did not expect log to say 'completed service scan queue on 10.5.5.0/24'")
 	}
 }
 
