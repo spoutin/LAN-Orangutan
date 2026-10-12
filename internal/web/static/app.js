@@ -2923,9 +2923,14 @@ function startProgressClock() {
     }, 1000);
 }
 
+let currentScanHistory = [];
+let currentScanModalDevices = [];
+
 function renderScanHistory(history) {
     const tbody = document.getElementById('scan-history-tbody');
     if (!tbody) return;
+
+    currentScanHistory = history || [];
 
     if (!history || history.length === 0) {
         tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No scan history recorded yet</td></tr>`;
@@ -2937,18 +2942,106 @@ function renderScanHistory(history) {
         const dateStr = date.toLocaleString();
         const successBadge = row.success 
             ? `<span class="badge badge-success" style="background: rgba(44, 158, 107, 0.15); color: #2c9e6b; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.8rem;">Success</span>` 
-            : `<span class="badge badge-failed" style="background: rgba(224, 132, 44, 0.15); color: #e0842c; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.8rem;" title="${row.error || ''}">Failed</span>`;
+            : `<span class="badge badge-failed" style="background: rgba(224, 132, 44, 0.15); color: #e0842c; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.8rem;" title="${escapeHtml(row.error || '')}">Failed</span>`;
         
         return `
-            <tr>
+            <tr class="scan-history-row" onclick="openScanDetailModal(${row.id})" title="Click to view scan details">
                 <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);">${dateStr}</td>
-                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><strong>${row.network}</strong></td>
+                <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><strong>${escapeHtml(row.network)}</strong></td>
                 <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);">${successBadge}</td>
                 <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: var(--accent); font-weight: bold;">${row.devices_online}</span></td>
                 <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: #2c9e6b; font-weight: bold;">+${row.devices_joined}</span></td>
                 <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: #2f7fd4; font-weight: bold;">+${row.devices_returned}</span></td>
                 <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);"><span style="color: #e0842c; font-weight: bold;">-${row.devices_left}</span></td>
                 <td style="padding: 0.8rem; border-bottom: 1px solid var(--border);">${row.duration.toFixed(1)}s</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function openScanDetailModal(scanId) {
+    const row = currentScanHistory.find(r => r.id === scanId);
+    if (!row) return;
+
+    const modal = document.getElementById('scan-detail-modal');
+    if (!modal) return;
+
+    const titleEl = document.getElementById('scan-modal-title');
+    const metaEl = document.getElementById('scan-modal-meta');
+    const errorEl = document.getElementById('scan-modal-error');
+    const devSection = document.getElementById('scan-modal-devices-section');
+    const searchInput = document.getElementById('scan-modal-search');
+
+    const dateStr = new Date(row.timestamp).toLocaleString();
+    if (titleEl) titleEl.textContent = `Scan Details: ${row.network}`;
+    if (metaEl) {
+        const badge = row.success ? '✓ Success' : '⚠ Failed';
+        metaEl.textContent = `${dateStr} · Duration: ${row.duration.toFixed(1)}s · ${badge}`;
+    }
+
+    if (!row.success && row.error) {
+        if (errorEl) {
+            errorEl.innerHTML = `<strong>Scan Error:</strong> ${escapeHtml(row.error)}`;
+            errorEl.style.display = 'block';
+        }
+    } else if (errorEl) {
+        errorEl.style.display = 'none';
+        errorEl.textContent = '';
+    }
+
+    if (searchInput) searchInput.value = '';
+    currentScanModalDevices = row.devices_found || [];
+
+    if (devSection) devSection.style.display = 'block';
+    renderScanModalDevices(currentScanModalDevices);
+
+    modal.style.display = 'flex';
+}
+
+function closeScanDetailModal() {
+    const modal = document.getElementById('scan-detail-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function filterScanModalDevices() {
+    const q = (document.getElementById('scan-modal-search')?.value || '').toLowerCase().trim();
+    if (!q) {
+        renderScanModalDevices(currentScanModalDevices);
+        return;
+    }
+    const filtered = currentScanModalDevices.filter(d => {
+        return (d.ip && d.ip.toLowerCase().includes(q)) ||
+               (d.hostname && d.hostname.toLowerCase().includes(q)) ||
+               (d.mac && d.mac.toLowerCase().includes(q)) ||
+               (d.vendor && d.vendor.toLowerCase().includes(q));
+    });
+    renderScanModalDevices(filtered);
+}
+
+function renderScanModalDevices(devices) {
+    const tbody = document.getElementById('scan-modal-tbody');
+    const countEl = document.getElementById('scan-modal-count');
+    if (countEl) countEl.textContent = devices ? devices.length : 0;
+    if (!tbody) return;
+
+    if (!devices || devices.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No devices discovered</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = devices.map(d => {
+        const ping = d.response_time != null ? `${d.response_time.toFixed(1)}ms` : '-';
+        const ports = d.open_ports && d.open_ports.length > 0 ? d.open_ports.join(', ') : '-';
+        const vendorText = d.vendor ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(d.vendor)}</div>` : '';
+        const macText = d.mac ? `<code>${escapeHtml(d.mac)}</code>` : '<span style="color: var(--text-muted);">-</span>';
+        
+        return `
+            <tr>
+                <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);"><strong>${escapeHtml(d.ip)}</strong></td>
+                <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);">${escapeHtml(d.hostname || '-')}</td>
+                <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);">${macText}${vendorText}</td>
+                <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);">${ping}</td>
+                <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);">${ports}</td>
             </tr>
         `;
     }).join('');

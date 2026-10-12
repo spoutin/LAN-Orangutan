@@ -1274,6 +1274,15 @@ td[data-copy]:not([data-copy=""]) {
     background: var(--bg-secondary);
 }
 
+.scan-history-row {
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.scan-history-row:hover {
+    background: var(--bg-card-hover) !important;
+}
+
 .table tbody tr:last-child td {
     border-bottom: none;
 }

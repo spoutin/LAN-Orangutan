@@ -223,6 +223,47 @@
         </div>
     </div>
 
+    <!-- Dedicated Scan Detail Modal -->
+    <div id="scan-detail-modal" class="modal" style="display:none">
+        <div class="modal-content modal-large" style="max-width: 850px; width: 95%;">
+            <div class="modal-header">
+                <div>
+                    <h3 id="scan-modal-title" style="margin-bottom: 0.25rem;">Scan Details</h3>
+                    <div id="scan-modal-meta" style="font-size: 0.85rem; color: var(--text-muted);"></div>
+                </div>
+                <button class="modal-close" onclick="closeScanDetailModal()">×</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem; max-height: 600px; overflow-y: auto;">
+                <div id="scan-modal-error" class="card" style="display:none; background: rgba(224, 132, 44, 0.1); border: 1px solid rgba(224, 132, 44, 0.3); color: #e0842c; padding: 1rem; margin-bottom: 1.5rem; border-radius: 6px;"></div>
+
+                <div id="scan-modal-devices-section" style="display:none;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+                        <h4 style="margin: 0; font-size: 1rem;">Discovered Devices (<span id="scan-modal-count">0</span>)</h4>
+                        <input type="text" id="scan-modal-search" class="input search-input" style="max-width: 260px;" placeholder="Search devices..." oninput="filterScanModalDevices()">
+                    </div>
+                    <div style="overflow-x: auto; border: 1px solid var(--border); border-radius: 6px;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
+                            <thead>
+                                <tr style="background: var(--bg-card-hover); border-bottom: 1px solid var(--border);">
+                                    <th style="padding: 0.6rem 0.8rem; font-weight: bold; color: var(--text-muted);">IP Address</th>
+                                    <th style="padding: 0.6rem 0.8rem; font-weight: bold; color: var(--text-muted);">Hostname</th>
+                                    <th style="padding: 0.6rem 0.8rem; font-weight: bold; color: var(--text-muted);">MAC / Vendor</th>
+                                    <th style="padding: 0.6rem 0.8rem; font-weight: bold; color: var(--text-muted);">Ping</th>
+                                    <th style="padding: 0.6rem 0.8rem; font-weight: bold; color: var(--text-muted);">Open Ports</th>
+                                </tr>
+                            </thead>
+                            <tbody id="scan-modal-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="closeScanDetailModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div id="toast" class="toast"></div>
 
     <script src="/static/app.js"></script>
