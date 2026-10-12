@@ -121,6 +121,30 @@ func TestSelectOldestScannedNetworksPerGateway(t *testing.T) {
 	}
 }
 
+func TestStartBackgroundScanner_SchedulesAllNetworksTogether(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.0.1.0/24", "10.5.5.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+	cfg.Scanning.ContinuousScan = true
+	h := NewHandler(store, cfg)
+
+	networks, err := h.resolveScanTargets("all")
+	if err != nil {
+		t.Fatalf("resolveScanTargets: %v", err)
+	}
+
+	job := h.startBackgroundNetworks(networks, networks)
+	if job == nil {
+		t.Fatal("expected background job to be created")
+	}
+	if len(job.networks) != 3 {
+		t.Fatalf("expected all 3 networks scheduled together, got %d: %v", len(job.networks), job.networks)
+	}
+	job.cancel()
+	<-job.done
+}
+
 func TestWaitForBackgroundScanWaitsForCompletionBeforeDelay(t *testing.T) {
 	done := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -725,7 +749,7 @@ func (r *testConcurrencyTrackingRemoteRunner) RunScan(ctx context.Context, targe
 
 func (r *testConcurrencyTrackingRemoteRunner) Close() error { return nil }
 
-func TestScanJob_Stage1PerGatewayParallelSweep(t *testing.T) {
+func TestScanJob_Stage1AllSubnetsParallelSweep(t *testing.T) {
 	store := newScanJobTestStore(t)
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.0.1.0/24", "10.5.5.0/24", "10.5.6.0/24"}
@@ -742,14 +766,8 @@ func TestScanJob_Stage1PerGatewayParallelSweep(t *testing.T) {
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
 
-	if runner.maxPerGW["opnsense"] != 1 {
-		t.Fatalf("expected opnsense max concurrent subnets = 1, got %d", runner.maxPerGW["opnsense"])
-	}
-	if runner.maxPerGW["openwrt"] != 1 {
-		t.Fatalf("expected openwrt max concurrent subnets = 1, got %d", runner.maxPerGW["openwrt"])
-	}
-	if runner.maxGlobal != 2 {
-		t.Fatalf("expected global concurrent subnets = 2 (1 per gateway), got %d", runner.maxGlobal)
+	if runner.maxGlobal != 4 {
+		t.Fatalf("expected all 4 subnets sweeping in parallel, got maxGlobal = %d", runner.maxGlobal)
 	}
 
 	job.mu.RLock()
@@ -761,7 +779,7 @@ func TestScanJob_Stage1PerGatewayParallelSweep(t *testing.T) {
 		}
 	}
 	if subnetsDone != 4 {
-		t.Fatalf("expected 4 subnet results, got %d (all: %v)", subnetsDone, job.results)
+		t.Fatalf("expected 4 subnets completed, got %d", subnetsDone)
 	}
 }
 

@@ -351,150 +351,133 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		return
 	}
 
-	type gatewaySubnet struct {
-		cidr  string
-		index int
-	}
-	gatewayOrder := make([]string, 0)
-	subnetsByGateway := make(map[string][]gatewaySubnet)
-
-	for i, cidr := range j.networks {
-		gw := h.gatewayForTarget(cidr)
-		if len(subnetsByGateway[gw]) == 0 {
-			gatewayOrder = append(gatewayOrder, gw)
-		}
-		subnetsByGateway[gw] = append(subnetsByGateway[gw], gatewaySubnet{cidr: cidr, index: i + 1})
-	}
-
 	var stage1WG sync.WaitGroup
 	var deepMu sync.Mutex
 	var activeIPsMu sync.Mutex
 
-	for _, gw := range gatewayOrder {
-		subnets := subnetsByGateway[gw]
+	for i, cidr := range j.networks {
+		gwName := h.gatewayForTarget(cidr)
+		index := i + 1
 		stage1WG.Add(1)
-		go func(gwName string, list []gatewaySubnet) {
+		go func(cidr, gwName string, index int) {
 			defer stage1WG.Done()
-			for _, item := range list {
+			if ctx.Err() != nil {
+				return
+			}
+
+			j.beginNetwork(cidr, index, h.store.GetLastDuration(cidr))
+			j.setActiveNetwork(cidr, gwName, true)
+			h.store.SetNetworkScanning(cidr, true)
+			h.store.ClearNetworkScanError(cidr)
+			log.Printf("[scan] starting discovery sweep on %s via gateway %s", cidr, gwName)
+
+			summary := networkScanSummary{Network: cidr}
+
+			lastScan := h.store.GetLastScan(cidr)
+			if canScan, waitTime := h.scanner.CheckRateLimit(lastScan); !canScan {
+				if waitTime > 0 && waitTime <= 5*time.Second {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(waitTime):
+					}
+				} else {
+					j.setActiveNetwork(cidr, gwName, false)
+					h.store.SetNetworkScanning(cidr, false)
+					summary.Status = "skipped"
+					summary.Error = "rate limited, wait " + waitTime.Round(time.Second).String()
+					j.addResult(summary, 0)
+					h.store.AddCompletedNetwork(cidr)
+					return
+				}
+			}
+
+			sweepStarted := time.Now()
+			// scanNetwork applies its own per-network timeout.
+			result, err := h.scanNetwork(ctx, cidr)
+			j.setActiveNetwork(cidr, gwName, false)
+			h.store.SetNetworkScanning(cidr, false)
+
+			if err != nil {
+				// A cancelled job surfaces as a scan error, but it is not a failure.
 				if ctx.Err() != nil {
 					return
 				}
-
-				cidr := item.cidr
-				j.beginNetwork(cidr, item.index, h.store.GetLastDuration(cidr))
-				j.setActiveNetwork(cidr, gwName, true)
-				h.store.SetNetworkScanning(cidr, true)
-				h.store.ClearNetworkScanError(cidr)
-				log.Printf("[scan] starting discovery sweep on %s via gateway %s", cidr, gwName)
-
-				summary := networkScanSummary{Network: cidr}
-
-				lastScan := h.store.GetLastScan(cidr)
-				if canScan, waitTime := h.scanner.CheckRateLimit(lastScan); !canScan {
-					if waitTime > 0 && waitTime <= 5*time.Second {
-						select {
-						case <-ctx.Done():
-							return
-						case <-time.After(waitTime):
-						}
-					} else {
-						j.setActiveNetwork(cidr, gwName, false)
-						h.store.SetNetworkScanning(cidr, false)
-						summary.Status = "skipped"
-						summary.Error = "rate limited, wait " + waitTime.Round(time.Second).String()
-						j.addResult(summary, 0)
-						h.store.AddCompletedNetwork(cidr)
-						continue
-					}
-				}
-
-				sweepStarted := time.Now()
-				// scanNetwork applies its own per-network timeout.
-				result, err := h.scanNetwork(ctx, cidr)
-				j.setActiveNetwork(cidr, gwName, false)
-				h.store.SetNetworkScanning(cidr, false)
-
-				if err != nil {
-					// A cancelled job surfaces as a scan error, but it is not a failure.
-					if ctx.Err() != nil {
-						return
-					}
-					summary.Status = "failed"
-					summary.Error = err.Error()
-					h.store.SetNetworkScanError(cidr, err.Error())
-					log.Printf("[scan] discovery sweep failed on %s via gateway %s: %v", cidr, gwName, err)
-					_ = h.store.RecordScanHistory(cidr, false, err.Error(), sweepStarted, time.Since(sweepStarted).Seconds(), nil)
-					j.addResult(summary, 0)
-					h.store.AddCompletedNetwork(cidr)
-					continue
-				}
-
-				h.store.ClearNetworkScanError(cidr)
-				summary.Status = "scanned"
-				summary.DeviceCount = result.DeviceCount
-				summary.Duration = result.Duration
-				log.Printf("[scan] completed discovery sweep on %s via gateway %s (found %d devices in %.2fs)",
-					cidr, gwName, result.DeviceCount, result.Duration)
-				j.addResult(summary, result.DeviceCount)
+				summary.Status = "failed"
+				summary.Error = err.Error()
+				h.store.SetNetworkScanError(cidr, err.Error())
+				log.Printf("[scan] discovery sweep failed on %s via gateway %s: %v", cidr, gwName, err)
+				_ = h.store.RecordScanHistory(cidr, false, err.Error(), sweepStarted, time.Since(sweepStarted).Seconds(), nil)
+				j.addResult(summary, 0)
 				h.store.AddCompletedNetwork(cidr)
+				return
+			}
 
-				var scanDevs []types.ScanDeviceRecord
-				for _, d := range result.Devices {
-					scanDevs = append(scanDevs, types.ScanDeviceRecord{
-						IP:           d.IP,
-						MAC:          d.MAC,
-						Hostname:     d.Hostname,
-						Vendor:       d.Vendor,
-						ResponseTime: d.ResponseTime,
-						OpenPorts:    d.OpenPorts,
-					})
-				}
-				_ = h.store.RecordScanHistory(cidr, true, "", sweepStarted, result.Duration, scanDevs)
+			h.store.ClearNetworkScanError(cidr)
+			summary.Status = "scanned"
+			summary.DeviceCount = result.DeviceCount
+			summary.Duration = result.Duration
+			log.Printf("[scan] completed discovery sweep on %s via gateway %s (found %d devices in %.2fs)",
+				cidr, gwName, result.DeviceCount, result.Duration)
+			j.addResult(summary, result.DeviceCount)
+			h.store.AddCompletedNetwork(cidr)
 
-				activeIPsMu.Lock()
-				var sweepIPs []string
-				for _, d := range result.Devices {
-					if d.IP != "" {
-						activeIPsMap[d.IP] = true
-						sweepIPs = append(sweepIPs, d.IP)
-					}
-				}
-				activeIPsMu.Unlock()
-				j.recordDiscoveredIPs(sweepIPs)
+			var scanDevs []types.ScanDeviceRecord
+			for _, d := range result.Devices {
+				scanDevs = append(scanDevs, types.ScanDeviceRecord{
+					IP:           d.IP,
+					MAC:          d.MAC,
+					Hostname:     d.Hostname,
+					Vendor:       d.Vendor,
+					ResponseTime: d.ResponseTime,
+					OpenPorts:    d.OpenPorts,
+				})
+			}
+			_ = h.store.RecordScanHistory(cidr, true, "", sweepStarted, result.Duration, scanDevs)
 
-				// Stage 2 begins after discovery has covered every requested network, so
-				// each result and progress indicator has one unambiguous network context.
-				if j.mode == scanModeBoth && h.cfg.Scanning.PortScanRange != "" && (!j.automatic || h.cfg.Scanning.EnablePortScan) {
-					shouldPortScan := false
-					if !j.automatic {
-						// Keep manual scans immediate
-						shouldPortScan = true
-					} else if !j.nightlyDeep {
-						// Automatic background scan: quiet-hour 3:00 AM Eastern Time prober
-						loc, err := time.LoadLocation("America/New_York")
-						if err != nil {
-							// Fallback to UTC if America/New_York is not loaded/available
-							loc = time.UTC
-						}
-						nowET := time.Now().In(loc)
-						if nowET.Hour() == 3 {
-							todayStr := nowET.Format("2006-01-02")
-							lastDeepScan, _ := h.store.GetSetting("last_deep_scan_date")
-							if lastDeepScan != todayStr {
-								shouldPortScan = true
-								_ = h.store.SetSetting("last_deep_scan_date", todayStr)
-							}
-						}
-					}
-
-					if shouldPortScan {
-						deepMu.Lock()
-						deepTargets[cidr] = append(deepTargets[cidr], result.Devices...)
-						deepMu.Unlock()
-					}
+			activeIPsMu.Lock()
+			var sweepIPs []string
+			for _, d := range result.Devices {
+				if d.IP != "" {
+					activeIPsMap[d.IP] = true
+					sweepIPs = append(sweepIPs, d.IP)
 				}
 			}
-		}(gw, subnets)
+			activeIPsMu.Unlock()
+			j.recordDiscoveredIPs(sweepIPs)
+
+			// Stage 2 begins after discovery has covered every requested network, so
+			// each result and progress indicator has one unambiguous network context.
+			if j.mode == scanModeBoth && h.cfg.Scanning.PortScanRange != "" && (!j.automatic || h.cfg.Scanning.EnablePortScan) {
+				shouldPortScan := false
+				if !j.automatic {
+					// Keep manual scans immediate
+					shouldPortScan = true
+				} else if !j.nightlyDeep {
+					// Automatic background scan: quiet-hour 3:00 AM Eastern Time prober
+					loc, err := time.LoadLocation("America/New_York")
+					if err != nil {
+						// Fallback to UTC if America/New_York is not loaded/available
+						loc = time.UTC
+					}
+					nowET := time.Now().In(loc)
+					if nowET.Hour() == 3 {
+						todayStr := nowET.Format("2006-01-02")
+						lastDeepScan, _ := h.store.GetSetting("last_deep_scan_date")
+						if lastDeepScan != todayStr {
+							shouldPortScan = true
+							_ = h.store.SetSetting("last_deep_scan_date", todayStr)
+						}
+					}
+				}
+
+				if shouldPortScan {
+					deepMu.Lock()
+					deepTargets[cidr] = append(deepTargets[cidr], result.Devices...)
+					deepMu.Unlock()
+				}
+			}
+		}(cidr, gwName, index)
 	}
 	stage1WG.Wait()
 
@@ -1151,12 +1134,8 @@ func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Dura
 				}
 				continue
 			}
-			selectedNetworks := selectOldestScannedNetworksPerGateway(h, networks)
-			if len(selectedNetworks) == 0 {
-				continue
-			}
 
-			job := h.startBackgroundNetworks(selectedNetworks, networks)
+			job := h.startBackgroundNetworks(networks, networks)
 			wasNightlyDeep := job != nil && job.nightlyDeep
 			if job != nil && !waitForBackgroundScan(ctx, job.done, interval) {
 				return
@@ -1219,8 +1198,7 @@ func (h *Handler) startBackgroundNetwork(network string, allNetworks []string) *
 }
 
 // runBackgroundScan preserves the immediate refresh when continuous scanning is
-// enabled from the UI, but starts only the first resolved network. The scheduler
-// then continues its normal one-network rotation.
+// enabled from the UI, sweeping all networks.
 func (h *Handler) runBackgroundScan() {
 	if !h.store.ContinuousScanEnabled(h.cfg.Scanning.ContinuousScan) {
 		return
@@ -1229,11 +1207,7 @@ func (h *Handler) runBackgroundScan() {
 	if err != nil || len(networks) == 0 {
 		return
 	}
-	selected := selectOldestScannedNetworksPerGateway(h, networks)
-	if len(selected) == 0 {
-		return
-	}
-	h.startBackgroundNetworks(selected, networks)
+	h.startBackgroundNetworks(networks, networks)
 }
 
 // selectOldestScannedNetworksPerGateway returns the single oldest scanned network for each gateway.
