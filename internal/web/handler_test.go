@@ -844,6 +844,38 @@ func TestHandler_NetworkScanErrorState(t *testing.T) {
 	}
 }
 
+func TestHandler_ActiveScanningPrecedesScanError(t *testing.T) {
+	h, authn := newTestHandler(t, testPassword)
+	h.cfg.Scanning.Networks = []string{"10.5.5.0/24"}
+	h.cfg.Scanning.OnlyConfiguredNetworks = true
+
+	// Record both a previous scan error and active scanning
+	h.store.SetNetworkScanError("10.5.5.0/24", "SSH connection refused")
+	h.store.SetScanRunning(true)
+	h.store.SetNetworkScanning("10.5.5.0/24", true)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	token, ok := authn.Login("127.0.0.1:5000", testPassword)
+	if !ok {
+		t.Fatal("login failed")
+	}
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
+
+	h.handleIndex(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "sidebar-net-status scanning") {
+		t.Fatalf("expected 'sidebar-net-status scanning' when actively scanning, got:\n%s", body)
+	}
+	if strings.Contains(body, "sidebar-net-status failed") {
+		t.Fatalf("did not expect 'sidebar-net-status failed' while actively scanning")
+	}
+}
+
 func TestHandler_NetworkDeepScanningState(t *testing.T) {
 	h, authn := newTestHandler(t, testPassword)
 	h.cfg.Scanning.Networks = []string{"10.5.5.0/24"}

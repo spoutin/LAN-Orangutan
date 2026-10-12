@@ -303,15 +303,52 @@ function reportScanOutcome(p) {
 // refreshAfterScan brings in the newly discovered devices without throwing away
 // the user's scroll position, search text or filters.
 async function refreshAfterScan() {
-    if (!(await refreshInPlace())) location.reload();
+    if (typeof refreshScansData === 'function') {
+        refreshScansData();
+    }
+    if (!(await refreshInPlace())) {
+        if (!document.getElementById('live-progress-card')) {
+            location.reload();
+        }
+    }
+}
+
+function setNetworkScanningUI(target) {
+    const spinnerSvg = '<svg class="spinner-svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>';
+
+    if (target === 'all') {
+        const scanAllBtn = document.querySelector('.btn-scan-all');
+        if (scanAllBtn) {
+            scanAllBtn.classList.add('scanning');
+            scanAllBtn.disabled = true;
+            scanAllBtn.innerHTML = `${spinnerSvg} <span>Scanning...</span>`;
+        }
+    }
+
+    document.querySelectorAll('.sidebar-net-item').forEach(item => {
+        const cidr = item.dataset?.cidr || item.querySelector('.sidebar-net-cidr')?.textContent?.trim();
+        if (target === 'all' || target === cidr) {
+            const statusEl = item.querySelector('.sidebar-net-status');
+            if (statusEl) {
+                statusEl.className = 'sidebar-net-status scanning';
+                statusEl.removeAttribute('title');
+                statusEl.innerHTML = `${spinnerSvg} Scanning...`;
+            }
+        }
+    });
 }
 
 async function runScan(target, mode = 'quick') {
+    setNetworkScanningUI(target);
     try {
         await api(`scan/start?network=${encodeURIComponent(target)}&mode=${encodeURIComponent(mode)}`, {}, 'POST');
         await refreshInPlace();
         scanCoordinator.start();
+        if (typeof refreshScansData === 'function') {
+            refreshScansData();
+        }
     } catch (e) {
+        await refreshInPlace();
         const isRateLimit = e.message.toLowerCase().includes('rate limit');
         showToast(isRateLimit ? e.message : 'Scan failed: ' + e.message, isRateLimit ? 'warning' : 'error');
     }
@@ -2812,6 +2849,12 @@ async function disconnectTailscale() {
 
 // Scans Page Live Updates & Timeline Rendering
 async function initScansPage() {
+    scanCoordinator.addListener(progress => {
+        if (progress) {
+            renderLiveProgressCard(progress);
+        }
+    });
+    scanCoordinator.start();
     await refreshScansData();
     // Poll every 5 seconds
     setInterval(refreshScansData, 5000);

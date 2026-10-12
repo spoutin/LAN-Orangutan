@@ -308,6 +308,10 @@ func (h *Handler) startScanJobWithDeadline(networks []string, automatic bool, mo
 
 	h.store.ClearCompletedNetworks()
 	h.store.SetCurrentScanningNetwork("")
+	for _, network := range networks {
+		h.store.ClearNetworkScanError(network)
+		h.store.SetNetworkScanning(network, true)
+	}
 	if len(deepDevices) != 1 {
 		h.store.SetScanRunning(true)
 	}
@@ -380,6 +384,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 				j.beginNetwork(cidr, item.index, h.store.GetLastDuration(cidr))
 				j.setActiveNetwork(cidr, gwName, true)
 				h.store.SetNetworkScanning(cidr, true)
+				h.store.ClearNetworkScanError(cidr)
 				log.Printf("[scan] starting discovery sweep on %s via gateway %s", cidr, gwName)
 
 				summary := networkScanSummary{Network: cidr}
