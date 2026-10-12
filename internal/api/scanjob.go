@@ -1328,10 +1328,8 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 	ports, sshPorts, services, err := h.scanner.ScanHostPortsWithTiming(ctx, device.IP, h.cfg.Scanning.PortScanRange, j.nightlyDeep)
 	dur := time.Since(start).Seconds()
 	if err != nil {
-		h.notifyRemoteScannerFailure(network, device.IP, err)
 		log.Printf("[scan] service scan failed for %s via gateway %s: %v (%.2fs)", device.IP, gwName, err, dur)
 	} else {
-		h.notifyRemoteScannerSuccess(network, device.IP)
 		log.Printf("[scan] completed service scan for %s via gateway %s (found %d ports in %.2fs)", device.IP, gwName, len(ports), dur)
 		// Fetch current device from store to preserve customized fields
 		current := h.store.GetDevice(device.IP)

@@ -312,6 +312,61 @@ func TestScanPortHostUpdatesPresence(t *testing.T) {
 	}
 }
 
+func TestSingleDeviceScan_DoesNotAlertSlackOrTriggerFalseRecovery(t *testing.T) {
+	store := newScanJobTestStore(t)
+	_ = store.SaveNetworkNotification("10.5.5.0/24", "https://example.test/slack-openwrt", true)
+
+	device := types.Device{
+		IP:       "10.5.5.143",
+		Hostname: "iot-device",
+		LastSeen: time.Now(),
+	}
+	_ = store.UpdateDevice(&device)
+
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.5.5.0/24"}
+	cfg.Scanning.PortScanRange = "22,80"
+	h := NewHandler(store, cfg)
+
+	var slackMessages []string
+	h.sendSlackNotification = func(webhook, text string) error {
+		slackMessages = append(slackMessages, text)
+		return nil
+	}
+
+	// Mock runner where port scan on 10.5.5.143 fails, but network sweep on 10.5.5.0/24 succeeds
+	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			if target == "10.5.5.143" {
+				return nil, fmt.Errorf("connection refused")
+			}
+			return []byte(`<nmaprun><host><status state="up"/><address addr="10.5.5.1" addrtype="ipv4"/></host></nmaprun>`), nil
+		},
+	})
+
+	// 1. Run single device service scan that fails
+	job := &scanJob{
+		deepNetworkProgress: []deepNetworkProgress{
+			{Network: "10.5.5.0/24", Total: 1},
+		},
+	}
+	job.scanPortHost(context.Background(), h, "10.5.5.0/24", device)
+
+	// Single device failure should NOT send Slack notifications!
+	if len(slackMessages) != 0 {
+		t.Fatalf("expected 0 Slack alerts for single device failure, got %d: %v", len(slackMessages), slackMessages)
+	}
+
+	// 2. Run a normal network discovery sweep on 10.5.5.0/24
+	sweepJob := h.startScanJob([]string{"10.5.5.0/24"}, false, scanModeQuick)
+	<-sweepJob.done
+
+	// Successful sweep should NOT trigger a false recovery message!
+	if len(slackMessages) != 0 {
+		t.Fatalf("expected 0 Slack alerts (no false recovery), got %d: %v", len(slackMessages), slackMessages)
+	}
+}
+
 type testRemoteRunnerFailure struct {
 	gateway string
 	target  string
