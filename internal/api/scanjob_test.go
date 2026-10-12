@@ -502,6 +502,93 @@ func TestScanJob_RecordsAndClearsNetworkScanError(t *testing.T) {
 	}
 }
 
+type testMultiSubnetRunner struct {
+	failMap map[string]error
+}
+
+func (r *testMultiSubnetRunner) HasRemoteScannerForTarget(target string) bool {
+	return true
+}
+func (r *testMultiSubnetRunner) GetGatewayForTarget(target string) string {
+	return "gw (" + target + ")"
+}
+func (r *testMultiSubnetRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
+	if err, fail := r.failMap[target]; fail {
+		return nil, &remotescan.RemoteScannerError{
+			Gateway: "gw (" + target + ")",
+			Target:  target,
+			Err:     err,
+		}
+	}
+	return []byte(`<nmaprun><host><status state="up"/><address addr="10.0.0.1" addrtype="ipv4"/><address addr="00:11:22:33:44:55" addrtype="mac"/><hostnames><hostname name="box.internal" type="PTR"/></hostnames></host></nmaprun>`), nil
+}
+func (r *testMultiSubnetRunner) Close() error { return nil }
+
+func TestScanJob_RecordsPerNetworkScanHistoryOnSuccessAndFailure(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.5.5.0/24"}
+	cfg.Scanning.OnlyConfiguredNetworks = true
+	cfg.Scanning.PortScanRange = ""
+	cfg.Scanning.EnablePortScan = false
+	h := NewHandler(store, cfg)
+
+	// Pre-seed 10.0.0.1 so new device deep scan doesn't run
+	_, _, _ = store.MergeDevices([]types.Device{{
+		IP:        "10.0.0.1",
+		Hostname:  "router",
+		FirstSeen: time.Now(),
+		LastSeen:  time.Now(),
+	}})
+
+	// mock runner: 10.5.5.0/24 fails with SSH timeout
+	runner := &testMultiSubnetRunner{
+		failMap: map[string]error{
+			"10.5.5.0/24": fmt.Errorf("SSH dial timeout"),
+		},
+	}
+	h.scanner.SetRemoteRunner(runner)
+
+	job := h.startScanJob(cfg.Scanning.Networks, false, scanModeQuick)
+	<-job.done
+
+	history, err := store.GetScanHistory()
+	if err != nil {
+		t.Fatalf("GetScanHistory: %v", err)
+	}
+
+	// Should have 2 records: one for 10.0.0.0/24 and one for 10.5.5.0/24
+	if len(history) != 2 {
+		t.Fatalf("expected 2 history records, got %d: %+v", len(history), history)
+	}
+
+	var rec10, rec55 *types.ScanHistoryRecord
+	for i := range history {
+		if history[i].Network == "10.0.0.0/24" {
+			rec10 = &history[i]
+		} else if history[i].Network == "10.5.5.0/24" {
+			rec55 = &history[i]
+		}
+	}
+
+	if rec10 == nil {
+		t.Fatal("missing record for 10.0.0.0/24")
+	}
+	if !rec10.Success {
+		t.Errorf("expected 10.0.0.0/24 success = true, got error %q", rec10.Error)
+	}
+
+	if rec55 == nil {
+		t.Fatal("missing record for 10.5.5.0/24")
+	}
+	if rec55.Success {
+		t.Errorf("expected 10.5.5.0/24 success = false")
+	}
+	if !strings.Contains(rec55.Error, "SSH dial timeout") {
+		t.Errorf("expected 10.5.5.0/24 error to contain 'SSH dial timeout', got %q", rec55.Error)
+	}
+}
+
 func TestScanJob_MultiOpenWrtRouters(t *testing.T) {
 	cfg := config.Default()
 	cfg.OpenWrts.Names = []string{"core", "branch"}

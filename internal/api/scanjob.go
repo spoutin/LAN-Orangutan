@@ -331,22 +331,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	defer h.store.SetScanRunning(false)
 	defer h.store.ClearScanningNetworks()
 	defer h.store.SetCurrentScanningNetwork("")
-
-	defer func() {
-		dur := time.Since(j.startedAt).Seconds()
-		networkName := "All Networks"
-		if len(j.networks) == 1 {
-			networkName = j.networks[0]
-		}
-
-		j.mu.RLock()
-		status := j.status
-		errStr := j.err
-		j.mu.RUnlock()
-
-		success := status == "done"
-		_ = h.store.RecordScanHistory(networkName, success, errStr, j.startedAt, dur, nil)
-	}()
+	defer h.store.ClearCompletedNetworks()
 
 	if j.mode == scanModeDeep {
 		j.runDeepScan(ctx, h)
@@ -354,6 +339,10 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			j.finish("cancelled", "")
 		} else {
 			j.finish("done", "")
+		}
+		dur := time.Since(j.startedAt).Seconds()
+		for _, netName := range j.deepNetworks {
+			_ = h.store.RecordScanHistory(netName, ctx.Err() == nil, "", j.startedAt, dur, nil)
 		}
 		return
 	}
@@ -414,6 +403,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 					}
 				}
 
+				sweepStarted := time.Now()
 				// scanNetwork applies its own per-network timeout.
 				result, err := h.scanNetwork(ctx, cidr)
 				j.setActiveNetwork(cidr, gwName, false)
@@ -428,6 +418,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 					summary.Error = err.Error()
 					h.store.SetNetworkScanError(cidr, err.Error())
 					log.Printf("[scan] discovery sweep failed on %s via gateway %s: %v", cidr, gwName, err)
+					_ = h.store.RecordScanHistory(cidr, false, err.Error(), sweepStarted, time.Since(sweepStarted).Seconds(), nil)
 					j.addResult(summary, 0)
 					h.store.AddCompletedNetwork(cidr)
 					continue
@@ -441,6 +432,19 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 					cidr, gwName, result.DeviceCount, result.Duration)
 				j.addResult(summary, result.DeviceCount)
 				h.store.AddCompletedNetwork(cidr)
+
+				var scanDevs []types.ScanDeviceRecord
+				for _, d := range result.Devices {
+					scanDevs = append(scanDevs, types.ScanDeviceRecord{
+						IP:           d.IP,
+						MAC:          d.MAC,
+						Hostname:     d.Hostname,
+						Vendor:       d.Vendor,
+						ResponseTime: d.ResponseTime,
+						OpenPorts:    d.OpenPorts,
+					})
+				}
+				_ = h.store.RecordScanHistory(cidr, true, "", sweepStarted, result.Duration, scanDevs)
 
 				activeIPsMu.Lock()
 				var sweepIPs []string
@@ -742,7 +746,27 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		// Dispatch deferred notifications using fully complete, enriched database entries
 		j.dispatchDeferredNotifications(h)
 
-		j.finish("done", "")
+		var hasFailure bool
+		var firstErr string
+		var scannedSubnets int
+		for _, res := range j.results {
+			if !res.IsSupplemental {
+				if res.Status == "failed" {
+					hasFailure = true
+					if firstErr == "" {
+						firstErr = res.Error
+					}
+				} else if res.Status == "scanned" {
+					scannedSubnets++
+				}
+			}
+		}
+
+		if hasFailure && scannedSubnets == 0 {
+			j.finish("failed", firstErr)
+		} else {
+			j.finish("done", "")
+		}
 	} else {
 		j.finish("cancelled", "")
 	}
