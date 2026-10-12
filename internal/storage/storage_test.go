@@ -1398,3 +1398,64 @@ func TestMigration_00012_ScanHistoryDevicesColumn(t *testing.T) {
 		t.Fatalf("expected devices_found column to exist in scan_history: %v", err)
 	}
 }
+
+func TestRecordScanHistory_ScopedMetrics(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Seed devices in different subnets
+	_, err := s.db.Exec(`
+		INSERT INTO devices (ip, mac, hostname, is_online, first_seen, last_seen, last_presence_change) VALUES
+		('10.0.0.10', '00:11:22:33:44:01', 'dev1', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+		('10.0.0.20', '00:11:22:33:44:02', 'dev2', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+		('10.5.5.5', '00:11:22:33:44:03', 'dev3', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+		('10.5.5.6', '00:11:22:33:44:04', 'dev4', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+	`)
+	if err != nil {
+		t.Fatalf("seed devices: %v", err)
+	}
+
+	startedAt := time.Now().Add(-1 * time.Minute)
+	// Seed presence events
+	_, err = s.db.Exec(`
+		INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at) VALUES
+		('10.0.0.10', '00:11:22:33:44:01', 'dev1', 'join', 0, ?),
+		('10.5.5.5', '00:11:22:33:44:03', 'dev3', 'join', 0, ?);
+	`, time.Now(), time.Now())
+	if err != nil {
+		t.Fatalf("seed presence: %v", err)
+	}
+
+	devs := []types.ScanDeviceRecord{
+		{IP: "10.0.0.10", Hostname: "dev1", Vendor: "HP"},
+		{IP: "10.0.0.20", Hostname: "dev2", Vendor: "Apple"},
+	}
+
+	err = s.RecordScanHistory("10.0.0.0/24", true, "", startedAt, 1.5, devs)
+	if err != nil {
+		t.Fatalf("RecordScanHistory: %v", err)
+	}
+
+	history, err := s.GetScanHistory()
+	if err != nil {
+		t.Fatalf("GetScanHistory: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("expected 1 history record, got %d", len(history))
+	}
+	h := history[0]
+	if h.Network != "10.0.0.0/24" {
+		t.Errorf("network = %q, want '10.0.0.0/24'", h.Network)
+	}
+	if h.DevicesOnline != 2 {
+		t.Errorf("devices_online = %d, want 2 (only 10.0.0.x)", h.DevicesOnline)
+	}
+	if h.DevicesJoined != 1 {
+		t.Errorf("devices_joined = %d, want 1 (only 10.0.0.10)", h.DevicesJoined)
+	}
+	if len(h.DevicesFound) != 2 {
+		t.Fatalf("expected 2 devices found, got %d", len(h.DevicesFound))
+	}
+	if h.DevicesFound[0].IP != "10.0.0.10" || h.DevicesFound[0].Vendor != "HP" {
+		t.Errorf("DevicesFound[0] mismatch: %+v", h.DevicesFound[0])
+	}
+}

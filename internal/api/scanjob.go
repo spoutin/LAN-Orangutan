@@ -345,7 +345,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		j.mu.RUnlock()
 
 		success := status == "done"
-		_ = h.store.RecordScanHistory(networkName, success, errStr, j.startedAt, dur)
+		_ = h.store.RecordScanHistory(networkName, success, errStr, j.startedAt, dur, nil)
 	}()
 
 	if j.mode == scanModeDeep {

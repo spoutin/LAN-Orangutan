@@ -1933,47 +1933,96 @@ func (s *Storage) ProcessMissingDevices(scannedNetworks []string, activeIPs []st
 }
 
 // RecordScanHistory records execution history metrics of a scan job
-func (s *Storage) RecordScanHistory(network string, success bool, errStr string, startedAt time.Time, duration float64) error {
+func (s *Storage) RecordScanHistory(network string, success bool, errStr string, startedAt time.Time, duration float64, devices []types.ScanDeviceRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	_, ipNet, parseErr := net.ParseCIDR(network)
+
 	var joined, returned, left int
-	rows, err := s.db.Query(`
-		SELECT event, COUNT(*)
-		FROM device_presence_history
-		WHERE created_at >= ?
-		GROUP BY event
-	`, startedAt)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var event string
-			var count int
-			if err := rows.Scan(&event, &count); err == nil {
-				switch event {
-				case "join":
-					joined = count
-				case "return":
-					returned = count
-				case "leave":
-					left = count
+	if parseErr == nil {
+		rows, err := s.db.Query(`
+			SELECT ip, event
+			FROM device_presence_history
+			WHERE created_at >= ?
+		`, startedAt)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var ipStr, event string
+				if err := rows.Scan(&ipStr, &event); err == nil {
+					if ip := net.ParseIP(ipStr); ip != nil && ipNet.Contains(ip) {
+						switch event {
+						case "join":
+							joined++
+						case "return":
+							returned++
+						case "leave":
+							left++
+						}
+					}
+				}
+			}
+		}
+	} else {
+		rows, err := s.db.Query(`
+			SELECT event, COUNT(*)
+			FROM device_presence_history
+			WHERE created_at >= ?
+			GROUP BY event
+		`, startedAt)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var event string
+				var count int
+				if err := rows.Scan(&event, &count); err == nil {
+					switch event {
+					case "join":
+						joined = count
+					case "return":
+						returned = count
+					case "leave":
+						left = count
+					}
 				}
 			}
 		}
 	}
 
 	var online int
-	_ = s.db.QueryRow("SELECT COUNT(*) FROM devices WHERE is_online = 1").Scan(&online)
+	if parseErr == nil {
+		rows, err := s.db.Query("SELECT ip FROM devices WHERE is_online = 1")
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var ipStr string
+				if err := rows.Scan(&ipStr); err == nil {
+					if ip := net.ParseIP(ipStr); ip != nil && ipNet.Contains(ip) {
+						online++
+					}
+				}
+			}
+		}
+	} else {
+		_ = s.db.QueryRow("SELECT COUNT(*) FROM devices WHERE is_online = 1").Scan(&online)
+	}
 
 	successVal := 0
 	if success {
 		successVal = 1
 	}
 
-	_, err = s.db.Exec(`
-		INSERT INTO scan_history (network, success, error, devices_online, devices_joined, devices_returned, devices_left, duration, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, network, successVal, errStr, online, joined, returned, left, duration, time.Now())
+	if devices == nil {
+		devices = []types.ScanDeviceRecord{}
+	}
+	devBytes, _ := json.Marshal(devices)
+	devJSON := string(devBytes)
+
+	_, err := s.db.Exec(`
+		INSERT INTO scan_history (network, success, error, devices_online, devices_joined, devices_returned, devices_left, duration, timestamp, devices_found)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, network, successVal, errStr, online, joined, returned, left, duration, time.Now(), devJSON)
 	return err
 }
 
@@ -2586,7 +2635,7 @@ func (s *Storage) GetScanHistory() ([]types.ScanHistoryRecord, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(`
-		SELECT id, network, success, error, devices_online, devices_joined, devices_returned, devices_left, duration, timestamp
+		SELECT id, network, success, error, devices_online, devices_joined, devices_returned, devices_left, duration, timestamp, devices_found
 		FROM scan_history
 		ORDER BY timestamp DESC
 	`)
@@ -2599,9 +2648,16 @@ func (s *Storage) GetScanHistory() ([]types.ScanHistoryRecord, error) {
 	for rows.Next() {
 		var r types.ScanHistoryRecord
 		var successVal int
-		err := rows.Scan(&r.ID, &r.Network, &successVal, &r.Error, &r.DevicesOnline, &r.DevicesJoined, &r.DevicesReturned, &r.DevicesLeft, &r.Duration, &r.Timestamp)
+		var devicesFoundJSON string
+		err := rows.Scan(&r.ID, &r.Network, &successVal, &r.Error, &r.DevicesOnline, &r.DevicesJoined, &r.DevicesReturned, &r.DevicesLeft, &r.Duration, &r.Timestamp, &devicesFoundJSON)
 		if err == nil {
 			r.Success = successVal != 0
+			if devicesFoundJSON != "" {
+				_ = json.Unmarshal([]byte(devicesFoundJSON), &r.DevicesFound)
+			}
+			if r.DevicesFound == nil {
+				r.DevicesFound = []types.ScanDeviceRecord{}
+			}
 			result = append(result, r)
 		}
 	}
