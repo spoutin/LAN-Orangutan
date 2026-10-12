@@ -78,5 +78,28 @@ test('formatScanCompletionSummary explains partial completion when a network was
     }), 'Found 101 devices across 6 of 7 networks (1 skipped: rate limited, wait 10s)');
 });
 
+test('formatScanCompletionSummary identifies failed networks', () => {
+    assert.equal(formatScanCompletionSummary({
+        network_count: 2,
+        scanned_network_count: 1,
+        device_count: 5,
+        networks: [
+            { network: '10.0.0.0/24', status: 'scanned' },
+            { network: '10.5.5.0/24', status: 'failed', error: 'SSH connection refused' }
+        ]
+    }), 'Found 5 devices across 1 of 2 networks (1 failed: 10.5.5.0/24)');
+});
+
+test('formatScanCompletionSummary reports single network scan failure', () => {
+    assert.equal(formatScanCompletionSummary({
+        network_count: 1,
+        scanned_network_count: 0,
+        device_count: 0,
+        networks: [
+            { network: '10.5.5.0/24', status: 'failed', error: 'SSH connection refused' }
+        ]
+    }), 'Scan failed for 10.5.5.0/24: SSH connection refused');
+});
+
 
 

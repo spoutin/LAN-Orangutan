@@ -35,23 +35,29 @@
         const devCount = progress.device_count || 0;
         const devText = `Found ${devCount} device${devCount === 1 ? '' : 's'}`;
 
+        const skipped = (progress.networks || []).filter(n => !n.is_supplemental && n.status === 'skipped');
+        const failed = (progress.networks || []).filter(n => !n.is_supplemental && n.status === 'failed');
+
         if (total <= 1) {
+            if (failed.length > 0) {
+                const failReason = failed[0].error ? `: ${failed[0].error}` : '';
+                return `Scan failed for ${failed[0].network_name || failed[0].network}${failReason}`;
+            }
             return devText;
         }
 
-        if (count === total) {
+        if (count === total && failed.length === 0 && skipped.length === 0) {
             return `${devText} across ${total} networks`;
         }
 
-        const skipped = (progress.networks || []).filter(n => !n.is_supplemental && n.status === 'skipped');
-        const failed = (progress.networks || []).filter(n => !n.is_supplemental && n.status === 'failed');
         const details = [];
         if (skipped.length > 0) {
             const reason = skipped[0].error ? `: ${skipped[0].error}` : '';
             details.push(`${skipped.length} skipped${reason}`);
         }
         if (failed.length > 0) {
-            details.push(`${failed.length} failed`);
+            const failNames = failed.map(f => f.network_name || f.network).join(', ');
+            details.push(`${failed.length} failed: ${failNames}`);
         }
         const note = details.length > 0 ? ` (${details.join(', ')})` : '';
         return `${devText} across ${count} of ${total} networks${note}`;

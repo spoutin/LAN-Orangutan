@@ -281,6 +281,7 @@ function reportScanOutcome(p) {
 		return;
 	}
 	const scanned = (p.networks || []).filter(n => n.status === 'scanned');
+	const failed = (p.networks || []).filter(n => !n.is_supplemental && n.status === 'failed');
     if (p.status === 'cancelled') {
         showToast('Scan cancelled', 'warning');
         if (scanned.length) setTimeout(refreshAfterScan, 1000);
@@ -294,7 +295,8 @@ function reportScanOutcome(p) {
     const msg = window.scanRefresh?.formatScanCompletionSummary
         ? window.scanRefresh.formatScanCompletionSummary(p)
         : `Found ${p.device_count} device${p.device_count === 1 ? '' : 's'}`;
-    showToast(msg, 'success');
+    const toastType = failed.length > 0 ? 'warning' : 'success';
+    showToast(msg, toastType);
     setTimeout(refreshAfterScan, 1000);
 }
 
