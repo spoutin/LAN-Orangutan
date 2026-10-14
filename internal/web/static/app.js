@@ -694,6 +694,8 @@ function filterDevices() {
 
         const show = matchSearch && matchStatus && matchGroup && matchChip && matchNetwork;
         row.style.display = show ? '' : 'none';
+        const subrow = document.querySelector(`.device-subrow[data-ip="${CSS.escape(row.dataset.ip)}"]`);
+        if (subrow) subrow.style.display = show ? '' : 'none';
         if (show) visible++;
     });
 
@@ -1160,6 +1162,7 @@ async function deleteDevice(ip) {
         if (result.success) {
             showToast('Device deleted', 'success');
             document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`)?.remove();
+            document.querySelector(`.device-subrow[data-ip="${CSS.escape(ip)}"]`)?.remove();
             const sbIp = document.getElementById('sb-edit-ip')?.value;
             if (sbIp === ip) {
                 closeDeviceSidebar();
@@ -1256,12 +1259,14 @@ function selectDeviceRow(target) {
     if (typeof target === 'string') {
         row = document.querySelector(`.device-row[data-ip="${CSS.escape(target)}"]`);
     } else if (target instanceof HTMLElement) {
-        row = target;
+        row = target.classList.contains('device-row') ? target : (target.closest('.device-row') || document.querySelector(`.device-row[data-ip="${CSS.escape(target.dataset?.ip || target.closest('.device-subrow')?.dataset?.ip || '')}"]`));
     }
     if (!row) return;
 
-    document.querySelectorAll('.device-row.selected-row').forEach(r => r.classList.remove('selected-row'));
+    document.querySelectorAll('.device-row.selected-row, .device-subrow.selected-row').forEach(r => r.classList.remove('selected-row'));
     row.classList.add('selected-row');
+    const subrow = document.querySelector(`.device-subrow[data-ip="${CSS.escape(row.dataset.ip)}"]`);
+    if (subrow) subrow.classList.add('selected-row');
     openDeviceSidebar(row);
 }
 
@@ -2372,8 +2377,21 @@ function restoreDefaultDeviceOrder() {
     const tbody = document.getElementById('devices-tbody');
     if (!tbody) return;
     const rows = new Map(Array.from(tbody.querySelectorAll('.device-row')).map(row => [row.dataset.ip, row]));
-    defaultDeviceOrder.forEach(ip => rows.get(ip) && tbody.appendChild(rows.get(ip)));
-    rows.forEach((row, ip) => { if (!defaultDeviceOrder.includes(ip)) tbody.appendChild(row); });
+    defaultDeviceOrder.forEach(ip => {
+        const row = rows.get(ip);
+        if (row) {
+            tbody.appendChild(row);
+            const subrow = tbody.querySelector(`.device-subrow[data-ip="${CSS.escape(ip)}"]`);
+            if (subrow) tbody.appendChild(subrow);
+        }
+    });
+    rows.forEach((row, ip) => {
+        if (!defaultDeviceOrder.includes(ip)) {
+            tbody.appendChild(row);
+            const subrow = tbody.querySelector(`.device-subrow[data-ip="${CSS.escape(ip)}"]`);
+            if (subrow) tbody.appendChild(subrow);
+        }
+    });
 }
 
 // compareRows orders two device rows by the active column and direction. Split
@@ -2432,7 +2450,11 @@ function applyCurrentSort() {
     if (!tbody) return;
     const rows = Array.from(tbody.querySelectorAll('.device-row'));
     rows.sort((a, b) => compareRows(a, b, sortColumn));
-    rows.forEach(row => tbody.appendChild(row));
+    rows.forEach(row => {
+        tbody.appendChild(row);
+        const subrow = tbody.querySelector(`.device-subrow[data-ip="${CSS.escape(row.dataset.ip)}"]`);
+        if (subrow) tbody.appendChild(subrow);
+    });
 }
 
 // updateSortIndicator shows which column is sorted and in which direction. The
@@ -2957,7 +2979,8 @@ async function disconnectTailscale() {
             return;
         }
 
-        const row = e.target.closest('.device-row');
+        const subrow = e.target.closest('.device-subrow');
+        const row = e.target.closest('.device-row') || (subrow ? document.querySelector(`.device-row[data-ip="${CSS.escape(subrow.dataset.ip)}"]`) : null);
         if (row) {
             selectDeviceRow(row);
         }

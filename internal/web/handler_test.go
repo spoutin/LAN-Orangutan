@@ -560,7 +560,8 @@ func TestIndexPageRendersWithTelemetry(t *testing.T) {
 
 	body := rec.Body.String()
 	for _, expected := range []string{
-		"col-ssid",
+		"col-mac",
+		"device-subrow",
 		"Home-IoT",
 		"ssid-badge",
 		"device-sidebar",
@@ -642,15 +643,15 @@ func TestIndexPageKeepsDeviceIndicatorsOutOfHostnameCell(t *testing.T) {
 
 	hostnameStart := strings.Index(body, `<td class="col-hostname hostname-cell"`)
 	networkStart := strings.Index(body, `<td class="col-network network-cell"`)
-	connectionStart := strings.Index(body, `<td class="col-ssid ssid-cell"`)
-	if hostnameStart < 0 || networkStart < 0 || connectionStart < 0 {
-		t.Fatal("expected hostname, network, and connection cells")
+	macStart := strings.Index(body, `<td class="col-mac mac-cell"`)
+	if hostnameStart < 0 || networkStart < 0 || macStart < 0 {
+		t.Fatal("expected hostname, network, and mac cells")
 	}
 	if strings.Contains(body[hostnameStart:networkStart], "ssh-indicator") || strings.Contains(body[hostnameStart:networkStart], "notes-indicator") || strings.Contains(body[hostnameStart:networkStart], "ansible-indicator") {
 		t.Error("device status indicators should not consume hostname column space")
 	}
 	for _, indicator := range []string{"ssh-indicator", "notes-indicator", "ansible-indicator"} {
-		if !strings.Contains(body[networkStart:connectionStart], indicator) {
+		if !strings.Contains(body[networkStart:macStart], indicator) {
 			t.Errorf("network cell should contain %q", indicator)
 		}
 	}
@@ -756,8 +757,8 @@ func TestIndexPageRendersSwitchConnection(t *testing.T) {
 
 	body := rec.Body.String()
 	for _, expected := range []string{
-		`>Connection <span class="sort-icon">↕</span></th>`,
-		`class="connection-stack"`,
+		`>MAC &amp; Vendor <span class="sort-icon">↕</span></th>`,
+		`class="device-connection-strip"`,
 		`class="ssid-badge"`,
 		`📶 Iot`,
 		`class="switch-badge"`,

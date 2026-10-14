@@ -1340,34 +1340,85 @@ td[data-copy]:not([data-copy=""]) {
    neighbours: the stripes fused into one unbroken bar down the table and bled
    up against the header instead of marking each row. An inset shadow is not
    part of border collapsing, so each row keeps its own mark. */
-.device-row {
+.device-row,
+.device-subrow {
     cursor: pointer;
     transition: background-color 0.15s ease;
 }
 
-.device-row:hover {
+.device-row td {
+    border-bottom: none;
+    padding-bottom: 0.25rem;
+}
+
+.device-subrow td {
+    padding-top: 0.1rem;
+    padding-bottom: 0.55rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.device-row:hover,
+.device-row:hover + .device-subrow,
+.device-subrow:hover,
+.device-row:has(+ .device-subrow:hover) {
     background-color: var(--bg-secondary);
 }
 
 .device-row.selected-row,
-.device-row.selected-row:hover {
+.device-row.selected-row + .device-subrow,
+.device-subrow.selected-row,
+.device-row.selected-row:hover,
+.device-subrow.selected-row:hover {
     background-color: var(--selected-bg);
 }
 
-.device-row.selected-row td:first-child {
+.device-row.selected-row td:first-child,
+.device-subrow.selected-row td:first-child {
     box-shadow: inset 4px 0 0 var(--accent-primary) !important;
 }
 
-.device-row.status-online td:first-child {
+.device-row.status-online td:first-child,
+.device-subrow.status-online td:first-child {
     box-shadow: inset 3px 0 0 var(--success);
 }
 
-.device-row.status-seen td:first-child {
+.device-row.status-seen td:first-child,
+.device-subrow.status-seen td:first-child {
     box-shadow: inset 3px 0 0 var(--warning);
 }
 
-.device-row.status-offline td:first-child {
+.device-row.status-offline td:first-child,
+.device-subrow.status-offline td:first-child {
     box-shadow: none;
+}
+
+.mac-vendor-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mac-line {
+    font-size: 0.82rem;
+    color: var(--text-primary);
+}
+
+.vendor-line {
+    font-size: 0.74rem;
+    color: var(--text-muted);
+    max-width: 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.device-connection-strip {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+    padding-left: 2rem;
+    font-size: 0.78rem;
 }
 
 .hostname-cell {

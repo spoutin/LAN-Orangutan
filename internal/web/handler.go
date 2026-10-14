@@ -160,6 +160,12 @@ func NewHandler(store *storage.Storage, cfg *config.Config, authn *auth.Authenti
 			}
 			return fmt.Sprintf("%.2f GB", val/(1024*1024*1024))
 		},
+		"formatSpeed": func(speedMbps int) string {
+			if speedMbps >= 1000 {
+				return fmt.Sprintf("%d Gbps", speedMbps/1000)
+			}
+			return fmt.Sprintf("%d Mbps", speedMbps)
+		},
 	}
 
 	tmpl := template.Must(template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html"))
