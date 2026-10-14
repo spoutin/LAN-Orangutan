@@ -3114,6 +3114,11 @@ async function disconnectTailscale() {
             const saved = localStorage.getItem(storageKey);
             if (!saved) return;
             const widths = JSON.parse(saved);
+            // If table schema changed (e.g. col-ssid moved to subrow, col-mac added), clear stale widths
+            if (widths['col-ssid'] || !widths['col-mac']) {
+                localStorage.removeItem(storageKey);
+                return;
+            }
             Object.keys(widths).forEach(className => {
                 const elements = table.querySelectorAll('.' + className);
                 elements.forEach(el => {

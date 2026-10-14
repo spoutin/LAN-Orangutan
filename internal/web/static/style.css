@@ -1114,17 +1114,17 @@ td[data-copy]:not([data-copy=""]) {
 /* Column widths for the fixed layout (they sum to 100%). When the responsive
    rules further down hide a column, its share is redistributed across the
    rest, so the table always fills its panel exactly. */
-.col-status     { width: 6%; min-width: 0; }
+.col-status     { width: 5%; min-width: 0; }
 .col-ip         { width: 14%; }
-.col-hostname   { width: 21%; }
+.col-hostname   { width: 19%; }
 .col-network    { width: 11%; }
-.col-ssid       { width: 14%; }
-.col-vendor     { width: 14%; }
+.col-mac        { width: 16%; }
+.col-vendor     { width: 15%; }
 .col-lastseen   { width: 11%; }
 .col-actions    { width: 9%; min-width: 85px; }
+.col-subrow     { width: 100%; }
 .col-assignment { display: none; }
 .col-type       { display: none; }
-.col-mac        { display: none; }
 .col-label      { display: none; }
 .col-group      { display: none; }
 
@@ -1918,12 +1918,6 @@ textarea.input {
 /* Responsive */
 @media (max-width: 1024px) {
     .main { padding: 1.5rem; }
-}
-
-@media (min-width: 769px) and (max-width: 1120px) {
-    .col-vendor {
-        display: none;
-    }
 }
 
 @media (max-width: 1150px) {

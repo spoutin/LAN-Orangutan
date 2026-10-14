@@ -757,7 +757,8 @@ func TestIndexPageRendersSwitchConnection(t *testing.T) {
 
 	body := rec.Body.String()
 	for _, expected := range []string{
-		`>MAC &amp; Vendor <span class="sort-icon">↕</span></th>`,
+		`>MAC Address <span class="sort-icon">↕</span></th>`,
+		`>Vendor <span class="sort-icon">↕</span></th>`,
 		`class="device-connection-strip"`,
 		`class="ssid-badge"`,
 		`📶 Iot`,
