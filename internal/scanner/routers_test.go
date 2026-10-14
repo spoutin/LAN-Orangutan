@@ -649,4 +649,56 @@ func TestFetchOPNsenseNetFlow(t *testing.T) {
 			t.Errorf("expected 3200000 Tx and 6400000 Rx, got %d Tx, %d Rx", dev77.TxBytes, dev77.RxBytes)
 		}
 	})
+
+	t.Run("QueryStatesSlashedBytesAndArrows", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Path == "/api/diagnostics/netflow/getData" {
+				http.NotFound(w, r)
+				return
+			}
+			if r.URL.Path == "/api/diagnostics/firewall/queryStates" {
+				resp := map[string]interface{}{
+					"rows": []map[string]interface{}{
+						{
+							"source":      "10.0.0.123:55555 -> 1.1.1.1:443",
+							"destination": "1.1.1.1:443",
+							"bytes":       "1000 / 2000",
+						},
+						{
+							"source":      "1.1.1.1:443",
+							"destination": "10.0.0.123:55555",
+							"bytes":       "1.5 KB",
+						},
+					},
+				}
+				_ = json.NewEncoder(w).Encode(resp)
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		defer server.Close()
+
+		cfg := config.OPNsenseConfig{
+			Enable:    true,
+			URL:       server.URL,
+			APIKey:    "test-key",
+			APISecret: "test-secret",
+		}
+
+		stats, err := FetchOPNsenseNetFlow(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("FetchOPNsenseNetFlow failed: %v", err)
+		}
+		dev123, ok := stats["10.0.0.123"]
+		if !ok {
+			t.Fatalf("expected stats for 10.0.0.123, got: %+v", stats)
+		}
+		if dev123.TxBytes != 3000 { // 1000 + 2000
+			t.Errorf("expected 3000 Tx, got %d", dev123.TxBytes)
+		}
+		if dev123.RxBytes != 1536 { // 1.5 * 1024
+			t.Errorf("expected 1536 Rx, got %d", dev123.RxBytes)
+		}
+	})
 }

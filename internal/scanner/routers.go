@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/logging"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
@@ -510,10 +511,18 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 		reqFlow.SetBasicAuth(cfg.APIKey, cfg.APISecret)
 		reqFlow.Header.Set("Content-Type", "application/json")
 		respFlow, err := client.Do(reqFlow)
-		if err == nil {
+		if err != nil {
+			logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense netflow/getData connection failed: %v", err))
+		} else {
 			defer respFlow.Body.Close()
+			rawBody, _ := io.ReadAll(respFlow.Body)
+			preview := string(rawBody)
+			if len(preview) > 160 {
+				preview = preview[:160] + "..."
+			}
+			logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense netflow/getData: HTTP %d, %d bytes: %s", respFlow.StatusCode, len(rawBody), preview))
+
 			if respFlow.StatusCode == http.StatusOK {
-				rawBody, _ := io.ReadAll(respFlow.Body)
 				records := parseNetFlowRecords(rawBody)
 				for _, rec := range records {
 					srcIP := cleanHostIP(extractFlowField(rec, "source", "src", "src_addr", "source_address"))
@@ -547,7 +556,7 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 	}
 
 	// 2. Fallback to active firewall states query
-	searchBody := []byte(`{"current": 1, "rowCount": -1}`)
+	searchBody := []byte(`{"current": 1, "rowCount": 500}`)
 	reqStates, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/diagnostics/firewall/queryStates", bytes.NewReader(searchBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create states request: %w", err)
@@ -556,16 +565,24 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 	reqStates.Header.Set("Content-Type", "application/json")
 	respStates, err := client.Do(reqStates)
 	if err != nil {
+		logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense firewall/queryStates connection failed: %v", err))
 		return nil, fmt.Errorf("failed to execute firewall states request: %w", err)
 	}
 	defer respStates.Body.Close()
+
+	rawStates, _ := io.ReadAll(respStates.Body)
+	previewStates := string(rawStates)
+	if len(previewStates) > 160 {
+		previewStates = previewStates[:160] + "..."
+	}
+	logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense firewall/queryStates: HTTP %d, %d bytes: %s", respStates.StatusCode, len(rawStates), previewStates))
 
 	if respStates.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected firewall states response status: %s", respStates.Status)
 	}
 
-	rawStates, _ := io.ReadAll(respStates.Body)
 	records := parseNetFlowRecords(rawStates)
+	logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense firewall/queryStates: parsed %d state records", len(records)))
 	for _, rec := range records {
 		bytesVal := extractFlowBytes(rec, "bytes", "octets", "byte_count")
 		if bytesVal <= 0 {
@@ -625,6 +642,13 @@ func extractFlowField(rec map[string]interface{}, keys ...string) string {
 			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
 				return strings.TrimSpace(s)
 			}
+			if m, ok := v.(map[string]interface{}); ok {
+				for _, subKey := range []string{"address", "ip", "addr", "host"} {
+					if subVal, ok := m[subKey].(string); ok && strings.TrimSpace(subVal) != "" {
+						return strings.TrimSpace(subVal)
+					}
+				}
+			}
 		}
 	}
 	return ""
@@ -636,13 +660,62 @@ func extractFlowBytes(rec map[string]interface{}, keys ...string) int64 {
 			if n, ok := parseNumeric(v); ok && n > 0 {
 				return n
 			}
+			if s, ok := v.(string); ok {
+				if n, ok := parseBytesWithUnits(s); ok && n > 0 {
+					return n
+				}
+			}
 		}
 	}
 	return 0
 }
 
+func parseBytesWithUnits(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	if strings.Contains(s, "/") {
+		parts := strings.Split(s, "/")
+		sum := int64(0)
+		for _, part := range parts {
+			if n, ok := parseBytesWithUnits(part); ok {
+				sum += n
+			}
+		}
+		return sum, sum > 0
+	}
+
+	lower := strings.ToLower(s)
+	multiplier := float64(1)
+	if strings.HasSuffix(lower, "gb") || strings.HasSuffix(lower, "g") {
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimRight(strings.TrimRight(s, "bB"), "gG")
+	} else if strings.HasSuffix(lower, "mb") || strings.HasSuffix(lower, "m") {
+		multiplier = 1024 * 1024
+		s = strings.TrimRight(strings.TrimRight(s, "bB"), "mM")
+	} else if strings.HasSuffix(lower, "kb") || strings.HasSuffix(lower, "k") {
+		multiplier = 1024
+		s = strings.TrimRight(strings.TrimRight(s, "bB"), "kK")
+	} else if strings.HasSuffix(lower, "b") {
+		s = strings.TrimRight(s, "bB")
+	}
+	s = strings.TrimSpace(s)
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return int64(f * multiplier), true
+	}
+	return 0, false
+}
+
 func cleanHostIP(addr string) string {
 	addr = strings.TrimSpace(addr)
+	if strings.Contains(addr, "->") {
+		parts := strings.Split(addr, "->")
+		addr = strings.TrimSpace(parts[0])
+	} else if strings.Contains(addr, "<-") {
+		parts := strings.Split(addr, "<-")
+		addr = strings.TrimSpace(parts[0])
+	}
 	if idx := strings.Index(addr, ":"); idx != -1 {
 		if strings.Count(addr, ":") == 1 {
 			addr = addr[:idx]
