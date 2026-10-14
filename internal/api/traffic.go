@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/logging"
 	"github.com/spoutin/LAN-Orangutan/internal/scanner"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
@@ -163,21 +164,22 @@ func (tc *TrafficCollector) CollectCycle(
 	// 3. OPNsense Firewall (NetFlow / Active States for Routed Traffic)
 	if tc.cfg.OPNsense.Enable && tc.cfg.OPNsense.URL != "" && fetchNetFlow != nil && ctx.Err() == nil {
 		flowStats, err := fetchNetFlow(ctx, tc.cfg.OPNsense)
-		if err == nil && len(flowStats) > 0 {
+		if err != nil {
+			logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense NetFlow query failed: %v", err))
+		} else {
+			matchedHosts := 0
 			for ip, st := range flowStats {
 				dev := tc.store.GetDevice(ip)
 				if dev == nil || dev.MAC == "" {
 					continue
 				}
 				normMAC := strings.ToLower(strings.TrimSpace(dev.MAC))
-				if seenMACs[normMAC] {
-					continue
-				}
 				if st.RxBytes == 0 && st.TxBytes == 0 {
 					continue
 				}
 
-				rxRate, txRate := tc.ComputeRate(normMAC, st.RxBytes, st.TxBytes, now)
+				wanRateKey := normMAC + ":wan"
+				rxRate, txRate := tc.ComputeRate(wanRateKey, st.RxBytes, st.TxBytes, now)
 				samples = append(samples, types.TrafficSample{
 					MAC:       normMAC,
 					Timestamp: now,
@@ -187,8 +189,9 @@ func (tc *TrafficCollector) CollectCycle(
 					TxRate:    txRate,
 					Source:    "opnsense",
 				})
-				seenMACs[normMAC] = true
+				matchedHosts++
 			}
+			logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense NetFlow: collected flows for %d hosts (%d active in inventory)", len(flowStats), matchedHosts))
 		}
 	}
 

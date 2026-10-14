@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -482,25 +483,6 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 	return leases, reservations, arpEntries, nil
 }
 
-type opnSenseNetFlowRecord struct {
-	Source      string      `json:"source"`
-	Destination string      `json:"destination"`
-	Octets      interface{} `json:"octets"`
-	Bytes       interface{} `json:"bytes"`
-	Time        interface{} `json:"time"`
-}
-
-type opnSenseStateRecord struct {
-	SrcAddr string      `json:"src_addr"`
-	DstAddr string      `json:"dst_addr"`
-	Bytes   interface{} `json:"bytes"`
-	Packets interface{} `json:"packets"`
-}
-
-type opnSenseStatesResponse struct {
-	Rows []opnSenseStateRecord `json:"rows"`
-}
-
 // FetchOPNsenseNetFlow queries OPNsense for per-device traffic bytes via NetFlow or active firewall states.
 func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
@@ -528,22 +510,18 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 		reqFlow.SetBasicAuth(cfg.APIKey, cfg.APISecret)
 		reqFlow.Header.Set("Content-Type", "application/json")
 		respFlow, err := client.Do(reqFlow)
-		if err == nil && respFlow.StatusCode == http.StatusOK {
+		if err == nil {
 			defer respFlow.Body.Close()
-			var records []opnSenseNetFlowRecord
-			if err := json.NewDecoder(respFlow.Body).Decode(&records); err == nil && len(records) > 0 {
+			if respFlow.StatusCode == http.StatusOK {
+				rawBody, _ := io.ReadAll(respFlow.Body)
+				records := parseNetFlowRecords(rawBody)
 				for _, rec := range records {
-					var octets int64
-					if n, ok := parseNumeric(rec.Octets); ok {
-						octets = n
-					} else if n, ok := parseNumeric(rec.Bytes); ok {
-						octets = n
-					}
+					srcIP := cleanHostIP(extractFlowField(rec, "source", "src", "src_addr", "source_address"))
+					dstIP := cleanHostIP(extractFlowField(rec, "destination", "dst", "dst_addr", "destination_address"))
+					octets := extractFlowBytes(rec, "octets", "bytes", "byte_count", "total_bytes")
 					if octets <= 0 {
 						continue
 					}
-					srcIP := cleanHostIP(rec.Source)
-					dstIP := cleanHostIP(rec.Destination)
 					if srcIP != "" {
 						st, ok := result[srcIP]
 						if !ok {
@@ -565,8 +543,6 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 					return result, nil
 				}
 			}
-		} else if respFlow != nil {
-			respFlow.Body.Close()
 		}
 	}
 
@@ -588,21 +564,15 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 		return nil, fmt.Errorf("unexpected firewall states response status: %s", respStates.Status)
 	}
 
-	var stateResp opnSenseStatesResponse
-	if err := json.NewDecoder(respStates.Body).Decode(&stateResp); err != nil {
-		return nil, fmt.Errorf("failed to decode firewall states response: %w", err)
-	}
-
-	for _, row := range stateResp.Rows {
-		var bytesVal int64
-		if n, ok := parseNumeric(row.Bytes); ok {
-			bytesVal = n
-		}
+	rawStates, _ := io.ReadAll(respStates.Body)
+	records := parseNetFlowRecords(rawStates)
+	for _, rec := range records {
+		bytesVal := extractFlowBytes(rec, "bytes", "octets", "byte_count")
 		if bytesVal <= 0 {
 			continue
 		}
-		srcIP := cleanHostIP(row.SrcAddr)
-		dstIP := cleanHostIP(row.DstAddr)
+		srcIP := cleanHostIP(extractFlowField(rec, "src_addr", "source", "src"))
+		dstIP := cleanHostIP(extractFlowField(rec, "dst_addr", "destination", "dst"))
 		if srcIP != "" {
 			st, ok := result[srcIP]
 			if !ok {
@@ -622,6 +592,53 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 	}
 
 	return result, nil
+}
+
+func parseNetFlowRecords(body []byte) []map[string]interface{} {
+	var list []map[string]interface{}
+	if err := json.Unmarshal(body, &list); err == nil && len(list) > 0 {
+		return list
+	}
+
+	var obj map[string]interface{}
+	if err := json.Unmarshal(body, &obj); err == nil {
+		if rows, ok := obj["rows"].([]interface{}); ok {
+			for _, r := range rows {
+				if m, ok := r.(map[string]interface{}); ok {
+					list = append(list, m)
+				}
+			}
+		} else if data, ok := obj["data"].([]interface{}); ok {
+			for _, r := range data {
+				if m, ok := r.(map[string]interface{}); ok {
+					list = append(list, m)
+				}
+			}
+		}
+	}
+	return list
+}
+
+func extractFlowField(rec map[string]interface{}, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := rec[k]; ok && v != nil {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+func extractFlowBytes(rec map[string]interface{}, keys ...string) int64 {
+	for _, k := range keys {
+		if v, ok := rec[k]; ok && v != nil {
+			if n, ok := parseNumeric(v); ok && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 func cleanHostIP(addr string) string {

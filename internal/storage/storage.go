@@ -465,6 +465,7 @@ func (s *Storage) scanDevice(scanner interface {
 	var switchPoEWattsVal sql.NullFloat64
 	var trafficSourceVal sql.NullString
 	var rxRateBpsVal, txRateBpsVal sql.NullInt64
+	var wanRxRateBpsVal, wanTxRateBpsVal, wanRxBytesVal, wanTxBytesVal sql.NullInt64
 	err := scanner.Scan(
 		&d.IP, &d.MAC, &d.Hostname, &d.Vendor, &d.Type, &webUIVal, &risksStr, &d.Label, &d.Notes, &d.Group,
 		&d.CustomHostname, &d.CustomWebURL, &d.CustomType, &d.WebPort, &d.WebScheme, &probedVal, &d.DetectedSSHPort, &d.SSHOverride, &d.SSHOverridePort, &d.Assignment,
@@ -475,6 +476,7 @@ func (s *Storage) scanDevice(scanner interface {
 		&d.RouterSource, &d.RouterInterface, &leaseExpiresVal, &d.LeaseLifetime, &d.RouterNotes,
 		&d.SwitchName, &d.SwitchHost, &d.SwitchPort, &d.SwitchVLAN, &d.SwitchLinkState, &d.SwitchLinkSpeed, &d.SwitchDuplex, &switchPoEWattsVal, &switchUpdatedAtVal,
 		&trafficSourceVal, &rxRateBpsVal, &txRateBpsVal,
+		&wanRxRateBpsVal, &wanTxRateBpsVal, &wanRxBytesVal, &wanTxBytesVal,
 	)
 	if err != nil {
 		return nil, err
@@ -500,6 +502,18 @@ func (s *Storage) scanDevice(scanner interface {
 	}
 	if txRateBpsVal.Valid {
 		d.TxRateBps = txRateBpsVal.Int64
+	}
+	if wanRxRateBpsVal.Valid {
+		d.WanRxRateBps = wanRxRateBpsVal.Int64
+	}
+	if wanTxRateBpsVal.Valid {
+		d.WanTxRateBps = wanTxRateBpsVal.Int64
+	}
+	if wanRxBytesVal.Valid {
+		d.WanRxBytes = wanRxBytesVal.Int64
+	}
+	if wanTxBytesVal.Valid {
+		d.WanTxBytes = wanTxBytesVal.Int64
 	}
 	_ = json.Unmarshal([]byte(risksStr), &d.Risks)
 	_ = json.Unmarshal([]byte(addressHistoryStr), &d.AddressHistory)
@@ -528,7 +542,7 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
-			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps
+			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 	`)
@@ -660,7 +674,7 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
-			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps
+			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 		WHERE d.ip = ?
@@ -728,7 +742,7 @@ func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
-			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps
+			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 		WHERE d.ip = ?
@@ -860,6 +874,18 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		if device.TxRateBps == 0 {
 			device.TxRateBps = existing.TxRateBps
 		}
+		if device.WanRxRateBps == 0 {
+			device.WanRxRateBps = existing.WanRxRateBps
+		}
+		if device.WanTxRateBps == 0 {
+			device.WanTxRateBps = existing.WanTxRateBps
+		}
+		if device.WanRxBytes == 0 {
+			device.WanRxBytes = existing.WanRxBytes
+		}
+		if device.WanTxBytes == 0 {
+			device.WanTxBytes = existing.WanTxBytes
+		}
 	}
 
 	if device.FirstSeen.IsZero() {
@@ -892,7 +918,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-			traffic_source, rx_rate_bps, tx_rate_bps
+			traffic_source, rx_rate_bps, tx_rate_bps,
+			wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -902,7 +929,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?
+			?, ?, ?,
+			?, ?, ?, ?
 		)
 		ON CONFLICT(ip) DO UPDATE SET
 			mac = excluded.mac,
@@ -961,7 +989,11 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			switch_updated_at = excluded.switch_updated_at,
 			traffic_source = excluded.traffic_source,
 			rx_rate_bps = excluded.rx_rate_bps,
-			tx_rate_bps = excluded.tx_rate_bps
+			tx_rate_bps = excluded.tx_rate_bps,
+			wan_rx_rate_bps = excluded.wan_rx_rate_bps,
+			wan_tx_rate_bps = excluded.wan_tx_rate_bps,
+			wan_rx_bytes = excluded.wan_rx_bytes,
+			wan_tx_bytes = excluded.wan_tx_bytes
 	`, device.IP, device.MAC, device.Hostname, device.Vendor, device.Type, boolToInt(device.WebUI), string(risksJSON),
 		device.Label, device.Notes, device.Group, device.CustomHostname, device.CustomWebURL, device.CustomType,
 		device.WebPort, device.WebScheme, boolToInt(device.Probed), device.DetectedSSHPort, device.SSHOverride, device.SSHOverridePort, device.Assignment, device.NetworkName,
@@ -971,7 +1003,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		device.RxRate, device.TxRate, device.RxBytes, device.TxBytes, device.AssociationUptime, device.UniFiModel, device.VLAN,
 		device.RouterSource, device.RouterInterface, leaseExpiresVal, device.LeaseLifetime, device.RouterNotes,
 		device.SwitchName, device.SwitchHost, device.SwitchPort, device.SwitchVLAN, device.SwitchLinkState, device.SwitchLinkSpeed, device.SwitchDuplex, device.SwitchPoEWatts, switchUpdatedAtVal,
-		device.TrafficSource, device.RxRateBps, device.TxRateBps)
+		device.TrafficSource, device.RxRateBps, device.TxRateBps,
+		device.WanRxRateBps, device.WanTxRateBps, device.WanRxBytes, device.WanTxBytes)
 	return err
 }
 
@@ -1169,7 +1202,7 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-		       traffic_source, rx_rate_bps, tx_rate_bps
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
 		FROM devices
 		WHERE mac = ? AND ip != ?
 	`, mac, excludeIP)
@@ -1202,7 +1235,7 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-		       traffic_source, rx_rate_bps, tx_rate_bps
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
 		FROM devices
 		WHERE mac = ?
 		LIMIT 1
@@ -1360,7 +1393,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-			traffic_source, rx_rate_bps, tx_rate_bps
+			traffic_source, rx_rate_bps, tx_rate_bps,
+			wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -1370,7 +1404,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?
+			?, ?, ?,
+			?, ?, ?, ?
 		)
 	`, d.IP, d.MAC, d.Hostname, d.Vendor, d.Type, boolToInt(d.WebUI), string(risksJSON),
 		d.Label, d.Notes, d.Group, d.CustomHostname, d.CustomWebURL, d.CustomType,
@@ -1381,7 +1416,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		d.RxRate, d.TxRate, d.RxBytes, d.TxBytes, d.AssociationUptime, d.UniFiModel, d.VLAN,
 		d.RouterSource, d.RouterInterface, leaseExpiresVal, d.LeaseLifetime, d.RouterNotes,
 		d.SwitchName, d.SwitchHost, d.SwitchPort, d.SwitchVLAN, d.SwitchLinkState, d.SwitchLinkSpeed, d.SwitchDuplex, d.SwitchPoEWatts, switchUpdatedAtVal,
-		d.TrafficSource, d.RxRateBps, d.TxRateBps)
+		d.TrafficSource, d.RxRateBps, d.TxRateBps,
+		d.WanRxRateBps, d.WanTxRateBps, d.WanRxBytes, d.WanTxBytes)
 	if err != nil {
 		return false, err
 	}
@@ -1423,7 +1459,7 @@ func (s *Storage) pruneEphemeralIPv6() error {
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-		       traffic_source, rx_rate_bps, tx_rate_bps
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
 		FROM devices
 	`)
 	if err != nil {
@@ -2261,7 +2297,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-		       traffic_source, rx_rate_bps, tx_rate_bps
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
 		FROM devices
 	`)
 	if err != nil {
@@ -2316,7 +2352,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 			       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-			       traffic_source, rx_rate_bps, tx_rate_bps
+			       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
 			FROM devices WHERE ip = ?
 		`, d.IP)
 		existing, err := s.scanDevice(row)
@@ -2477,7 +2513,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 				       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-				       traffic_source, rx_rate_bps, tx_rate_bps
+				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
 					FROM devices
 					WHERE LOWER(mac) = LOWER(?) AND ip = ?
 					LIMIT 1
@@ -2496,7 +2532,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 				       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-				       traffic_source, rx_rate_bps, tx_rate_bps
+				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
 					FROM devices
 					WHERE LOWER(mac) = LOWER(?)
 					LIMIT 1
@@ -2516,9 +2552,9 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 				       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
-			       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-			       traffic_source, rx_rate_bps, tx_rate_bps
-				FROM devices
+		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+		FROM devices
 				WHERE ip = ?
 				LIMIT 1
 			`, c.IP)
@@ -3109,7 +3145,7 @@ func (s *Storage) RecordTrafficSamples(samples []types.TrafficSample) error {
 	}
 	defer stmtSample.Close()
 
-	stmtUpdateDevice, err := tx.Prepare(`
+	stmtUpdateDeviceLink, err := tx.Prepare(`
 		UPDATE devices SET
 			traffic_source = ?,
 			rx_rate_bps = ?,
@@ -3121,7 +3157,21 @@ func (s *Storage) RecordTrafficSamples(samples []types.TrafficSample) error {
 	if err != nil {
 		return err
 	}
-	defer stmtUpdateDevice.Close()
+	defer stmtUpdateDeviceLink.Close()
+
+	stmtUpdateDeviceWAN, err := tx.Prepare(`
+		UPDATE devices SET
+			traffic_source = CASE WHEN traffic_source = '' THEN 'opnsense' ELSE traffic_source END,
+			wan_rx_rate_bps = ?,
+			wan_tx_rate_bps = ?,
+			wan_rx_bytes = CASE WHEN ? > 0 THEN ? ELSE wan_rx_bytes END,
+			wan_tx_bytes = CASE WHEN ? > 0 THEN ? ELSE wan_tx_bytes END
+		WHERE LOWER(mac) = LOWER(?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmtUpdateDeviceWAN.Close()
 
 	for _, sample := range samples {
 		normMAC := strings.ToLower(strings.TrimSpace(sample.MAC))
@@ -3137,7 +3187,11 @@ func (s *Storage) RecordTrafficSamples(samples []types.TrafficSample) error {
 			return fmt.Errorf("failed to insert traffic sample: %w", err)
 		}
 
-		_, err = stmtUpdateDevice.Exec(sample.Source, sample.RxRate, sample.TxRate, sample.RxBytes, sample.RxBytes, sample.TxBytes, sample.TxBytes, normMAC)
+		if sample.Source == "opnsense" {
+			_, err = stmtUpdateDeviceWAN.Exec(sample.RxRate, sample.TxRate, sample.RxBytes, sample.RxBytes, sample.TxBytes, sample.TxBytes, normMAC)
+		} else {
+			_, err = stmtUpdateDeviceLink.Exec(sample.Source, sample.RxRate, sample.TxRate, sample.RxBytes, sample.RxBytes, sample.TxBytes, sample.TxBytes, normMAC)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to update device traffic rates: %w", err)
 		}
@@ -3164,12 +3218,15 @@ func (s *Storage) GetDeviceTrafficSeries(mac string, timeRange string) (*types.D
 
 	var ip, hostname, trafficSource sql.NullString
 	var rxBytes, txBytes, rxRateBps, txRateBps sql.NullInt64
+	var wanRxRateBps, wanTxRateBps, wanRxBytes, wanTxBytes sql.NullInt64
 	err := s.db.QueryRow(`
-		SELECT ip, hostname, traffic_source, rx_bytes, tx_bytes, rx_rate_bps, tx_rate_bps
+		SELECT ip, hostname, traffic_source, rx_bytes, tx_bytes, rx_rate_bps, tx_rate_bps,
+		       wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
 		FROM devices
 		WHERE LOWER(mac) = LOWER(?)
 		LIMIT 1
-	`, normMAC).Scan(&ip, &hostname, &trafficSource, &rxBytes, &txBytes, &rxRateBps, &txRateBps)
+	`, normMAC).Scan(&ip, &hostname, &trafficSource, &rxBytes, &txBytes, &rxRateBps, &txRateBps,
+		&wanRxRateBps, &wanTxRateBps, &wanRxBytes, &wanTxBytes)
 	if err == nil {
 		resp.IP = ip.String
 		resp.Hostname = hostname.String
@@ -3178,6 +3235,10 @@ func (s *Storage) GetDeviceTrafficSeries(mac string, timeRange string) (*types.D
 		resp.Current.TxBytesTotal = txBytes.Int64
 		resp.Current.RxRateBytesSec = rxRateBps.Int64
 		resp.Current.TxRateBytesSec = txRateBps.Int64
+		resp.Current.WanRxRateBytesSec = wanRxRateBps.Int64
+		resp.Current.WanTxRateBytesSec = wanTxRateBps.Int64
+		resp.Current.WanRxBytesTotal = wanRxBytes.Int64
+		resp.Current.WanTxBytesTotal = wanTxBytes.Int64
 		resp.Current.LastUpdated = time.Now()
 	}
 

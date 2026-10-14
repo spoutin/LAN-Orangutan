@@ -380,7 +380,11 @@ orangutan export out.csv</code></pre>
                                        data-ansible-managed="{{if .AnsibleManaged}}true{{else}}false{{end}}"
                                        data-traffic-source="{{.TrafficSource}}"
                                        data-rx-rate-bps="{{.RxRateBps}}"
-                                       data-tx-rate-bps="{{.TxRateBps}}">
+                                       data-tx-rate-bps="{{.TxRateBps}}"
+                                       data-wan-rx-rate-bps="{{.WanRxRateBps}}"
+                                       data-wan-tx-rate-bps="{{.WanTxRateBps}}"
+                                       data-wan-rx-bytes="{{.WanRxBytes}}"
+                                       data-wan-tx-bytes="{{.WanTxBytes}}">
                                       <td class="col-status" data-label="Status">
                                           <span class="status-indicator {{.StatusClass}}" data-tip="{{.StatusTip}}"></span>
                                       </td>
@@ -480,13 +484,19 @@ orangutan export out.csv</code></pre>
                                                  <span>{{.SwitchName}} &middot; {{.SwitchPort}}{{if .SwitchVLAN}} (VLAN {{.SwitchVLAN}}){{end}}{{if .SwitchLinkSpeed}} &middot; {{formatSpeed .SwitchLinkSpeed}}{{end}}</span>
                                              </span>
                                              {{end}}
-                                             {{if or .IsOnline (gt .RxRateBps 0) (gt .TxRateBps 0) (gt .RxBytes 0) .TrafficSource}}
-                                             <span class="traffic-badge" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Click to view traffic history">
+                                             {{if or (gt .RxRateBps 0) (gt .TxRateBps 0) (gt .RxBytes 0) (and .IsOnline (ne .TrafficSource "opnsense"))}}
+                                             <span class="traffic-badge" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Local Link Throughput (Click to view history)">
                                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
-                                                 <span><strong style="color: #10b981;">↓ {{formatBandwidth .RxRateBps}}</strong> &nbsp; <strong style="color: #3b82f6;">↑ {{formatBandwidth .TxRateBps}}</strong>{{if gt .RxBytes 0}} &middot; Total: {{formatBytes .RxBytes}}{{end}}{{if .TrafficSource}} <span style="opacity: 0.75;">[{{.TrafficSource}}]</span>{{end}}</span>
+                                                 <span><strong style="color: #10b981;">↓ {{formatBandwidth .RxRateBps}}</strong> &nbsp; <strong style="color: #3b82f6;">↑ {{formatBandwidth .TxRateBps}}</strong>{{if gt .RxBytes 0}} &middot; Total: {{formatBytes .RxBytes}}{{end}}{{if and .TrafficSource (ne .TrafficSource "opnsense")}} <span style="opacity: 0.75;">[{{.TrafficSource}}]</span>{{end}}</span>
                                              </span>
                                              {{end}}
-                                             {{if and (not .SSID) (not .SwitchPort) (not .IsOnline) (eq .RxRateBps 0) (eq .TxRateBps 0) (eq .RxBytes 0)}}
+                                             {{if or (gt .WanRxRateBps 0) (gt .WanTxRateBps 0) (gt .WanRxBytes 0) (eq .TrafficSource "opnsense")}}
+                                             <span class="traffic-badge traffic-badge-wan" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Firewall WAN/Internet Throughput via OPNsense NetFlow">
+                                                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                                 <span>WAN: <strong style="color: #10b981;">↓ {{formatBandwidth .WanRxRateBps}}</strong> &nbsp; <strong style="color: #3b82f6;">↑ {{formatBandwidth .WanTxRateBps}}</strong>{{if gt .WanRxBytes 0}} &middot; Total: {{formatBytes .WanRxBytes}}{{end}} <span style="opacity: 0.75;">[opnsense]</span></span>
+                                             </span>
+                                             {{end}}
+                                             {{if and (not .SSID) (not .SwitchPort) (not .IsOnline) (eq .RxRateBps 0) (eq .TxRateBps 0) (eq .RxBytes 0) (eq .WanRxRateBps 0) (eq .WanTxRateBps 0)}}
                                              <span class="connection-none" style="color: var(--text-muted); font-size: 0.75rem;">—</span>
                                              {{end}}
                                          </div>
@@ -501,7 +511,7 @@ orangutan export out.csv</code></pre>
                         <div class="sidebar-header-box">
                             <div class="sidebar-header-info">
                                 <span id="sb-icon" class="sidebar-device-icon">💻</span>
-                                <div class="sidebar-header-text">
+                                <div>
                                     <h3 id="sb-title" class="sidebar-title">Device Details</h3>
                                     <div class="sidebar-subtitle">
                                         <span id="sb-mac">--:--:--:--:--:--</span> &middot; <span id="sb-vendor">Unknown</span>
@@ -530,12 +540,20 @@ orangutan export out.csv</code></pre>
                                 <div class="sidebar-card-body">
                                     <ul class="sidebar-spec-list">
                                         <li>
-                                            <span class="spec-label">Current Rate:</span>
+                                            <span class="spec-label">Link Rate:</span>
                                             <span class="spec-val" id="sb-traffic-rates">—</span>
                                         </li>
                                         <li>
-                                            <span class="spec-label">Total Volume:</span>
+                                            <span class="spec-label">Link Total:</span>
                                             <span class="spec-val" id="sb-traffic-total">—</span>
+                                        </li>
+                                        <li id="sb-traffic-wan-rate-row">
+                                            <span class="spec-label">WAN Rate:</span>
+                                            <span class="spec-val" id="sb-traffic-wan-rates">—</span>
+                                        </li>
+                                        <li id="sb-traffic-wan-total-row">
+                                            <span class="spec-label">WAN Total:</span>
+                                            <span class="spec-val" id="sb-traffic-wan-total">—</span>
                                         </li>
                                     </ul>
                                     <button type="button" id="sb-traffic-btn" class="btn" style="width: 100%; margin-top: 0.5rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: var(--bg-card-hover); border: 1px solid var(--border);" onclick="openTrafficModalForCurrentDevice()">

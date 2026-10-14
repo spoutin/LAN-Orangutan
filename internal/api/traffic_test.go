@@ -245,3 +245,106 @@ func TestDeviceTrafficAPI(t *testing.T) {
 		t.Fatalf("expected status 200 by IP, got %d: %s", recIP.Code, recIP.Body.String())
 	}
 }
+
+func TestTrafficCollector_DualLinkAndWANTraffic(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	dev := types.Device{IP: "10.0.0.50", MAC: "aa:bb:cc:55:66:77", Hostname: "dual-host"}
+	if err := store.UpdateDevice(&dev); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Switches: config.SwitchesConfig{
+			Enable: true,
+			Configs: map[string]config.SwitchConfig{
+				"switchy": {ID: "switchy", Host: "10.0.0.2"},
+			},
+		},
+		OPNsense: config.OPNsenseConfig{
+			Enable: true,
+			URL:    "https://opnsense.local",
+		},
+	}
+	tc := NewTrafficCollector(store, cfg)
+	t0 := time.Now()
+
+	fetchSwitch := func(_ context.Context, _ config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
+		return []scanner.SwitchConnection{
+			{
+				MAC:       "aa:bb:cc:55:66:77",
+				Port:      "gi1/5",
+				InOctets:  1000000,
+				OutOctets: 5000000,
+				SingleMAC: true,
+			},
+		}, nil
+	}
+	fetchNetFlow := func(_ context.Context, _ config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error) {
+		return map[string]*types.NetFlowDeviceStats{
+			"10.0.0.50": {
+				IP:      "10.0.0.50",
+				RxBytes: 2000000,
+				TxBytes: 300000,
+			},
+		}, nil
+	}
+
+	// Baseline
+	_, err = tc.CollectCycle(context.Background(), t0, fetchSwitch, nil, fetchNetFlow)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second sample 60s later
+	t1 := t0.Add(60 * time.Second)
+	fetchSwitch2 := func(_ context.Context, _ config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
+		return []scanner.SwitchConnection{
+			{
+				MAC:       "aa:bb:cc:55:66:77",
+				Port:      "gi1/5",
+				InOctets:  1000000 + 60000,  // +1000 B/s Tx
+				OutOctets: 5000000 + 300000, // +5000 B/s Rx
+				SingleMAC: true,
+			},
+		}, nil
+	}
+	fetchNetFlow2 := func(_ context.Context, _ config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error) {
+		return map[string]*types.NetFlowDeviceStats{
+			"10.0.0.50": {
+				IP:      "10.0.0.50",
+				RxBytes: 2000000 + 120000, // +2000 B/s WAN Rx
+				TxBytes: 300000 + 30000,   // +500 B/s WAN Tx
+			},
+		}, nil
+	}
+
+	_, err = tc.CollectCycle(context.Background(), t1, fetchSwitch2, nil, fetchNetFlow2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	storedDev := store.GetDevice("10.0.0.50")
+	if storedDev == nil {
+		t.Fatal("device not found in store")
+	}
+
+	// Verify both Link and WAN metrics exist on the device
+	if storedDev.TrafficSource != "switch" {
+		t.Errorf("expected TrafficSource 'switch', got %s", storedDev.TrafficSource)
+	}
+	if storedDev.RxRateBps != 5000 || storedDev.TxRateBps != 1000 {
+		t.Errorf("expected link rates 5000/1000, got %d/%d", storedDev.RxRateBps, storedDev.TxRateBps)
+	}
+	if storedDev.WanRxRateBps != 2000 || storedDev.WanTxRateBps != 500 {
+		t.Errorf("expected WAN rates 2000/500, got %d/%d", storedDev.WanRxRateBps, storedDev.WanTxRateBps)
+	}
+	if storedDev.WanRxBytes != 2120000 || storedDev.WanTxBytes != 330000 {
+		t.Errorf("expected WAN bytes 2120000/330000, got %d/%d", storedDev.WanRxBytes, storedDev.WanTxBytes)
+	}
+}

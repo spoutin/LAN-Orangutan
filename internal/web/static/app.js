@@ -1450,17 +1450,24 @@ function syncDeviceSidebarTelemetry(data) {
         const txRate = Number(data.txRateBps) || 0;
         const rxBytes = Number(data.rxBytes) || 0;
         const txBytes = Number(data.txBytes) || 0;
+        const wanRxRate = Number(data.wanRxRateBps) || 0;
+        const wanTxRate = Number(data.wanTxRateBps) || 0;
+        const wanRxBytes = Number(data.wanRxBytes) || 0;
+        const wanTxBytes = Number(data.wanTxBytes) || 0;
         const source = data.trafficSource || (data.ssid ? 'unifi' : (data.switchPort ? 'switch' : ''));
 
-        const hasTraffic = rxRate > 0 || txRate > 0 || rxBytes > 0 || txBytes > 0 || source !== '';
+        const hasTraffic = rxRate > 0 || txRate > 0 || rxBytes > 0 || txBytes > 0 ||
+                           wanRxRate > 0 || wanTxRate > 0 || wanRxBytes > 0 || wanTxBytes > 0 || source !== '';
         if (hasTraffic) {
             trafficCard.style.display = '';
             trafficCard.classList.remove('hidden');
 
+            const bwFn = typeof formatBandwidth === 'function' ? formatBandwidth : formatBytes;
+            const tbFn = typeof formatTrafficBytes === 'function' ? formatTrafficBytes : formatBytes;
+
             const ratesEl = document.getElementById('sb-traffic-rates');
             if (ratesEl) {
                 if (rxRate > 0 || txRate > 0) {
-                    const bwFn = typeof formatBandwidth === 'function' ? formatBandwidth : formatBytes;
                     ratesEl.innerHTML = `<span style="color:#10b981;">↓ ${bwFn(rxRate)}</span> &nbsp; <span style="color:#3b82f6;">↑ ${bwFn(txRate)}</span>`;
                 } else {
                     ratesEl.textContent = 'Idle (0 B/s)';
@@ -1469,8 +1476,26 @@ function syncDeviceSidebarTelemetry(data) {
 
             const totalEl = document.getElementById('sb-traffic-total');
             if (totalEl) {
-                const tbFn = typeof formatTrafficBytes === 'function' ? formatTrafficBytes : formatBytes;
                 totalEl.textContent = `Rx: ${tbFn(rxBytes)} / Tx: ${tbFn(txBytes)}`;
+            }
+
+            const wanRateRow = document.getElementById('sb-traffic-wan-rate-row');
+            const wanTotalRow = document.getElementById('sb-traffic-wan-total-row');
+            const wanRatesEl = document.getElementById('sb-traffic-wan-rates');
+            const wanTotalEl = document.getElementById('sb-traffic-wan-total');
+
+            const hasWan = wanRxRate > 0 || wanTxRate > 0 || wanRxBytes > 0 || wanTxBytes > 0;
+            if (wanRateRow) wanRateRow.style.display = hasWan ? '' : 'none';
+            if (wanTotalRow) wanTotalRow.style.display = hasWan ? '' : 'none';
+            if (wanRatesEl) {
+                if (wanRxRate > 0 || wanTxRate > 0) {
+                    wanRatesEl.innerHTML = `<span style="color:#10b981;">↓ ${bwFn(wanRxRate)}</span> &nbsp; <span style="color:#3b82f6;">↑ ${bwFn(wanTxRate)}</span>`;
+                } else {
+                    wanRatesEl.textContent = 'Idle (0 B/s)';
+                }
+            }
+            if (wanTotalEl) {
+                wanTotalEl.textContent = `Rx: ${tbFn(wanRxBytes)} / Tx: ${tbFn(wanTxBytes)}`;
             }
 
             const badgeEl = document.getElementById('sb-traffic-source-badge');

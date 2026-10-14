@@ -109,6 +109,12 @@ type Device struct {
 	TrafficSource string `json:"traffic_source,omitempty"`
 	RxRateBps     int64  `json:"rx_rate_bps,omitempty"`
 	TxRateBps     int64  `json:"tx_rate_bps,omitempty"`
+
+	// WAN / Routed throughput (OPNsense NetFlow / Gateway)
+	WanRxRateBps int64 `json:"wan_rx_rate_bps,omitempty"`
+	WanTxRateBps int64 `json:"wan_tx_rate_bps,omitempty"`
+	WanRxBytes   int64 `json:"wan_rx_bytes,omitempty"`
+	WanTxBytes   int64 `json:"wan_tx_bytes,omitempty"`
 }
 
 const (
@@ -362,11 +368,15 @@ type TrafficHourly struct {
 
 // TrafficCurrentSummary represents the latest real-time bandwidth and totals.
 type TrafficCurrentSummary struct {
-	RxRateBytesSec int64     `json:"rx_rate_bytes_sec"`
-	TxRateBytesSec int64     `json:"tx_rate_bytes_sec"`
-	RxBytesTotal   int64     `json:"rx_bytes_total"`
-	TxBytesTotal   int64     `json:"tx_bytes_total"`
-	LastUpdated    time.Time `json:"last_updated"`
+	RxRateBytesSec    int64     `json:"rx_rate_bytes_sec"`
+	TxRateBytesSec    int64     `json:"tx_rate_bytes_sec"`
+	RxBytesTotal      int64     `json:"rx_bytes_total"`
+	TxBytesTotal      int64     `json:"tx_bytes_total"`
+	WanRxRateBytesSec int64     `json:"wan_rx_rate_bytes_sec,omitempty"`
+	WanTxRateBytesSec int64     `json:"wan_tx_rate_bytes_sec,omitempty"`
+	WanRxBytesTotal   int64     `json:"wan_rx_bytes_total,omitempty"`
+	WanTxBytesTotal   int64     `json:"wan_tx_bytes_total,omitempty"`
+	LastUpdated       time.Time `json:"last_updated"`
 }
 
 // TrafficSeriesPoint is an individual point on the traffic chart.

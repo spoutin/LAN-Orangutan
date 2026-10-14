@@ -3540,6 +3540,15 @@ img.login-logo {
     background: rgba(16, 185, 129, 0.2);
     border-color: rgba(16, 185, 129, 0.4);
 }
+.traffic-badge-wan {
+    background: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+    border-color: rgba(59, 130, 246, 0.25);
+}
+.traffic-badge-wan:hover {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.4);
+}
 .traffic-range-btn {
     background: var(--bg-card);
     border: 1px solid var(--border);
