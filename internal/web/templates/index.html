@@ -480,13 +480,13 @@ orangutan export out.csv</code></pre>
                                                  <span>{{.SwitchName}} &middot; {{.SwitchPort}}{{if .SwitchVLAN}} (VLAN {{.SwitchVLAN}}){{end}}{{if .SwitchLinkSpeed}} &middot; {{formatSpeed .SwitchLinkSpeed}}{{end}}</span>
                                              </span>
                                              {{end}}
-                                             {{if or (gt .RxRateBps 0) (gt .TxRateBps 0) (gt .RxBytes 0)}}
+                                             {{if or .IsOnline (gt .RxRateBps 0) (gt .TxRateBps 0) (gt .RxBytes 0) .TrafficSource}}
                                              <span class="traffic-badge" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Click to view traffic history">
                                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
-                                                 <span>{{if or (gt .RxRateBps 0) (gt .TxRateBps 0)}}↓ {{formatBandwidth .RxRateBps}} &nbsp; ↑ {{formatBandwidth .TxRateBps}}{{end}}{{if and (or (gt .RxRateBps 0) (gt .TxRateBps 0)) (gt .RxBytes 0)}} &middot; {{end}}{{if gt .RxBytes 0}}Total: {{formatBytes .RxBytes}}{{end}}{{if .TrafficSource}} [{{.TrafficSource}}]{{end}}</span>
+                                                 <span><strong style="color: #10b981;">↓ {{formatBandwidth .RxRateBps}}</strong> &nbsp; <strong style="color: #3b82f6;">↑ {{formatBandwidth .TxRateBps}}</strong>{{if gt .RxBytes 0}} &middot; Total: {{formatBytes .RxBytes}}{{end}}{{if .TrafficSource}} <span style="opacity: 0.75;">[{{.TrafficSource}}]</span>{{end}}</span>
                                              </span>
                                              {{end}}
-                                             {{if and (not .SSID) (not .SwitchPort) (eq .RxRateBps 0) (eq .TxRateBps 0) (eq .RxBytes 0)}}
+                                             {{if and (not .SSID) (not .SwitchPort) (not .IsOnline) (eq .RxRateBps 0) (eq .TxRateBps 0) (eq .RxBytes 0)}}
                                              <span class="connection-none" style="color: var(--text-muted); font-size: 0.75rem;">—</span>
                                              {{end}}
                                          </div>

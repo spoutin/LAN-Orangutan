@@ -209,7 +209,7 @@ func (h *Handler) StartTrafficCollector(ctx context.Context) {
 
 	go func() {
 		// Run initial collection shortly after startup
-		initTimer := time.NewTimer(10 * time.Second)
+		initTimer := time.NewTimer(2 * time.Second)
 		select {
 		case <-ctx.Done():
 			initTimer.Stop()
