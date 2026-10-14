@@ -1,0 +1,247 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/scanner"
+	"github.com/spoutin/LAN-Orangutan/internal/storage"
+	"github.com/spoutin/LAN-Orangutan/internal/types"
+)
+
+func TestTrafficCollector_ComputeRate(t *testing.T) {
+	tc := NewTrafficCollector(nil, nil)
+	t0 := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	mac := "00:11:22:33:44:55"
+
+	// 1. Initial call sets baseline, returns 0 rate
+	rxRate, txRate := tc.ComputeRate(mac, 1000000, 500000, t0)
+	if rxRate != 0 || txRate != 0 {
+		t.Fatalf("expected initial rate 0/0, got %d/%d", rxRate, txRate)
+	}
+
+	// 2. Call 60 seconds later with +600,000 bytes Rx and +120,000 bytes Tx
+	t1 := t0.Add(60 * time.Second)
+	rxRate, txRate = tc.ComputeRate(mac, 1600000, 620000, t1)
+	if rxRate != 10000 { // 600000 / 60 = 10000
+		t.Errorf("expected rxRate 10000, got %d", rxRate)
+	}
+	if txRate != 2000 { // 120000 / 60 = 2000
+		t.Errorf("expected txRate 2000, got %d", txRate)
+	}
+
+	// 3. Counter reset (e.g. switch reboot, current < prev)
+	t2 := t1.Add(60 * time.Second)
+	rxRate, txRate = tc.ComputeRate(mac, 50000, 10000, t2)
+	if rxRate != 0 || txRate != 0 {
+		t.Errorf("expected 0/0 on counter reset, got %d/%d", rxRate, txRate)
+	}
+}
+
+func TestTrafficCollector_CollectCycle(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	// Seed devices
+	devWired := types.Device{IP: "10.0.0.10", MAC: "aa:bb:cc:11:22:01", Hostname: "wired-pc"}
+	devWireless := types.Device{IP: "10.0.0.20", MAC: "aa:bb:cc:11:22:02", Hostname: "phone"}
+	devRouted := types.Device{IP: "10.0.0.30", MAC: "aa:bb:cc:11:22:03", Hostname: "iot-device"}
+	if err := store.UpdateDevice(&devWired); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDevice(&devWireless); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDevice(&devRouted); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Switches: config.SwitchesConfig{
+			Enable: true,
+			Configs: map[string]config.SwitchConfig{
+				"switchy": {ID: "switchy", Host: "10.0.0.2"},
+			},
+		},
+		UniFi: config.UniFiConfig{
+			Enable: true,
+			URL:    "https://unifi.local",
+		},
+		OPNsense: config.OPNsenseConfig{
+			Enable: true,
+			URL:    "https://opnsense.local",
+		},
+	}
+
+	tc := NewTrafficCollector(store, cfg)
+	t0 := time.Now()
+
+	// Mock switch fetch
+	fetchSwitch := func(_ context.Context, _ config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
+		return []scanner.SwitchConnection{
+			{
+				MAC:       "aa:bb:cc:11:22:01",
+				Port:      "gi1/1",
+				InOctets:  500000,
+				OutOctets: 2000000,
+				SingleMAC: true,
+			},
+		}, nil
+	}
+
+	// Mock UniFi fetch
+	fetchUniFi := func(_ context.Context, _ config.UniFiConfig) ([]types.Device, error) {
+		return []types.Device{
+			{
+				MAC:     "aa:bb:cc:11:22:02",
+				RxBytes: 800000,
+				TxBytes: 150000,
+			},
+		}, nil
+	}
+
+	// Mock OPNsense fetch
+	fetchNetFlow := func(_ context.Context, _ config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error) {
+		return map[string]*types.NetFlowDeviceStats{
+			"10.0.0.30": {
+				IP:      "10.0.0.30",
+				RxBytes: 400000,
+				TxBytes: 90000,
+			},
+		}, nil
+	}
+
+	// Cycle 1: Baseline
+	samples1, err := tc.CollectCycle(context.Background(), t0, fetchSwitch, fetchUniFi, fetchNetFlow)
+	if err != nil {
+		t.Fatalf("CollectCycle 1 failed: %v", err)
+	}
+	if len(samples1) != 3 {
+		t.Fatalf("expected 3 samples, got %d", len(samples1))
+	}
+
+	// Cycle 2: 60 seconds later
+	t1 := t0.Add(60 * time.Second)
+	fetchSwitch2 := func(_ context.Context, _ config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
+		return []scanner.SwitchConnection{
+			{
+				MAC:       "aa:bb:cc:11:22:01",
+				Port:      "gi1/1",
+				InOctets:  500000 + 120000,  // +2000 B/s Tx
+				OutOctets: 2000000 + 600000, // +10000 B/s Rx
+				SingleMAC: true,
+			},
+		}, nil
+	}
+
+	samples2, err := tc.CollectCycle(context.Background(), t1, fetchSwitch2, fetchUniFi, fetchNetFlow)
+	if err != nil {
+		t.Fatalf("CollectCycle 2 failed: %v", err)
+	}
+
+	byMAC := make(map[string]types.TrafficSample)
+	for _, s := range samples2 {
+		byMAC[s.MAC] = s
+	}
+
+	sWired := byMAC["aa:bb:cc:11:22:01"]
+	if sWired.Source != "switch" {
+		t.Errorf("expected source 'switch', got %s", sWired.Source)
+	}
+	if sWired.RxRate != 10000 || sWired.TxRate != 2000 {
+		t.Errorf("expected wired rates 10000/2000, got %d/%d", sWired.RxRate, sWired.TxRate)
+	}
+
+	// Verify query from store
+	series, err := store.GetDeviceTrafficSeries("aa:bb:cc:11:22:01", "1h")
+	if err != nil {
+		t.Fatalf("GetDeviceTrafficSeries failed: %v", err)
+	}
+	if len(series.Series) != 2 {
+		t.Errorf("expected 2 series points in store, got %d", len(series.Series))
+	}
+}
+
+func TestDeviceTrafficAPI(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	dev := types.Device{
+		IP:            "10.0.0.55",
+		MAC:           "00:11:22:33:44:55",
+		Hostname:      "my-desktop",
+		TrafficSource: "switch",
+		RxRateBps:     12000,
+		TxRateBps:     3000,
+		RxBytes:       5000000,
+		TxBytes:       1000000,
+	}
+	if err := store.UpdateDevice(&dev); err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert samples
+	now := time.Now()
+	_ = store.RecordTrafficSamples([]types.TrafficSample{
+		{
+			MAC:       "00:11:22:33:44:55",
+			Timestamp: now.Add(-10 * time.Minute),
+			RxBytes:   4000000,
+			TxBytes:   800000,
+			RxRate:    10000,
+			TxRate:    2000,
+			Source:    "switch",
+		},
+		{
+			MAC:       "00:11:22:33:44:55",
+			Timestamp: now,
+			RxBytes:   5000000,
+			TxBytes:   1000000,
+			RxRate:    12000,
+			TxRate:    3000,
+			Source:    "switch",
+		},
+	})
+
+	cfg := config.Default()
+	h := NewHandler(store, cfg)
+
+	// 1. Query by MAC
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/devices/00:11:22:33:44:55/traffic?range=1h", nil)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp types.APIResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success=true, got error: %s", resp.Error)
+	}
+
+	// 2. Query by IP
+	recIP := httptest.NewRecorder()
+	reqIP := httptest.NewRequest("GET", "/api/devices/10.0.0.55/traffic?range=24h", nil)
+	h.ServeHTTP(recIP, reqIP)
+	if recIP.Code != http.StatusOK {
+		t.Fatalf("expected status 200 by IP, got %d: %s", recIP.Code, recIP.Body.String())
+	}
+}

@@ -17,6 +17,8 @@ const (
 	switchIfOperStatusOID      = "1.3.6.1.2.1.2.2.1.8"
 	switchIfHighSpeedOID       = "1.3.6.1.2.1.31.1.1.1.15"
 	switchIfDuplexOID          = "1.3.6.1.2.1.10.7.2.1.19"
+	switchIfHCInOctetsOID      = "1.3.6.1.2.1.31.1.1.1.6"
+	switchIfHCOutOctetsOID     = "1.3.6.1.2.1.31.1.1.1.10"
 	switchBridgePortIfIndexOID = "1.3.6.1.2.1.17.1.4.1.2"
 	switchBridgeFDBPortOID     = "1.3.6.1.2.1.17.4.3.1.2"
 	switchQBridgeFDBPortOID    = "1.3.6.1.2.1.17.7.1.2.2.1.2"
@@ -35,6 +37,9 @@ type SwitchConnection struct {
 	Duplex     string
 	PoEWatts   *float64
 	UpdatedAt  time.Time
+	InOctets   uint64
+	OutOctets  uint64
+	SingleMAC  bool
 }
 
 type switchWalker interface {
@@ -74,6 +79,8 @@ func fetchSwitchConnections(ctx context.Context, cfg config.SwitchConfig, vlanBy
 	operStatus, _ := walkIntTable(ctx, w, switchIfOperStatusOID)
 	highSpeed, _ := walkIntTable(ctx, w, switchIfHighSpeedOID)
 	duplex, _ := walkIntTable(ctx, w, switchIfDuplexOID)
+	hcInOctets, _ := walkUint64Table(ctx, w, switchIfHCInOctetsOID)
+	hcOutOctets, _ := walkUint64Table(ctx, w, switchIfHCOutOctetsOID)
 	requestedVLAN := make(map[string]int, len(vlanByMAC))
 	for mac, vlan := range vlanByMAC {
 		requestedVLAN[normalizeSwitchMAC(mac)] = vlan
@@ -88,6 +95,18 @@ func fetchSwitchConnections(ctx context.Context, cfg config.SwitchConfig, vlanBy
 		macs = append(macs, mac)
 	}
 	sort.Strings(macs)
+
+	// Count how many learned MACs mapped to each physical interface
+	macsPerIfIndex := make(map[int]int)
+	for _, mac := range macs {
+		bridgePort, _, ok := resolveBridgePort(mac, requestedVLAN, qbridge, bridge)
+		if ok && bridgePort != 0 {
+			ifIndex := bridgeToIf[bridgePort]
+			if ifIndex != 0 {
+				macsPerIfIndex[ifIndex]++
+			}
+		}
+	}
 
 	now := time.Now()
 	connections := make([]SwitchConnection, 0, len(macs))
@@ -108,6 +127,9 @@ func fetchSwitchConnections(ctx context.Context, cfg config.SwitchConfig, vlanBy
 			MAC: mac, SwitchName: cfg.ID, SwitchHost: cfg.Host, Port: port, VLAN: vlan,
 			LinkState: linkState(operStatus[ifIndex]), LinkSpeed: highSpeed[ifIndex], Duplex: duplexState(duplex[ifIndex]),
 			UpdatedAt: now,
+			InOctets:  hcInOctets[ifIndex],
+			OutOctets: hcOutOctets[ifIndex],
+			SingleMAC: macsPerIfIndex[ifIndex] == 1,
 		}
 		connections = append(connections, connection)
 	}
@@ -191,6 +213,22 @@ func walkIntTable(ctx context.Context, w switchWalker, oid string) (map[int]int,
 	return result, nil
 }
 
+func walkUint64Table(ctx context.Context, w switchWalker, oid string) (map[int]uint64, error) {
+	pdus, err := w.Walk(ctx, oid)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[int]uint64, len(pdus))
+	for _, pdu := range pdus {
+		if index, ok := oidIndex(pdu.Name, oid, 1); ok {
+			if value, ok := snmpUint64(pdu.Value); ok {
+				result[index[0]] = value
+			}
+		}
+	}
+	return result, nil
+}
+
 func walkFDBTable(ctx context.Context, w switchWalker, oid string, vlanAware bool) (map[fdbKey]int, error) {
 	pdus, err := w.Walk(ctx, oid)
 	if err != nil {
@@ -264,6 +302,34 @@ func snmpInt(value any) (int, bool) {
 		return int(value), true
 	case uint64:
 		return int(value), value <= uint64(^uint(0)>>1)
+	default:
+		return 0, false
+	}
+}
+
+func snmpUint64(value any) (uint64, bool) {
+	switch value := value.(type) {
+	case uint64:
+		return value, true
+	case int64:
+		if value < 0 {
+			return 0, false
+		}
+		return uint64(value), true
+	case uint:
+		return uint64(value), true
+	case int:
+		if value < 0 {
+			return 0, false
+		}
+		return uint64(value), true
+	case uint32:
+		return uint64(value), true
+	case int32:
+		if value < 0 {
+			return 0, false
+		}
+		return uint64(value), true
 	default:
 		return 0, false
 	}

@@ -115,6 +115,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	apiHandler.SetScanContext(scanCtx)
 	apiHandler.StartBackgroundScanner(scanCtx, time.Duration(cfg.Scanning.ScanInterval)*time.Second)
 	apiHandler.StartBackgroundCleanup(scanCtx)
+	apiHandler.StartTrafficCollector(scanCtx)
 
 	// Protected routes.
 	mux.Handle("/api/", authn.Middleware(apiHandler))

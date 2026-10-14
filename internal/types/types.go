@@ -104,6 +104,11 @@ type Device struct {
 	SwitchDuplex    string    `json:"switch_duplex,omitempty"`
 	SwitchPoEWatts  *float64  `json:"switch_poe_watts,omitempty"`
 	SwitchUpdatedAt time.Time `json:"switch_updated_at,omitempty"`
+
+	// Traffic telemetry
+	TrafficSource string `json:"traffic_source,omitempty"`
+	RxRateBps     int64  `json:"rx_rate_bps,omitempty"`
+	TxRateBps     int64  `json:"tx_rate_bps,omitempty"`
 }
 
 const (
@@ -329,4 +334,64 @@ type NetworkNotification struct {
 	NetworkCIDR  string `json:"network_cidr"`
 	SlackWebhook string `json:"slack_webhook"`
 	Enabled      bool   `json:"enabled"`
+}
+
+// TrafficSample represents a high-resolution 1-minute traffic measurement.
+type TrafficSample struct {
+	ID        int64     `json:"id,omitempty"`
+	MAC       string    `json:"mac"`
+	Timestamp time.Time `json:"timestamp"`
+	RxBytes   int64     `json:"rx_bytes"`
+	TxBytes   int64     `json:"tx_bytes"`
+	RxRate    int64     `json:"rx_rate"` // bytes/sec
+	TxRate    int64     `json:"tx_rate"` // bytes/sec
+	Source    string    `json:"source"`  // "switch", "unifi", "opnsense"
+}
+
+// TrafficHourly represents a rolled-up 1-hour traffic aggregation.
+type TrafficHourly struct {
+	ID           int64     `json:"id,omitempty"`
+	MAC          string    `json:"mac"`
+	BucketTime   time.Time `json:"bucket_time"`
+	RxBytesDelta int64     `json:"rx_bytes_delta"`
+	TxBytesDelta int64     `json:"tx_bytes_delta"`
+	AvgRxRate    int64     `json:"avg_rx_rate"`
+	AvgTxRate    int64     `json:"avg_tx_rate"`
+	Source       string    `json:"source"`
+}
+
+// TrafficCurrentSummary represents the latest real-time bandwidth and totals.
+type TrafficCurrentSummary struct {
+	RxRateBytesSec int64     `json:"rx_rate_bytes_sec"`
+	TxRateBytesSec int64     `json:"tx_rate_bytes_sec"`
+	RxBytesTotal   int64     `json:"rx_bytes_total"`
+	TxBytesTotal   int64     `json:"tx_bytes_total"`
+	LastUpdated    time.Time `json:"last_updated"`
+}
+
+// TrafficSeriesPoint is an individual point on the traffic chart.
+type TrafficSeriesPoint struct {
+	Timestamp time.Time `json:"timestamp"`
+	RxRate    int64     `json:"rx_rate"`
+	TxRate    int64     `json:"tx_rate"`
+	RxBytes   int64     `json:"rx_bytes,omitempty"`
+	TxBytes   int64     `json:"tx_bytes,omitempty"`
+}
+
+// DeviceTrafficResponse is returned by GET /api/devices/{mac}/traffic.
+type DeviceTrafficResponse struct {
+	MAC      string                `json:"mac"`
+	IP       string                `json:"ip,omitempty"`
+	Hostname string                `json:"hostname,omitempty"`
+	Source   string                `json:"source,omitempty"`
+	Range    string                `json:"range"`
+	Current  TrafficCurrentSummary `json:"current"`
+	Series   []TrafficSeriesPoint  `json:"series"`
+}
+
+// NetFlowDeviceStats contains aggregated traffic counters from a firewall or router.
+type NetFlowDeviceStats struct {
+	IP      string `json:"ip"`
+	RxBytes int64  `json:"rx_bytes"`
+	TxBytes int64  `json:"tx_bytes"`
 }

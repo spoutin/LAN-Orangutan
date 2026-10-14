@@ -481,3 +481,155 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 
 	return leases, reservations, arpEntries, nil
 }
+
+type opnSenseNetFlowRecord struct {
+	Source      string      `json:"source"`
+	Destination string      `json:"destination"`
+	Octets      interface{} `json:"octets"`
+	Bytes       interface{} `json:"bytes"`
+	Time        interface{} `json:"time"`
+}
+
+type opnSenseStateRecord struct {
+	SrcAddr string      `json:"src_addr"`
+	DstAddr string      `json:"dst_addr"`
+	Bytes   interface{} `json:"bytes"`
+	Packets interface{} `json:"packets"`
+}
+
+type opnSenseStatesResponse struct {
+	Rows []opnSenseStateRecord `json:"rows"`
+}
+
+// FetchOPNsenseNetFlow queries OPNsense for per-device traffic bytes via NetFlow or active firewall states.
+func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
+	if baseURL == "" || cfg.APIKey == "" || cfg.APISecret == "" {
+		return nil, fmt.Errorf("missing opnsense credentials")
+	}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
+	}
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: tr,
+	}
+
+	result := make(map[string]*types.NetFlowDeviceStats)
+
+	// 1. Try NetFlow endpoint first
+	nowSec := time.Now().Unix()
+	bodyJSON, _ := json.Marshal(map[string]interface{}{
+		"start_time": nowSec - 300,
+		"end_time":   nowSec,
+	})
+	reqFlow, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/diagnostics/netflow/getData", bytes.NewReader(bodyJSON))
+	if err == nil {
+		reqFlow.SetBasicAuth(cfg.APIKey, cfg.APISecret)
+		reqFlow.Header.Set("Content-Type", "application/json")
+		respFlow, err := client.Do(reqFlow)
+		if err == nil && respFlow.StatusCode == http.StatusOK {
+			defer respFlow.Body.Close()
+			var records []opnSenseNetFlowRecord
+			if err := json.NewDecoder(respFlow.Body).Decode(&records); err == nil && len(records) > 0 {
+				for _, rec := range records {
+					var octets int64
+					if n, ok := parseNumeric(rec.Octets); ok {
+						octets = n
+					} else if n, ok := parseNumeric(rec.Bytes); ok {
+						octets = n
+					}
+					if octets <= 0 {
+						continue
+					}
+					srcIP := cleanHostIP(rec.Source)
+					dstIP := cleanHostIP(rec.Destination)
+					if srcIP != "" {
+						st, ok := result[srcIP]
+						if !ok {
+							st = &types.NetFlowDeviceStats{IP: srcIP}
+							result[srcIP] = st
+						}
+						st.TxBytes += octets
+					}
+					if dstIP != "" {
+						st, ok := result[dstIP]
+						if !ok {
+							st = &types.NetFlowDeviceStats{IP: dstIP}
+							result[dstIP] = st
+						}
+						st.RxBytes += octets
+					}
+				}
+				if len(result) > 0 {
+					return result, nil
+				}
+			}
+		} else if respFlow != nil {
+			respFlow.Body.Close()
+		}
+	}
+
+	// 2. Fallback to active firewall states query
+	searchBody := []byte(`{"current": 1, "rowCount": -1}`)
+	reqStates, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/diagnostics/firewall/queryStates", bytes.NewReader(searchBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create states request: %w", err)
+	}
+	reqStates.SetBasicAuth(cfg.APIKey, cfg.APISecret)
+	reqStates.Header.Set("Content-Type", "application/json")
+	respStates, err := client.Do(reqStates)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute firewall states request: %w", err)
+	}
+	defer respStates.Body.Close()
+
+	if respStates.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected firewall states response status: %s", respStates.Status)
+	}
+
+	var stateResp opnSenseStatesResponse
+	if err := json.NewDecoder(respStates.Body).Decode(&stateResp); err != nil {
+		return nil, fmt.Errorf("failed to decode firewall states response: %w", err)
+	}
+
+	for _, row := range stateResp.Rows {
+		var bytesVal int64
+		if n, ok := parseNumeric(row.Bytes); ok {
+			bytesVal = n
+		}
+		if bytesVal <= 0 {
+			continue
+		}
+		srcIP := cleanHostIP(row.SrcAddr)
+		dstIP := cleanHostIP(row.DstAddr)
+		if srcIP != "" {
+			st, ok := result[srcIP]
+			if !ok {
+				st = &types.NetFlowDeviceStats{IP: srcIP}
+				result[srcIP] = st
+			}
+			st.TxBytes += bytesVal
+		}
+		if dstIP != "" {
+			st, ok := result[dstIP]
+			if !ok {
+				st = &types.NetFlowDeviceStats{IP: dstIP}
+				result[dstIP] = st
+			}
+			st.RxBytes += bytesVal
+		}
+	}
+
+	return result, nil
+}
+
+func cleanHostIP(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if idx := strings.Index(addr, ":"); idx != -1 {
+		if strings.Count(addr, ":") == 1 {
+			addr = addr[:idx]
+		}
+	}
+	return addr
+}

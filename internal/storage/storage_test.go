@@ -1532,3 +1532,82 @@ func TestRecordScanHistoryWithDetails_Filtered(t *testing.T) {
 		t.Errorf("expected 3 records today (%s), got %d", todayStr, len(todayRecs))
 	}
 }
+
+func TestTrafficStorage_RecordSeriesRollupPrune(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer s.Close()
+	now := time.Now()
+
+	// 1. Create a device
+	dev := types.Device{
+		IP:       "10.0.0.88",
+		MAC:      "00:11:22:33:44:55",
+		Hostname: "test-station",
+	}
+	if err := s.UpdateDevice(&dev); err != nil {
+		t.Fatalf("failed to create device: %v", err)
+	}
+
+	// 2. Record samples
+	samples := []types.TrafficSample{
+		{
+			MAC:       "00:11:22:33:44:55",
+			Timestamp: now.Add(-30 * time.Minute),
+			RxBytes:   1000000,
+			TxBytes:   200000,
+			RxRate:    15000,
+			TxRate:    3000,
+			Source:    "switch",
+		},
+		{
+			MAC:       "00:11:22:33:44:55",
+			Timestamp: now.Add(-5 * time.Minute),
+			RxBytes:   1500000,
+			TxBytes:   250000,
+			RxRate:    25000,
+			TxRate:    5000,
+			Source:    "switch",
+		},
+	}
+	if err := s.RecordTrafficSamples(samples); err != nil {
+		t.Fatalf("RecordTrafficSamples failed: %v", err)
+	}
+
+	// 3. Verify device rates were updated in devices table
+	updatedDev := s.GetDevice("10.0.0.88")
+	if updatedDev == nil {
+		t.Fatal("device not found")
+	}
+	if updatedDev.TrafficSource != "switch" {
+		t.Errorf("expected TrafficSource 'switch', got %s", updatedDev.TrafficSource)
+	}
+	if updatedDev.RxRateBps != 25000 || updatedDev.TxRateBps != 5000 {
+		t.Errorf("expected rates 25000/5000, got %d/%d", updatedDev.RxRateBps, updatedDev.TxRateBps)
+	}
+	if updatedDev.RxBytes != 1500000 || updatedDev.TxBytes != 250000 {
+		t.Errorf("expected bytes 1500000/250000, got %d/%d", updatedDev.RxBytes, updatedDev.TxBytes)
+	}
+
+	// 4. Test GetDeviceTrafficSeries for "1h" and "24h"
+	resp1h, err := s.GetDeviceTrafficSeries("00:11:22:33:44:55", "1h")
+	if err != nil {
+		t.Fatalf("GetDeviceTrafficSeries(1h) failed: %v", err)
+	}
+	if len(resp1h.Series) != 2 {
+		t.Errorf("expected 2 series points in 1h, got %d", len(resp1h.Series))
+	}
+	if resp1h.Current.RxRateBytesSec != 25000 {
+		t.Errorf("expected Current.RxRateBytesSec 25000, got %d", resp1h.Current.RxRateBytesSec)
+	}
+
+	// 5. Test RollupAndPruneTraffic
+	pruned, err := s.RollupAndPruneTraffic(24, 7)
+	if err != nil {
+		t.Fatalf("RollupAndPruneTraffic failed: %v", err)
+	}
+	t.Logf("pruned rows: %d", pruned)
+}

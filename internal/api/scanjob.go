@@ -699,6 +699,9 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 					Port: connection.Port, VLAN: connection.VLAN, LinkState: connection.LinkState,
 					LinkSpeed: connection.LinkSpeed, Duplex: connection.Duplex, PoEWatts: connection.PoEWatts,
 					UpdatedAt: connection.UpdatedAt,
+					InOctets:  connection.InOctets,
+					OutOctets: connection.OutOctets,
+					SingleMAC: connection.SingleMAC,
 				}
 			}
 			if err := h.store.MergeSwitchConnections(storageConnections, switchCfg.ID); err != nil {

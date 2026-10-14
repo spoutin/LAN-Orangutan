@@ -32,7 +32,10 @@ type Handler struct {
 	// fetchSwitchConnections is injectable so scan-pipeline tests do not need
 	// an SNMP device.
 	fetchSwitchConnections func(context.Context, config.SwitchConfig, map[string]int) ([]scanner.SwitchConnection, error)
+	fetchUniFiClients      func(context.Context, config.UniFiConfig) ([]types.Device, error)
+	fetchOPNsenseNetFlow   func(context.Context, config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error)
 	sendSlackNotification  func(string, string) error
+	trafficCollector       *TrafficCollector
 
 	// jobMu guards job, which holds the most recent background scan. Only one
 	// scan runs at a time.
@@ -64,10 +67,13 @@ func NewHandler(store *storage.Storage, cfg *config.Config) *Handler {
 		scanner:                s,
 		scanCtx:                context.Background(),
 		fetchSwitchConnections: scanner.FetchSwitchConnections,
+		fetchUniFiClients:      scanner.FetchUniFiClients,
+		fetchOPNsenseNetFlow:   scanner.FetchOPNsenseNetFlow,
 		sendSlackNotification:  notification.SendSlackNotification,
 		now:                    time.Now,
 		alertCache:             make(map[string]time.Time),
 		failedGateways:         make(map[string]bool),
+		trafficCollector:       NewTrafficCollector(store, cfg),
 	}
 }
 
@@ -125,16 +131,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "devices/clear":
 		h.handleDevicesClear(w, r)
 	case strings.HasPrefix(path, "devices/"):
-		ip := strings.TrimPrefix(path, "devices/")
-		if strings.HasSuffix(ip, "/deep-scan") {
+		sub := strings.TrimPrefix(path, "devices/")
+		if strings.HasSuffix(sub, "/traffic") {
+			target := strings.TrimSuffix(sub, "/traffic")
+			h.handleDeviceTraffic(w, r, target)
+			return
+		}
+		if strings.HasSuffix(sub, "/deep-scan") {
 			r.URL.RawPath = ""
-			r.URL.Path = strings.TrimSuffix(ip, "/deep-scan")
+			r.URL.Path = strings.TrimSuffix(sub, "/deep-scan")
 			h.handleDeviceDeepScan(w, r)
 			return
 		}
 		q := r.URL.Query()
 		if q.Get("ip") == "" {
-			q.Set("ip", ip)
+			q.Set("ip", sub)
 			r.URL.RawQuery = q.Encode()
 		}
 		h.handleDevice(w, r)
@@ -879,6 +890,42 @@ func (h *Handler) handleScansEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.success(w, events)
+}
+
+// handleDeviceTraffic handles GET /api/devices/{mac_or_ip}/traffic
+func (h *Handler) handleDeviceTraffic(w http.ResponseWriter, r *http.Request, identifier string) {
+	if r.Method != http.MethodGet {
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		h.error(w, http.StatusBadRequest, "device identifier required")
+		return
+	}
+
+	mac := identifier
+	// If it contains a dot, resolve device by IP to get its MAC
+	if strings.Contains(identifier, ".") {
+		dev := h.store.GetDevice(identifier)
+		if dev != nil && dev.MAC != "" {
+			mac = dev.MAC
+		}
+	}
+
+	timeRange := r.URL.Query().Get("range")
+	if timeRange != "1h" && timeRange != "24h" && timeRange != "7d" {
+		timeRange = "24h"
+	}
+
+	series, err := h.store.GetDeviceTrafficSeries(mac, timeRange)
+	if err != nil {
+		h.error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.success(w, series)
 }
 
 // handleLogs handles GET /api/logs

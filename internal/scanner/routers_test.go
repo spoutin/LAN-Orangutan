@@ -510,3 +510,98 @@ func TestFetchOpenWrtDHCP_PreservesAuthOnHTTPRedirectToHTTPS(t *testing.T) {
 		t.Fatalf("unexpected leases: %+v", leases)
 	}
 }
+
+func TestFetchOPNsenseNetFlow(t *testing.T) {
+	t.Run("NetFlowEndpointSuccess", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Path == "/api/diagnostics/netflow/getData" {
+				records := []map[string]interface{}{
+					{
+						"source":      "10.0.0.55",
+						"destination": "1.1.1.1",
+						"octets":      1500000,
+					},
+					{
+						"source":      "8.8.8.8",
+						"destination": "10.0.0.55",
+						"octets":      4500000,
+					},
+				}
+				_ = json.NewEncoder(w).Encode(records)
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		defer server.Close()
+
+		cfg := config.OPNsenseConfig{
+			Enable:    true,
+			URL:       server.URL,
+			APIKey:    "test-key",
+			APISecret: "test-secret",
+		}
+
+		stats, err := FetchOPNsenseNetFlow(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("FetchOPNsenseNetFlow failed: %v", err)
+		}
+		dev55, ok := stats["10.0.0.55"]
+		if !ok {
+			t.Fatalf("expected stats for 10.0.0.55, got: %+v", stats)
+		}
+		if dev55.TxBytes != 1500000 || dev55.RxBytes != 4500000 {
+			t.Errorf("expected 1500000 Tx and 4500000 Rx, got %d Tx, %d Rx", dev55.TxBytes, dev55.RxBytes)
+		}
+	})
+
+	t.Run("FallbackToQueryStates", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Path == "/api/diagnostics/netflow/getData" {
+				// NetFlow returns 404 or empty
+				http.NotFound(w, r)
+				return
+			}
+			if r.URL.Path == "/api/diagnostics/firewall/queryStates" {
+				resp := map[string]interface{}{
+					"rows": []map[string]interface{}{
+						{
+							"src_addr": "10.0.0.99:43210",
+							"dst_addr": "142.250.190.46:443",
+							"bytes":    2500000,
+						},
+						{
+							"src_addr": "142.250.190.46:443",
+							"dst_addr": "10.0.0.99:43210",
+							"bytes":    7500000,
+						},
+					},
+				}
+				_ = json.NewEncoder(w).Encode(resp)
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		defer server.Close()
+
+		cfg := config.OPNsenseConfig{
+			Enable:    true,
+			URL:       server.URL,
+			APIKey:    "test-key",
+			APISecret: "test-secret",
+		}
+
+		stats, err := FetchOPNsenseNetFlow(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("FetchOPNsenseNetFlow failed: %v", err)
+		}
+		dev99, ok := stats["10.0.0.99"]
+		if !ok {
+			t.Fatalf("expected stats for 10.0.0.99, got: %+v", stats)
+		}
+		if dev99.TxBytes != 2500000 || dev99.RxBytes != 7500000 {
+			t.Errorf("expected 2500000 Tx and 7500000 Rx, got %d Tx, %d Rx", dev99.TxBytes, dev99.RxBytes)
+		}
+	})
+}

@@ -197,3 +197,57 @@ func TestSwitchClientUsesConfiguredAuthPrivProtocols(t *testing.T) {
 		})
 	}
 }
+
+func TestSwitchExtracts64BitPortOctetsAndSingleMAC(t *testing.T) {
+	connections, err := fetchSwitchConnections(context.Background(), switchConfig(), map[string]int{
+		"6c:4c:bc:29:e8:c1": 0,
+		"6c:4c:bc:29:e8:c2": 0,
+		"6c:4c:bc:29:e8:c3": 0,
+	}, fakeSwitchWalker{tables: map[string][]gosnmp.SnmpPDU{
+		ifNameOID: {
+			pdu(ifNameOID+".10", "gi1/1"),
+			pdu(ifNameOID+".20", "gi1/2"),
+		},
+		dot1dBasePortIfIndex: {
+			pdu(dot1dBasePortIfIndex+".1", 10),
+			pdu(dot1dBasePortIfIndex+".2", 20),
+		},
+		dot1dTpFdbPort: {
+			pdu(dot1dTpFdbPort+".108.76.188.41.232.193", 1), // c1 on port 1 (gi1/1 - single)
+			pdu(dot1dTpFdbPort+".108.76.188.41.232.194", 2), // c2 on port 2 (gi1/2 - shared)
+			pdu(dot1dTpFdbPort+".108.76.188.41.232.195", 2), // c3 on port 2 (gi1/2 - shared)
+		},
+		switchIfHCInOctetsOID: {
+			pdu(switchIfHCInOctetsOID+".10", uint64(5432100000)),
+			pdu(switchIfHCInOctetsOID+".20", uint64(9876500000)),
+		},
+		switchIfHCOutOctetsOID: {
+			pdu(switchIfHCOutOctetsOID+".10", uint64(1234500000)),
+			pdu(switchIfHCOutOctetsOID+".20", uint64(6543200000)),
+		},
+	}})
+	if err != nil {
+		t.Fatalf("fetchSwitchConnections: %v", err)
+	}
+	if len(connections) != 3 {
+		t.Fatalf("expected 3 connections, got %d", len(connections))
+	}
+
+	byMAC := make(map[string]SwitchConnection)
+	for _, c := range connections {
+		byMAC[c.MAC] = c
+	}
+
+	c1 := byMAC["6c:4c:bc:29:e8:c1"]
+	if c1.InOctets != 5432100000 || c1.OutOctets != 1234500000 {
+		t.Errorf("c1 octets mismatch: In=%d, Out=%d", c1.InOctets, c1.OutOctets)
+	}
+	if !c1.SingleMAC {
+		t.Errorf("expected c1 to have SingleMAC=true, got false")
+	}
+
+	c2 := byMAC["6c:4c:bc:29:e8:c2"]
+	if c2.SingleMAC {
+		t.Errorf("expected c2 to have SingleMAC=false (shared port), got true")
+	}
+}

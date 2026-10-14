@@ -580,6 +580,9 @@ func TestIndexPageRendersWithTelemetry(t *testing.T) {
 		`data-router-source="OPNsense"`,
 		`data-router-interface="lan"`,
 		`data-router-notes="Static Mapping"`,
+		"sb-traffic-card",
+		"traffic-modal",
+		"traffic-chart.js",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("expected body to contain %q", expected)

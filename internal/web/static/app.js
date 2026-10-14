@@ -1438,6 +1438,51 @@ function syncDeviceSidebarTelemetry(data) {
         }
     }
 
+    // 3.5 Traffic & Bandwidth Card
+    const trafficCard = document.getElementById('sb-traffic-card');
+    if (trafficCard) {
+        const rxRate = Number(data.rxRateBps) || 0;
+        const txRate = Number(data.txRateBps) || 0;
+        const rxBytes = Number(data.rxBytes) || 0;
+        const txBytes = Number(data.txBytes) || 0;
+        const source = data.trafficSource || (data.ssid ? 'unifi' : (data.switchPort ? 'switch' : ''));
+
+        const hasTraffic = rxRate > 0 || txRate > 0 || rxBytes > 0 || txBytes > 0 || source !== '';
+        if (hasTraffic) {
+            trafficCard.style.display = '';
+            trafficCard.classList.remove('hidden');
+
+            const ratesEl = document.getElementById('sb-traffic-rates');
+            if (ratesEl) {
+                if (rxRate > 0 || txRate > 0) {
+                    const bwFn = typeof formatBandwidth === 'function' ? formatBandwidth : formatBytes;
+                    ratesEl.innerHTML = `<span style="color:#10b981;">↓ ${bwFn(rxRate)}</span> &nbsp; <span style="color:#3b82f6;">↑ ${bwFn(txRate)}</span>`;
+                } else {
+                    ratesEl.textContent = 'Idle (0 B/s)';
+                }
+            }
+
+            const totalEl = document.getElementById('sb-traffic-total');
+            if (totalEl) {
+                const tbFn = typeof formatTrafficBytes === 'function' ? formatTrafficBytes : formatBytes;
+                totalEl.textContent = `Rx: ${tbFn(rxBytes)} / Tx: ${tbFn(txBytes)}`;
+            }
+
+            const badgeEl = document.getElementById('sb-traffic-source-badge');
+            if (badgeEl) {
+                if (source) {
+                    badgeEl.textContent = source;
+                    badgeEl.style.display = '';
+                } else {
+                    badgeEl.style.display = 'none';
+                }
+            }
+        } else {
+            trafficCard.style.display = 'none';
+            trafficCard.classList.add('hidden');
+        }
+    }
+
     // 4. Switch Connection Card
     const switchCard = document.getElementById('sb-switch-card');
     if (switchCard) {
@@ -1830,6 +1875,93 @@ function viewSidebarPresenceHistory() {
     }
 }
 
+function openTrafficModalForCurrentDevice() {
+    const ip = document.getElementById('sb-edit-ip')?.value || document.getElementById('sb-ip')?.textContent;
+    const macEl = document.getElementById('sb-mac');
+    const mac = macEl && macEl.textContent !== '--:--:--:--:--:--' ? macEl.textContent : '';
+    openTrafficModal(mac || ip);
+}
+
+let activeTrafficTarget = '';
+let activeTrafficRange = '24h';
+
+async function openTrafficModal(identifier, defaultRange = '24h') {
+    if (!identifier) return;
+    activeTrafficTarget = identifier;
+    activeTrafficRange = defaultRange;
+
+    const modal = document.getElementById('traffic-modal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+
+    document.querySelectorAll('.traffic-range-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.range === activeTrafficRange);
+    });
+
+    await fetchAndRenderTrafficChart();
+}
+
+function closeTrafficModal() {
+    const modal = document.getElementById('traffic-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function setTrafficModalRange(range) {
+    activeTrafficRange = range;
+    document.querySelectorAll('.traffic-range-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.range === range);
+    });
+    await fetchAndRenderTrafficChart();
+}
+
+async function fetchAndRenderTrafficChart() {
+    const container = document.getElementById('traffic-chart-container');
+    const titleEl = document.getElementById('traffic-modal-title');
+    const sourceEl = document.getElementById('traffic-modal-source');
+    if (!container || !activeTrafficTarget) return;
+
+    container.innerHTML = `<div style="color:var(--text-muted); font-size: 0.9rem;">Loading traffic data...</div>`;
+
+    try {
+        const res = await fetch(`/api/devices/${encodeURIComponent(activeTrafficTarget)}/traffic?range=${encodeURIComponent(activeTrafficRange)}`);
+        const json = await res.json();
+        if (!json.success || !json.data) {
+            container.innerHTML = `<div style="color:var(--text-muted); font-size: 0.9rem;">No traffic data available</div>`;
+            return;
+        }
+
+        const data = json.data;
+        if (titleEl) {
+            const devName = data.hostname || data.ip || data.mac;
+            titleEl.textContent = `Traffic History — ${devName}`;
+        }
+        if (sourceEl) {
+            sourceEl.textContent = data.source || 'telemetry';
+        }
+
+        const stats = typeof calculateTrafficStats === 'function' ? calculateTrafficStats(data.series) : { peakRx: 0, peakTx: 0, avgRx: 0, avgTx: 0 };
+        const bwFn = typeof formatBandwidth === 'function' ? formatBandwidth : formatBytes;
+
+        const peakDownEl = document.getElementById('traffic-peak-down');
+        const peakUpEl = document.getElementById('traffic-peak-up');
+        const avgDownEl = document.getElementById('traffic-avg-down');
+        const avgUpEl = document.getElementById('traffic-avg-up');
+
+        if (peakDownEl) peakDownEl.textContent = bwFn(stats.peakRx);
+        if (peakUpEl) peakUpEl.textContent = bwFn(stats.peakTx);
+        if (avgDownEl) avgDownEl.textContent = bwFn(stats.avgRx);
+        if (avgUpEl) avgUpEl.textContent = bwFn(stats.avgTx);
+
+        if (typeof renderTrafficChartSVG === 'function') {
+            container.innerHTML = renderTrafficChartSVG(data.series);
+        } else {
+            container.innerHTML = `<div style="color:var(--text-muted); font-size: 0.9rem;">Chart renderer unavailable</div>`;
+        }
+    } catch (err) {
+        container.innerHTML = `<div style="color:var(--danger, #ef4444); font-size: 0.9rem;">Failed to load traffic data: ${err.message}</div>`;
+    }
+}
+
 async function saveSidebarDevice() {
     const ip = document.getElementById('sb-edit-ip')?.value;
     if (!ip) return;
@@ -2036,6 +2168,10 @@ window.openDeviceSidebar = openDeviceSidebar;
 window.closeDeviceSidebar = closeDeviceSidebar;
 window.saveSidebarDevice = saveSidebarDevice;
 window.viewSidebarPresenceHistory = viewSidebarPresenceHistory;
+window.openTrafficModal = openTrafficModal;
+window.closeTrafficModal = closeTrafficModal;
+window.setTrafficModalRange = setTrafficModalRange;
+window.openTrafficModalForCurrentDevice = openTrafficModalForCurrentDevice;
 
 // Copy to clipboard.
 //

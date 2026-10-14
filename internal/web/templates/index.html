@@ -375,78 +375,87 @@ orangutan export out.csv</code></pre>
                                      data-switch-link-state="{{.SwitchLinkState}}"
                                      data-switch-link-speed="{{.SwitchLinkSpeed}}"
                                      data-switch-duplex="{{.SwitchDuplex}}"
-                                      data-switch-poe-watts="{{if .SwitchPoEWatts}}{{.SwitchPoEWatts}}{{end}}"
-                                      data-switch-updated-at="{{if not .SwitchUpdatedAt.IsZero}}{{.SwitchUpdatedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}"
-                                      data-ansible-managed="{{if .AnsibleManaged}}true{{else}}false{{end}}">
-                                     <td class="col-status" data-label="Status">
-                                         <span class="status-indicator {{.StatusClass}}" data-tip="{{.StatusTip}}"></span>
+                                       data-switch-poe-watts="{{if .SwitchPoEWatts}}{{.SwitchPoEWatts}}{{end}}"
+                                       data-switch-updated-at="{{if not .SwitchUpdatedAt.IsZero}}{{.SwitchUpdatedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}"
+                                       data-ansible-managed="{{if .AnsibleManaged}}true{{else}}false{{end}}"
+                                       data-traffic-source="{{.TrafficSource}}"
+                                       data-rx-rate-bps="{{.RxRateBps}}"
+                                       data-tx-rate-bps="{{.TxRateBps}}">
+                                      <td class="col-status" data-label="Status">
+                                          <span class="status-indicator {{.StatusClass}}" data-tip="{{.StatusTip}}"></span>
+                                      </td>
+                                      <td class="col-ip ip-cell" data-label="IP Address" data-copy="{{.IP}}">
+                                          {{.IP}}{{if .AddressHistory}}<span class="moved-indicator" data-tip="Changed address{{range .AddressHistory}}, was {{.IP}}{{end}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></span>{{end}}
+                                      </td>
+                                      <td class="col-hostname hostname-cell" data-label="Hostname" data-copy="{{if .CustomHostname}}{{.CustomHostname}}{{else}}{{.Hostname}}{{end}}">
+                                          {{if .CustomHostname}}
+                                              <span class="custom-hostname-wrapper" data-tip="Hostname overridden (originally: {{if .Hostname}}{{.Hostname}}{{else}}none{{end}})">
+                                                  {{.CustomHostname}}
+                                                  <span class="override-indicator"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+                                              </span>
+                                          {{else if .Hostname}}
+                                              {{.Hostname}}
+                                           {{else}}
+                                               <span style="color:var(--text-muted)">-</span>
+                                           {{end}}
+                                         {{if .LinkedChildren}}
+                                             <div class="linked-children-badge" data-tip="Linked aliases: {{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 3px; display: flex; align-items: center; gap: 4px;">
+                                                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--success);"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                                                 <span>{{len .LinkedChildren}} linked alias{{if ne (len .LinkedChildren) 1}}es{{end}}</span>
+                                             </div>
+                                         {{end}}
                                      </td>
-                                     <td class="col-ip ip-cell" data-label="IP Address" data-copy="{{.IP}}">
-                                         {{.IP}}{{if .AddressHistory}}<span class="moved-indicator" data-tip="Changed address{{range .AddressHistory}}, was {{.IP}}{{end}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></span>{{end}}
-                                     </td>
-                                     <td class="col-hostname hostname-cell" data-label="Hostname" data-copy="{{if .CustomHostname}}{{.CustomHostname}}{{else}}{{.Hostname}}{{end}}">
-                                         {{if .CustomHostname}}
-                                             <span class="custom-hostname-wrapper" data-tip="Hostname overridden (originally: {{if .Hostname}}{{.Hostname}}{{else}}none{{end}})">
-                                                 {{.CustomHostname}}
-                                                 <span class="override-indicator"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
-                                             </span>
-                                         {{else if .Hostname}}
-                                             {{.Hostname}}
-                                          {{else}}
-                                              <span style="color:var(--text-muted)">-</span>
-                                          {{end}}
-                                        {{if .LinkedChildren}}
-                                            <div class="linked-children-badge" data-tip="Linked aliases: {{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 3px; display: flex; align-items: center; gap: 4px;">
-                                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--success);"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                                                <span>{{len .LinkedChildren}} linked alias{{if ne (len .LinkedChildren) 1}}es{{end}}</span>
-                                            </div>
-                                        {{end}}
-                                    </td>
-                                    <td class="col-network network-cell" data-label="Network">
-                                        <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
-                                            <!-- Parent Network Badge -->
-                                            {{if .NetworkName}}
-                                                <span class="network-badge {{if eq .StatusClass "status-offline"}}translucent-network-badge{{end}}"
-                                                      {{if eq .StatusClass "status-offline"}}style="opacity: 0.5; border: 1px dashed var(--border); background: transparent;"{{end}}
-                                                      data-tip="{{if eq .StatusClass "status-offline"}}Parent Offline on {{.NetworkName}} (not detected){{else}}Parent Active on {{.NetworkName}}{{end}}">
-                                                    {{.NetworkName}}
-                                                </span>
-                                            {{end}}
-                                            
-                                            <!-- Children Network Badges -->
-                                             {{range .LinkedChildrenDetails}}
-                                                {{if .NetworkName}}
-                                                    <span class="network-badge child-network-badge"
-                                                          style="{{if not .IsOnline}}opacity: 0.5; border: 1px dashed var(--border); background: transparent;{{end}}"
-                                                          data-tip="{{if .IsOnline}}Alias '{{.Hostname}}' Active on {{.NetworkName}}{{else}}Alias '{{.Hostname}}' Offline on {{.NetworkName}} (not detected){{end}}">
-                                                        {{.NetworkName}}
-                                                    </span>
-                                                {{end}}
+                                     <td class="col-network network-cell" data-label="Network">
+                                         <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
+                                             <!-- Parent Network Badge -->
+                                             {{if .NetworkName}}
+                                                 <span class="network-badge {{if eq .StatusClass "status-offline"}}translucent-network-badge{{end}}"
+                                                       {{if eq .StatusClass "status-offline"}}style="opacity: 0.5; border: 1px dashed var(--border); background: transparent;"{{end}}
+                                                       data-tip="{{if eq .StatusClass "status-offline"}}Parent Offline on {{.NetworkName}} (not detected){{else}}Parent Active on {{.NetworkName}}{{end}}">
+                                                     {{.NetworkName}}
+                                                 </span>
                                              {{end}}
+                                             
+                                             <!-- Children Network Badges -->
+                                              {{range .LinkedChildrenDetails}}
+                                                 {{if .NetworkName}}
+                                                     <span class="network-badge child-network-badge"
+                                                           style="{{if not .IsOnline}}opacity: 0.5; border: 1px dashed var(--border); background: transparent;{{end}}"
+                                                           data-tip="{{if .IsOnline}}Alias '{{.Hostname}}' Active on {{.NetworkName}}{{else}}Alias '{{.Hostname}}' Offline on {{.NetworkName}} (not detected){{end}}">
+                                                         {{.NetworkName}}
+                                                     </span>
+                                                 {{end}}
+                                              {{end}}
 										<div class="device-indicators" aria-label="Device capabilities and notes">
 											{{if hasSSH .Device}}<span class="ssh-indicator" data-tip="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}" aria-label="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4"/><path d="M12 16h7"/></svg>{{if ne (sshPort .Device) 22}}<span class="ssh-port">:{{sshPort .Device}}</span>{{end}}</span>{{end}}
 											{{if .Notes}}<span class="notes-indicator" data-tip="{{.Notes}}"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0-2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>{{end}}
 											{{if .AnsibleManaged}}<span class="ansible-indicator" data-tip="Ansible Managed" title="Ansible Managed"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8 16 4-8 4 8"/><path d="M9.5 13h5"/></svg></span>{{end}}
 										</div>
                                          </div>
-                                    </td>
-                                    <td class="col-ssid ssid-cell" data-label="SSID">
-                                        {{if or .SSID .SwitchPort}}
-                                            <div class="connection-stack">
-                                                {{if .SSID}}
-                                                    <span class="ssid-badge" data-tip="SSID: {{.SSID}}{{if .APName}} &middot; AP: {{.APName}}{{end}}{{if .RadioBand}} ({{.RadioBand}}){{end}}">📶 {{.SSID}}</span>
-                                                {{end}}
-                                                {{if .SwitchPort}}
-                                                    <span class="switch-badge" data-tip="Switch: {{.SwitchName}} &middot; Port: {{.SwitchPort}}{{if .SwitchVLAN}} &middot; VLAN: {{.SwitchVLAN}}{{end}}{{if .SwitchLinkState}} &middot; Link: {{.SwitchLinkState}}{{end}}">
-                                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h.01M11 8h.01M15 8h.01M7 16h10"/></svg>
-                                                        <span>{{.SwitchName}} &middot; {{.SwitchPort}}</span>
-                                                    </span>
-                                                {{end}}
-                                            </div>
-                                        {{else}}
-                                            <span style="color:var(--text-muted)">—</span>
-                                        {{end}}
-                                    </td>
+                                     </td>
+                                     <td class="col-ssid ssid-cell" data-label="SSID">
+                                         {{if or .SSID .SwitchPort (gt .RxRateBps 0) (gt .TxRateBps 0) (gt .RxBytes 0)}}
+                                             <div class="connection-stack">
+                                                 {{if .SSID}}
+                                                     <span class="ssid-badge" data-tip="SSID: {{.SSID}}{{if .APName}} &middot; AP: {{.APName}}{{end}}{{if .RadioBand}} ({{.RadioBand}}){{end}}">📶 {{.SSID}}</span>
+                                                 {{end}}
+                                                 {{if .SwitchPort}}
+                                                     <span class="switch-badge" data-tip="Switch: {{.SwitchName}} &middot; Port: {{.SwitchPort}}{{if .SwitchVLAN}} &middot; VLAN: {{.SwitchVLAN}}{{end}}{{if .SwitchLinkState}} &middot; Link: {{.SwitchLinkState}}{{end}}">
+                                                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h.01M11 8h.01M15 8h.01M7 16h10"/></svg>
+                                                         <span>{{.SwitchName}} &middot; {{.SwitchPort}}</span>
+                                                     </span>
+                                                 {{end}}
+                                                 {{if or (gt .RxRateBps 0) (gt .TxRateBps 0) (gt .RxBytes 0)}}
+                                                     <span class="traffic-badge" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Click to view traffic history">
+                                                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                                                         <span>{{if or (gt .RxRateBps 0) (gt .TxRateBps 0)}}↓ {{formatBandwidth .RxRateBps}} ↑ {{formatBandwidth .TxRateBps}}{{else}}Vol: {{formatBytes .RxBytes}}{{end}}</span>
+                                                     </span>
+                                                 {{end}}
+                                             </div>
+                                         {{else}}
+                                             <span style="color:var(--text-muted)">—</span>
+                                         {{end}}
+                                     </td>
                                     <td class="col-vendor vendor-cell" data-label="Vendor" data-copy="{{.Vendor}}">{{if .Vendor}}{{.Vendor}}{{else}}<span style="color:var(--text-muted)">Unknown</span>{{end}}</td>
                                     <td class="col-lastseen time-cell" data-label="Last Seen" data-relative-time="{{.LastSeenUnix}}">{{.TimeAgo}}</td>
                                     <td class="col-actions actions-cell" data-label="Actions">
@@ -503,6 +512,30 @@ orangutan export out.csv</code></pre>
 
                          <!-- Sidebar Scrollable Body -->
                          <div class="sidebar-scrollable-body">
+                            <!-- Card: Traffic & Bandwidth -->
+                            <div id="sb-traffic-card" class="sidebar-card">
+                                <div class="sidebar-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                                    <h4 class="sidebar-card-title">Traffic &amp; Bandwidth</h4>
+                                    <span id="sb-traffic-source-badge" class="badge" style="font-size: 0.7rem; text-transform: uppercase;"></span>
+                                </div>
+                                <div class="sidebar-card-body">
+                                    <ul class="sidebar-spec-list">
+                                        <li>
+                                            <span class="spec-label">Current Rate:</span>
+                                            <span class="spec-val" id="sb-traffic-rates">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Total Volume:</span>
+                                            <span class="spec-val" id="sb-traffic-total">—</span>
+                                        </li>
+                                    </ul>
+                                    <button type="button" id="sb-traffic-btn" class="btn" style="width: 100%; margin-top: 0.5rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: var(--bg-card-hover); border: 1px solid var(--border);" onclick="openTrafficModalForCurrentDevice()">
+                                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                                        <span>View Traffic History</span>
+                                    </button>
+                                </div>
+                            </div>
+
                             <!-- Card: Switch Connection -->
                             <div id="sb-switch-card" class="sidebar-card hidden">
                                 <div class="sidebar-card-header">
@@ -989,6 +1022,43 @@ orangutan export out.csv</code></pre>
         </div>
     </div>
 
+    <!-- Traffic History Modal -->
+    <div id="traffic-modal" class="modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="traffic-modal-title">
+        <div class="modal-content modal-large" style="max-width: 800px; width: 95%;">
+            <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <h3 id="traffic-modal-title" style="margin: 0;">Traffic History</h3>
+                    <span id="traffic-modal-source" class="badge" style="font-size: 0.75rem; text-transform: uppercase;"></span>
+                </div>
+                <button class="modal-close" onclick="closeTrafficModal()" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem; display: flex; flex-direction: column; gap: 1.25rem;">
+                <!-- Toolbar: Range toggles + Summary Stats -->
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                    <div class="traffic-range-group" style="display: flex; gap: 6px;">
+                        <button type="button" class="btn btn-sm traffic-range-btn" data-range="1h" onclick="setTrafficModalRange('1h')">1 Hour</button>
+                        <button type="button" class="btn btn-sm traffic-range-btn active" data-range="24h" onclick="setTrafficModalRange('24h')">24 Hours</button>
+                        <button type="button" class="btn btn-sm traffic-range-btn" data-range="7d" onclick="setTrafficModalRange('7d')">7 Days</button>
+                    </div>
+                    <div id="traffic-summary-bar" style="display: flex; gap: 1.25rem; font-size: 0.85rem; color: var(--text-muted);">
+                        <div><span style="color: #10b981;">●</span> Peak Down: <strong id="traffic-peak-down" style="color: var(--text-primary);">—</strong></div>
+                        <div><span style="color: #3b82f6;">●</span> Peak Up: <strong id="traffic-peak-up" style="color: var(--text-primary);">—</strong></div>
+                        <div>Avg Down: <strong id="traffic-avg-down" style="color: var(--text-primary);">—</strong></div>
+                        <div>Avg Up: <strong id="traffic-avg-up" style="color: var(--text-primary);">—</strong></div>
+                    </div>
+                </div>
+
+                <!-- Chart Canvas Container -->
+                <div id="traffic-chart-container" style="min-height: 250px; background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border); padding: 1rem; display: flex; align-items: center; justify-content: center;">
+                    <!-- SVG Chart is dynamically rendered here -->
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end;">
+                <button class="btn btn-primary" onclick="closeTrafficModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <footer class="footer">
         <p>LAN Orangutan &bull; <a href="https://github.com/spoutin/LAN-Orangutan" target="_blank">GitHub</a></p>
         <p style="margin-top:0.5rem;font-size:0.8rem;">Press <kbd class="kbd">/</kbd> to search &bull; <kbd class="kbd">R</kbd> to refresh &bull; <kbd class="kbd">T</kbd> to toggle theme</p>
@@ -1006,6 +1076,7 @@ orangutan export out.csv</code></pre>
     <script src="/static/switch-presentation.js?v={{.Version}}"></script>
     <script src="/static/scan-refresh.js?v={{.Version}}"></script>
     <script src="/static/device-operation-state.js?v={{.Version}}"></script>
+    <script src="/static/traffic-chart.js?v={{.Version}}"></script>
     <script src="/static/app.js?v={{.Version}}"></script>
 </body>
 </html>

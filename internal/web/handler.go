@@ -132,6 +132,34 @@ func NewHandler(store *storage.Storage, cfg *config.Config, authn *auth.Authenti
 			port, _ := device.EffectiveSSH()
 			return port
 		},
+		"formatBandwidth": func(bps int64) string {
+			if bps <= 0 {
+				return "0 B/s"
+			}
+			val := float64(bps)
+			if val < 1024 {
+				return fmt.Sprintf("%d B/s", int(val))
+			} else if val < 1024*1024 {
+				return fmt.Sprintf("%.1f KB/s", val/1024)
+			} else if val < 1024*1024*1024 {
+				return fmt.Sprintf("%.1f MB/s", val/(1024*1024))
+			}
+			return fmt.Sprintf("%.2f GB/s", val/(1024*1024*1024))
+		},
+		"formatBytes": func(b int64) string {
+			if b <= 0 {
+				return "0 B"
+			}
+			val := float64(b)
+			if val < 1024 {
+				return fmt.Sprintf("%d B", int(val))
+			} else if val < 1024*1024 {
+				return fmt.Sprintf("%.1f KB", val/1024)
+			} else if val < 1024*1024*1024 {
+				return fmt.Sprintf("%.1f MB", val/(1024*1024))
+			}
+			return fmt.Sprintf("%.2f GB", val/(1024*1024*1024))
+		},
 	}
 
 	tmpl := template.Must(template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html"))
