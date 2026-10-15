@@ -123,7 +123,7 @@ func TestTrafficCollector_CollectCycle(t *testing.T) {
 	}
 
 	// Cycle 1: Baseline
-	samples1, err := tc.CollectCycle(context.Background(), t0, fetchSwitch, fetchUniFi, fetchNetFlow)
+	samples1, err := tc.CollectCycle(context.Background(), t0, fetchSwitch, fetchUniFi, fetchNetFlow, nil)
 	if err != nil {
 		t.Fatalf("CollectCycle 1 failed: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestTrafficCollector_CollectCycle(t *testing.T) {
 		}, nil
 	}
 
-	samples2, err := tc.CollectCycle(context.Background(), t1, fetchSwitch2, fetchUniFi, fetchNetFlow)
+	samples2, err := tc.CollectCycle(context.Background(), t1, fetchSwitch2, fetchUniFi, fetchNetFlow, nil)
 	if err != nil {
 		t.Fatalf("CollectCycle 2 failed: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestTrafficCollector_DualLinkAndWANTraffic(t *testing.T) {
 	}
 
 	// Baseline
-	_, err = tc.CollectCycle(context.Background(), t0, fetchSwitch, nil, fetchNetFlow)
+	_, err = tc.CollectCycle(context.Background(), t0, fetchSwitch, nil, fetchNetFlow, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestTrafficCollector_DualLinkAndWANTraffic(t *testing.T) {
 		}, nil
 	}
 
-	_, err = tc.CollectCycle(context.Background(), t1, fetchSwitch2, nil, fetchNetFlow2)
+	_, err = tc.CollectCycle(context.Background(), t1, fetchSwitch2, nil, fetchNetFlow2, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +410,7 @@ func TestTrafficCollector_OPNsenseNetworkFiltering(t *testing.T) {
 		}, nil
 	}
 
-	samples, err := tc.CollectCycle(context.Background(), now, nil, nil, fetchNetFlow)
+	samples, err := tc.CollectCycle(context.Background(), now, nil, nil, fetchNetFlow, nil)
 	if err != nil {
 		t.Fatalf("CollectCycle failed: %v", err)
 	}
@@ -439,11 +439,133 @@ func TestTrafficCollector_OPNsenseNetworkFiltering(t *testing.T) {
 	// Test with no OPNsense networks configured: zero devices should be tracked
 	cfg.OPNsense.Networks = nil
 	tc2 := NewTrafficCollector(store, cfg)
-	samples2, err := tc2.CollectCycle(context.Background(), now.Add(time.Minute), nil, nil, fetchNetFlow)
+	samples2, err := tc2.CollectCycle(context.Background(), now.Add(time.Minute), nil, nil, fetchNetFlow, nil)
 	if err != nil {
 		t.Fatalf("CollectCycle with empty networks failed: %v", err)
 	}
 	if len(samples2) != 0 {
 		t.Errorf("expected 0 samples when OPNsense.Networks is empty, got %d", len(samples2))
+	}
+}
+
+func TestTrafficCollector_OpenWrtNlbwmon(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	devInside := types.Device{IP: "10.5.5.10", MAC: "aa:bb:cc:55:00:01", Hostname: "inside-wrt"}
+	devOutside := types.Device{IP: "192.168.1.50", MAC: "aa:bb:cc:55:00:02", Hostname: "outside-wrt"}
+	if err := store.UpdateDevice(&devInside); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDevice(&devOutside); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.OpenWrt = config.OpenWrtConfig{
+		ID:       "wrt-main",
+		Enable:   true,
+		Nlbwmon:  true,
+		Networks: []string{"10.5.5.0/24"},
+	}
+	tc := NewTrafficCollector(store, cfg)
+	t0 := time.Now()
+
+	fetchNlbwmon := func(_ context.Context, _ config.OpenWrtConfig) (map[string]*types.NetFlowDeviceStats, error) {
+		return map[string]*types.NetFlowDeviceStats{
+			"10.5.5.10": {
+				IP:      "10.5.5.10",
+				RxBytes: 1000000,
+				TxBytes: 200000,
+			},
+			"192.168.1.50": {
+				IP:      "192.168.1.50",
+				RxBytes: 5000000,
+				TxBytes: 800000,
+			},
+		}, nil
+	}
+
+	// 1. Initial cycle: Baseline
+	samples1, err := tc.CollectCycle(context.Background(), t0, nil, nil, nil, fetchNlbwmon)
+	if err != nil {
+		t.Fatalf("CollectCycle baseline failed: %v", err)
+	}
+
+	// Only devInside should be collected (devOutside is outside 10.5.5.0/24)
+	if len(samples1) != 1 {
+		t.Fatalf("expected 1 sample, got %d: %+v", len(samples1), samples1)
+	}
+	if samples1[0].MAC != "aa:bb:cc:55:00:01" {
+		t.Errorf("sample MAC = %q, want aa:bb:cc:55:00:01", samples1[0].MAC)
+	}
+	if samples1[0].Source != "openwrt" {
+		t.Errorf("sample Source = %q, want openwrt", samples1[0].Source)
+	}
+
+	// 2. Second cycle 60s later: Rate calculation verification
+	t1 := t0.Add(60 * time.Second)
+	fetchNlbwmon2 := func(_ context.Context, _ config.OpenWrtConfig) (map[string]*types.NetFlowDeviceStats, error) {
+		return map[string]*types.NetFlowDeviceStats{
+			"10.5.5.10": {
+				IP:      "10.5.5.10",
+				RxBytes: 1000000 + 120000, // +2000 B/s Rx
+				TxBytes: 200000 + 30000,   // +500 B/s Tx
+			},
+			"192.168.1.50": {
+				IP:      "192.168.1.50",
+				RxBytes: 6000000,
+				TxBytes: 900000,
+			},
+		}, nil
+	}
+
+	samples2, err := tc.CollectCycle(context.Background(), t1, nil, nil, nil, fetchNlbwmon2)
+	if err != nil {
+		t.Fatalf("CollectCycle cycle 2 failed: %v", err)
+	}
+	if len(samples2) != 1 {
+		t.Fatalf("expected 1 sample in cycle 2, got %d", len(samples2))
+	}
+	s := samples2[0]
+	if s.Source != "openwrt" {
+		t.Errorf("expected source 'openwrt', got %s", s.Source)
+	}
+	if s.RxRate != 2000 || s.TxRate != 500 {
+		t.Errorf("expected WAN rates 2000/500, got %d/%d", s.RxRate, s.TxRate)
+	}
+
+	// Verify store state
+	storedInside := store.GetDevice("10.5.5.10")
+	if storedInside == nil {
+		t.Fatal("inside device not found in store")
+	}
+	if storedInside.WanRxBytes != 1120000 || storedInside.WanTxBytes != 230000 {
+		t.Errorf("expected WAN bytes 1120000/230000, got %d/%d", storedInside.WanRxBytes, storedInside.WanTxBytes)
+	}
+	if storedInside.WanRxRateBps != 2000 || storedInside.WanTxRateBps != 500 {
+		t.Errorf("expected WAN rate 2000/500, got %d/%d", storedInside.WanRxRateBps, storedInside.WanTxRateBps)
+	}
+
+	storedOutside := store.GetDevice("192.168.1.50")
+	if storedOutside == nil {
+		t.Fatal("outside device not found in store")
+	}
+	if storedOutside.WanRxBytes != 0 || storedOutside.WanTxBytes != 0 || storedOutside.WanRxRateBps != 0 || storedOutside.WanTxRateBps != 0 {
+		t.Errorf("outside device should have 0 WAN stats, got RxBytes=%d TxBytes=%d", storedOutside.WanRxBytes, storedOutside.WanTxBytes)
+	}
+
+	// 3. When Nlbwmon: false, no collection occurs
+	cfg.OpenWrt.Nlbwmon = false
+	samples3, err := tc.CollectCycle(context.Background(), t1.Add(60*time.Second), nil, nil, nil, fetchNlbwmon2)
+	if err != nil {
+		t.Fatalf("CollectCycle with Nlbwmon: false failed: %v", err)
+	}
+	if len(samples3) != 0 {
+		t.Errorf("expected 0 samples when Nlbwmon is false, got %d", len(samples3))
 	}
 }

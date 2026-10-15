@@ -75,13 +75,14 @@ func (tc *TrafficCollector) ComputeRate(mac string, rxBytes, txBytes int64, now 
 	return rxRate, txRate
 }
 
-// CollectCycle executes one data collection cycle across Switch, UniFi, and OPNsense.
+// CollectCycle executes one data collection cycle across Switch, UniFi, OPNsense, and OpenWrt.
 func (tc *TrafficCollector) CollectCycle(
 	ctx context.Context,
 	now time.Time,
 	fetchSwitch func(context.Context, config.SwitchConfig, map[string]int) ([]scanner.SwitchConnection, error),
 	fetchUniFi func(context.Context, config.UniFiConfig) ([]types.Device, error),
 	fetchNetFlow func(context.Context, config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error),
+	fetchNlbwmon func(context.Context, config.OpenWrtConfig) (map[string]*types.NetFlowDeviceStats, error),
 ) ([]types.TrafficSample, error) {
 	var samples []types.TrafficSample
 	seenMACs := make(map[string]bool)
@@ -200,6 +201,47 @@ func (tc *TrafficCollector) CollectCycle(
 		}
 	}
 
+	// 4. OpenWrt Firewall (nlbwmon Bandwidth Monitor)
+	if fetchNlbwmon != nil && ctx.Err() == nil {
+		for _, wrt := range tc.cfg.AllOpenWrts() {
+			if !wrt.Enable || !wrt.Nlbwmon || len(wrt.Networks) == 0 {
+				continue
+			}
+			flowStats, err := fetchNlbwmon(ctx, wrt)
+			if err != nil {
+				logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OpenWrt (%s) nlbwmon query failed: %v", wrt.ID, err))
+				continue
+			}
+			matchedHosts := 0
+			for ip, st := range flowStats {
+				dev := tc.store.GetDevice(ip)
+				if dev == nil || dev.MAC == "" {
+					continue
+				}
+				if !network.ContainsIP(wrt.Networks, dev.IP) {
+					continue
+				}
+				normMAC := strings.ToLower(strings.TrimSpace(dev.MAC))
+				if st.RxBytes == 0 && st.TxBytes == 0 {
+					continue
+				}
+				wanRateKey := normMAC + ":wan"
+				rxRate, txRate := tc.ComputeRate(wanRateKey, st.RxBytes, st.TxBytes, now)
+				samples = append(samples, types.TrafficSample{
+					MAC:       normMAC,
+					Timestamp: now,
+					RxBytes:   st.RxBytes,
+					TxBytes:   st.TxBytes,
+					RxRate:    rxRate,
+					TxRate:    txRate,
+					Source:    "openwrt",
+				})
+				matchedHosts++
+			}
+			logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OpenWrt (%s) nlbwmon: collected flows for %d hosts (%d active on firewall networks)", wrt.ID, len(flowStats), matchedHosts))
+		}
+	}
+
 	if len(samples) > 0 {
 		if err := tc.store.RecordTrafficSamples(samples); err != nil {
 			return samples, fmt.Errorf("failed to persist traffic samples: %w", err)
@@ -255,5 +297,6 @@ func (h *Handler) runTrafficCycle(ctx context.Context) {
 		h.fetchSwitchConnections,
 		h.fetchUniFiClients,
 		h.fetchOPNsenseNetFlow,
+		scanner.FetchOpenWrtNlbwmon,
 	)
 }
