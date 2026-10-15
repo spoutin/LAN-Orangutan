@@ -1,6 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { completedNetworkKeys, automaticScanFailureMessage, scannedSubnetCount, formatScanCompletionSummary } = require('./scan-refresh.js');
+const {
+    completedNetworkKeys,
+    automaticScanFailureMessage,
+    scannedSubnetCount,
+    formatScanCompletionSummary,
+    formatRefreshCountdown,
+    formatRefreshTooltip
+} = require('./scan-refresh.js');
 
 test('completed network keys include completed quick scan results', () => {
     assert.deepEqual(completedNetworkKeys({
@@ -100,6 +107,72 @@ test('formatScanCompletionSummary reports single network scan failure', () => {
         ]
     }), 'Scan failed for 10.5.5.0/24: SSH connection refused');
 });
+
+test('formatRefreshCountdown shows countdown seconds when active', () => {
+    assert.equal(formatRefreshCountdown({ continuousScan: true, isRefreshing: false, secondsRemaining: 24 }), 'refresh in 24s');
+    assert.equal(formatRefreshCountdown({ continuousScan: true, isRefreshing: false, secondsRemaining: 1 }), 'refresh in 1s');
+});
+
+test('formatRefreshCountdown shows refreshing when in-flight or 0s remaining', () => {
+    assert.equal(formatRefreshCountdown({ continuousScan: true, isRefreshing: true, secondsRemaining: 10 }), 'refreshing...');
+    assert.equal(formatRefreshCountdown({ continuousScan: true, isRefreshing: false, secondsRemaining: 0 }), 'refreshing...');
+});
+
+test('formatRefreshCountdown shows paused when continuousScan is false', () => {
+    assert.equal(formatRefreshCountdown({ continuousScan: false, isRefreshing: false, secondsRemaining: 20 }), 'refresh paused');
+});
+
+test('formatRefreshTooltip formats comprehensive breakdown when live', () => {
+    const fixedNow = 1700000030000; // ms
+    const tooltip = formatRefreshTooltip({
+        continuousScan: true,
+        isScanRunning: false,
+        lastScanUnix: 1700000000, // 30s ago
+        nextScanUnix: 1700000270, // in 240s (4m)
+        lastRefreshTimeMs: 1700000020000, // 10s ago
+        nextRefreshTimeMs: 1700000050000, // in 20s
+        nowMs: fixedNow
+    });
+
+    assert.match(tooltip, /Network Scan:/);
+    assert.match(tooltip, /Last scan: 30s ago/);
+    assert.match(tooltip, /Next scan: in ~4m/);
+    assert.match(tooltip, /Dashboard Refresh:/);
+    assert.match(tooltip, /Last updated: 10s ago/);
+    assert.match(tooltip, /Next refresh: in 20s/);
+});
+
+test('formatRefreshTooltip reports in progress when scan is currently running', () => {
+    const fixedNow = 1700000030000;
+    const tooltip = formatRefreshTooltip({
+        continuousScan: true,
+        isScanRunning: true,
+        lastScanUnix: 1700000000,
+        nextScanUnix: 0,
+        lastRefreshTimeMs: 1700000025000,
+        nextRefreshTimeMs: 1700000055000,
+        nowMs: fixedNow
+    });
+
+    assert.match(tooltip, /Next scan: In progress\.\.\./);
+});
+
+test('formatRefreshTooltip reports paused when continuousScan is false', () => {
+    const fixedNow = 1700000030000;
+    const tooltip = formatRefreshTooltip({
+        continuousScan: false,
+        isScanRunning: false,
+        lastScanUnix: 1700000000,
+        nextScanUnix: 0,
+        lastRefreshTimeMs: 1700000010000,
+        nextRefreshTimeMs: 0,
+        nowMs: fixedNow
+    });
+
+    assert.match(tooltip, /Next scan: Paused \(manual only\)/);
+    assert.match(tooltip, /Next refresh: Paused/);
+});
+
 
 
 

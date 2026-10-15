@@ -84,6 +84,13 @@ type PageData struct {
 	// prevent.
 	LastScanUnix int64
 
+	// NextScanUnix gives the epoch seconds when the background scanner is next
+	// expected to run. 0 if not scheduled or continuous scan is off.
+	NextScanUnix int64
+
+	// ScanIntervalSeconds is the configured background scan interval in seconds.
+	ScanIntervalSeconds int
+
 	// Flagged is how many devices expose a risky service, and Moved how many
 	// have changed IP. They fill the dashboard summary strip with information
 	// worth glancing at rather than empty space.
@@ -518,6 +525,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data.NetworkWarning = network.IsolationWarning(networks)
+	data.ScanIntervalSeconds = h.cfg.Scanning.ScanInterval
 
 	// The table is only as current as the last scan. Say so, so that a "last
 	// seen" time is read against when the data was actually gathered.
@@ -525,6 +533,9 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		data.LastScanAgo = timeAgo(lastScan)
 		data.LastScanAt = lastScan.Format("Jan 2, 2006 at 3:04 PM")
 		data.LastScanUnix = lastScan.Unix()
+		if data.ContinuousScan && h.cfg.Scanning.ScanInterval > 0 {
+			data.NextScanUnix = lastScan.Add(time.Duration(h.cfg.Scanning.ScanInterval) * time.Second).Unix()
+		}
 	}
 
 	// Buffer the template output to avoid superfluous WriteHeader on error

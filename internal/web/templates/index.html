@@ -238,8 +238,8 @@ orangutan export out.csv</code></pre>
                             </span>
                             {{end}}
                             {{if or .ContinuousScan .LastScanAt}}
-                            <span class="stat-scan">
-                                <span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span></span>{{end}}
+                            <span class="stat-scan" data-scan-interval="{{.ScanIntervalSeconds}}" data-last-scan-unix="{{.LastScanUnix}}" data-next-scan-unix="{{.NextScanUnix}}" data-scan-running="{{if .ScanRunning}}true{{else}}false{{end}}">
+                                <span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span></span>{{end}}<span class="live-sep refresh-sep">&middot;</span><span class="refresh-countdown">refresh in <span class="refresh-seconds">30</span>s</span>
                             </span>
                             {{end}}
                         </div>
@@ -291,7 +291,7 @@ orangutan export out.csv</code></pre>
                     <span class="table-info" id="device-count">Showing {{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}</span>
                     <div class="table-toolbar-actions">
                         <button type="button" id="reset-device-sort" class="btn btn-small reset-sort hidden" onclick="resetDeviceSort()">Reset sort</button>
-                        <span class="table-scanned" id="scan-time-top"><span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span></span>{{end}}</span>
+                        <span class="table-scanned" id="scan-time-top" data-scan-interval="{{.ScanIntervalSeconds}}" data-last-scan-unix="{{.LastScanUnix}}" data-next-scan-unix="{{.NextScanUnix}}" data-scan-running="{{if .ScanRunning}}true{{else}}false{{end}}"><span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span></span>{{end}}<span class="live-sep refresh-sep">&middot;</span><span class="refresh-countdown">refresh in <span class="refresh-seconds">30</span>s</span></span>
                     </div>
                 </div>
                 <div class="devices-view-layout">
@@ -847,8 +847,8 @@ orangutan export out.csv</code></pre>
                         <span class="legend-item"><span class="legend-dot offline"></span>Offline</span>
                     </div>
                     {{if or .ContinuousScan .LastScanAt}}
-                    <span class="table-footer-label">
-                        <span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span> <span class="table-footer-detail">&middot; {{.LastScanAt}}</span></span>{{end}}
+                    <span class="table-footer-label" data-scan-interval="{{.ScanIntervalSeconds}}" data-last-scan-unix="{{.LastScanUnix}}" data-next-scan-unix="{{.NextScanUnix}}" data-scan-running="{{if .ScanRunning}}true{{else}}false{{end}}">
+                        <span class="live-indicator"><span class="live-dot"></span>Live</span>{{if .LastScanAt}}<span class="live-sep">&middot;</span><span class="scan-when">scanned <span data-relative-time="{{.LastScanUnix}}">{{.LastScanAgo}}</span> <span class="table-footer-detail">&middot; {{.LastScanAt}}</span></span>{{end}}<span class="live-sep refresh-sep">&middot;</span><span class="refresh-countdown">refresh in <span class="refresh-seconds">30</span>s</span>
                     </span>
                     {{else}}
                     <span class="table-footer-label">Not scanned yet &middot; run a scan to discover devices</span>

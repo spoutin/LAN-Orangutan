@@ -586,6 +586,9 @@ func TestIndexPageRendersWithTelemetry(t *testing.T) {
 		"connection-strip-right",
 		"traffic-modal",
 		"traffic-chart.js",
+		"refresh-countdown",
+		"data-next-scan-unix",
+		"data-scan-interval",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("expected body to contain %q", expected)

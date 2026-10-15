@@ -2536,6 +2536,50 @@ captureDefaultDeviceOrder();
 // fetched in the background and only the parts that carry data are swapped in.
 const AUTO_REFRESH_MS = 30000;
 let autoRefreshInterval = null;
+let lastPageRefreshTime = Date.now();
+let isPageRefreshInFlight = false;
+let refreshCountdownTicker = null;
+
+function updateRefreshCountdown() {
+    const now = Date.now();
+    const nextRefreshTime = lastPageRefreshTime + AUTO_REFRESH_MS;
+    const secondsRemaining = Math.max(0, Math.ceil((nextRefreshTime - now) / 1000));
+
+    const countdownText = window.scanRefresh?.formatRefreshCountdown
+        ? window.scanRefresh.formatRefreshCountdown({
+            continuousScan,
+            isRefreshing: isPageRefreshInFlight,
+            secondsRemaining
+        })
+        : (isPageRefreshInFlight ? 'refreshing...' : (continuousScan ? `refresh in ${secondsRemaining}s` : 'refresh paused'));
+
+    document.querySelectorAll('.refresh-countdown').forEach(el => {
+        el.textContent = countdownText;
+    });
+
+    document.querySelectorAll('.stat-scan, #scan-time-top, .table-footer-label').forEach(container => {
+        const lastScanUnix = parseInt(container.dataset.lastScanUnix, 10) || 0;
+        const nextScanUnix = parseInt(container.dataset.nextScanUnix, 10) || 0;
+        const isScanRunning = container.dataset.scanRunning === 'true';
+
+        if (window.scanRefresh?.formatRefreshTooltip) {
+            container.title = window.scanRefresh.formatRefreshTooltip({
+                continuousScan,
+                isScanRunning,
+                lastScanUnix,
+                nextScanUnix,
+                lastRefreshTimeMs: lastPageRefreshTime,
+                nextRefreshTimeMs: nextRefreshTime,
+                nowMs: now
+            });
+        }
+    });
+}
+
+function startRefreshCountdownTicker() {
+    if (refreshCountdownTicker) return;
+    refreshCountdownTicker = setInterval(updateRefreshCountdown, 1000);
+}
 
 // refreshInPlace replaces the device table, the summary cards and the scan
 // footer with fresh copies from the server.
@@ -2546,6 +2590,8 @@ let autoRefreshInterval = null;
 // Returns false if the refresh could not be applied, which usually means the
 // session has ended and the response was the login page.
 async function refreshInPlace() {
+    isPageRefreshInFlight = true;
+    updateRefreshCountdown();
     let doc;
     try {
         const response = await fetch(location.href, { credentials: 'same-origin' });
@@ -2553,6 +2599,9 @@ async function refreshInPlace() {
         doc = new DOMParser().parseFromString(await response.text(), 'text/html');
     } catch (e) {
         return false;
+    } finally {
+        isPageRefreshInFlight = false;
+        updateRefreshCountdown();
     }
 
     const freshRows = doc.getElementById('devices-tbody');
@@ -2568,6 +2617,8 @@ async function refreshInPlace() {
         const replacement = doc.querySelector(selector);
         if (current && replacement) current.replaceWith(replacement);
     }
+    lastPageRefreshTime = Date.now();
+    updateRefreshCountdown();
 
     if (selectedIp) {
         const rowToSelect = document.querySelector(`.device-row[data-ip="${CSS.escape(selectedIp)}"]`);
@@ -2633,6 +2684,7 @@ function applyContinuousScanState() {
     document.documentElement.classList.toggle('live-view', continuousScan);
     if (continuousScan) startAutoRefresh();
     else stopAutoRefresh();
+    updateRefreshCountdown();
 }
 
 // toggleContinuousScan switches the server's background scanner on or off at
@@ -2661,6 +2713,7 @@ async function toggleContinuousScan() {
 
 // Start the view in whatever state the server reports.
 applyContinuousScanState();
+startRefreshCountdownTicker();
 
 // Keyboard support for the toolbar switch (role="switch" tabindex="0").
 document.addEventListener('keydown', e => {

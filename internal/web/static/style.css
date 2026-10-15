@@ -748,8 +748,14 @@ body.strip-docked .stat-strip .stat-chip-filter {
    app.js toggles .live-view on <html> from the Auto-refresh switch; with it off,
    the pill and its separator hide, leaving just the last-scan time. */
 :root:not(.live-view) .live-indicator,
-:root:not(.live-view) .live-sep {
+:root:not(.live-view) .live-sep,
+:root:not(.live-view) .refresh-countdown {
     display: none;
+}
+
+.refresh-countdown {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
 }
 
 .stat-scan {
