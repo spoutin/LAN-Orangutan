@@ -697,7 +697,8 @@ button.nav-link {
 
 /* The docked strip is click-through (pointer-events: none) so the header nav
    stays reachable, but the filter chips must still be clickable up there. */
-body.strip-docked .stat-strip .stat-chip-filter {
+body.strip-docked .stat-strip .stat-chip-filter,
+body.strip-docked .stat-strip .stat-scan {
     pointer-events: auto;
 }
 
@@ -742,6 +743,7 @@ body.strip-docked .stat-strip .stat-chip-filter {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
+    cursor: default;
 }
 
 /* The "Live" cue only means anything while the view is actually auto-refreshing.
@@ -1076,17 +1078,17 @@ td[data-copy]:not([data-copy=""]) {
 #hint-tip {
     position: fixed;
     z-index: 400;
-    max-width: 300px;
-    padding: 0.4rem 0.6rem;
+    max-width: 320px;
+    padding: 0.45rem 0.7rem;
     font-size: 0.8rem;
-    line-height: 1.4;
+    line-height: 1.45;
     font-weight: 400;
     color: var(--text-primary);
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     box-shadow: var(--card-shadow-lg);
-    white-space: normal;
+    white-space: pre-line;
     overflow-wrap: anywhere;
     pointer-events: none;
     display: none;

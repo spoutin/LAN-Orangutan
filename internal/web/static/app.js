@@ -2563,7 +2563,7 @@ function updateRefreshCountdown() {
         const isScanRunning = container.dataset.scanRunning === 'true';
 
         if (window.scanRefresh?.formatRefreshTooltip) {
-            container.title = window.scanRefresh.formatRefreshTooltip({
+            const tipText = window.scanRefresh.formatRefreshTooltip({
                 continuousScan,
                 isScanRunning,
                 lastScanUnix,
@@ -2572,6 +2572,12 @@ function updateRefreshCountdown() {
                 nextRefreshTimeMs: nextRefreshTime,
                 nowMs: now
             });
+            container.setAttribute('data-tip', tipText);
+            container.title = tipText;
+            container.querySelectorAll('.refresh-countdown').forEach(rc => rc.setAttribute('data-tip', tipText));
+            if (typeof window.refreshHintTipIfActive === 'function') {
+                window.refreshHintTipIfActive(container);
+            }
         }
     });
 }
@@ -3150,6 +3156,7 @@ async function disconnectTailscale() {
 // Delegated on the document, so it also covers rows added by an auto-refresh.
 (function initHintTips() {
     let tip = null;
+    let activeEl = null;
     function ensure() {
         if (!tip) {
             tip = document.createElement('div');
@@ -3160,6 +3167,7 @@ async function disconnectTailscale() {
         return tip;
     }
     function show(el) {
+        activeEl = el;
         const text = el.getAttribute('data-tip');
         if (!text) return;
         const t = ensure();
@@ -3175,8 +3183,15 @@ async function disconnectTailscale() {
         t.style.top = Math.round(top) + 'px';
     }
     function hide() {
+        activeEl = null;
         if (tip) tip.classList.remove('show');
     }
+    window.refreshHintTipIfActive = function (el) {
+        if (tip && tip.classList.contains('show') && activeEl && (activeEl === el || activeEl.contains(el) || el.contains(activeEl))) {
+            const text = activeEl.getAttribute('data-tip');
+            if (text) tip.textContent = text;
+        }
+    };
     document.addEventListener('mouseover', function (e) {
         const el = e.target.closest && e.target.closest('[data-tip]');
         if (el) show(el);
