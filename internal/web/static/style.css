@@ -1415,10 +1415,28 @@ td[data-copy]:not([data-copy=""]) {
 .device-connection-strip {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 0.65rem;
     flex-wrap: wrap;
     padding-left: 2rem;
+    padding-right: 0.75rem;
     font-size: 0.78rem;
+    width: 100%;
+}
+
+.connection-strip-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.connection-strip-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-left: auto;
 }
 
 .hostname-cell {

@@ -582,6 +582,8 @@ func TestIndexPageRendersWithTelemetry(t *testing.T) {
 		`data-router-interface="lan"`,
 		`data-router-notes="Static Mapping"`,
 		"sb-traffic-card",
+		"sb-netflow-card",
+		"connection-strip-right",
 		"traffic-modal",
 		"traffic-chart.js",
 	} {

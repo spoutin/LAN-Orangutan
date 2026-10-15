@@ -469,48 +469,52 @@ orangutan export out.csv</code></pre>
                                      </td>
                                  </tr>
                                  <tr class="device-subrow {{.StatusClass}}" data-ip="{{.IP}}">
-                                     <td colspan="8" class="col-subrow">
-                                         <div class="device-connection-strip">
-                                             {{if hasSSH .Device}}
-                                             <span class="ssh-indicator" data-tip="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}" aria-label="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}" style="display: inline-flex; align-items: center; gap: 3px; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: rgba(59, 130, 246, 0.12); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.25);">
-                                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4"/><path d="M12 16h7"/></svg>
-                                                 <span>SSH{{if ne (sshPort .Device) 22}}:{{sshPort .Device}}{{end}}</span>
-                                             </span>
-                                             {{end}}
-                                             {{if .AnsibleManaged}}
-                                             <span class="ansible-indicator" data-tip="Ansible Managed" title="Ansible Managed" style="display: inline-flex; align-items: center; gap: 3px; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.25);">
-                                                 <svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8 16 4-8 4 8"/><path d="M9.5 13h5"/></svg>
-                                                 <span>Ansible</span>
-                                             </span>
-                                             {{end}}
-                                             {{if .SSID}}
-                                             <span class="ssid-badge" data-tip="SSID: {{.SSID}}{{if .APName}} &middot; AP: {{.APName}}{{end}}{{if .RadioBand}} ({{.RadioBand}}){{end}}{{if .Signal}} ({{.Signal}} dBm){{end}}">
-                                                 📶 {{.SSID}}
-                                             </span>
-                                             {{end}}
-                                             {{if .SwitchPort}}
-                                             <span class="switch-badge" data-tip="Switch: {{.SwitchName}} &middot; Port: {{.SwitchPort}}{{if .SwitchVLAN}} &middot; VLAN: {{.SwitchVLAN}}{{end}}{{if .SwitchLinkState}} &middot; Link: {{.SwitchLinkState}}{{end}}{{if .SwitchLinkSpeed}} &middot; {{formatSpeed .SwitchLinkSpeed}}{{end}}">
-                                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h.01M11 8h.01M15 8h.01M7 16h10"/></svg>
-                                                 <span>{{.SwitchName}} &middot; {{.SwitchPort}}{{if .SwitchVLAN}} (VLAN {{.SwitchVLAN}}){{end}}{{if .SwitchLinkSpeed}} &middot; {{formatSpeed .SwitchLinkSpeed}}{{end}}</span>
-                                             </span>
-                                             {{end}}
-                                             {{if or (gt .RxRateBps 0) (gt .TxRateBps 0) (gt .RxBytes 0) (and .IsOnline (ne .TrafficSource "opnsense"))}}
-                                             <span class="traffic-badge" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Local Link Throughput (Click to view history)">
-                                                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
-                                                 <span><strong style="color: #10b981;">↓ {{formatBandwidth .RxRateBps}}</strong> &nbsp; <strong style="color: #3b82f6;">↑ {{formatBandwidth .TxRateBps}}</strong>{{if gt .RxBytes 0}} &middot; Total: {{formatBytes .RxBytes}}{{end}}{{if and .TrafficSource (ne .TrafficSource "opnsense")}} <span style="opacity: 0.75;">[{{.TrafficSource}}]</span>{{end}}</span>
-                                             </span>
-                                             {{end}}
-                                             {{if or (gt .WanRxRateBps 0) (gt .WanTxRateBps 0) (gt .WanRxBytes 0) (eq .TrafficSource "opnsense")}}
-                                             <span class="traffic-badge traffic-badge-wan" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Firewall WAN/Internet Throughput via OPNsense NetFlow">
-                                                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                                                 <span>WAN: <strong style="color: #10b981;">↓ {{formatBandwidth .WanRxRateBps}}</strong> &nbsp; <strong style="color: #3b82f6;">↑ {{formatBandwidth .WanTxRateBps}}</strong>{{if gt .WanRxBytes 0}} &middot; Total: {{formatBytes .WanRxBytes}}{{end}} <span style="opacity: 0.75;">[opnsense]</span></span>
-                                             </span>
-                                             {{end}}
-                                             {{if and (not .SSID) (not .SwitchPort) (not .IsOnline) (eq .RxRateBps 0) (eq .TxRateBps 0) (eq .RxBytes 0) (eq .WanRxRateBps 0) (eq .WanTxRateBps 0)}}
-                                             <span class="connection-none" style="color: var(--text-muted); font-size: 0.75rem;">—</span>
-                                             {{end}}
-                                         </div>
-                                     </td>
+                                      <td colspan="8" class="col-subrow">
+                                          <div class="device-connection-strip">
+                                              <div class="connection-strip-left">
+                                                  {{if hasSSH .Device}}
+                                                  <span class="ssh-indicator" data-tip="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}" aria-label="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}" style="display: inline-flex; align-items: center; gap: 3px; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: rgba(59, 130, 246, 0.12); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.25);">
+                                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4"/><path d="M12 16h7"/></svg>
+                                                      <span>SSH{{if ne (sshPort .Device) 22}}:{{sshPort .Device}}{{end}}</span>
+                                                  </span>
+                                                  {{end}}
+                                                  {{if .AnsibleManaged}}
+                                                  <span class="ansible-indicator" data-tip="Ansible Managed" title="Ansible Managed" style="display: inline-flex; align-items: center; gap: 3px; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.25);">
+                                                      <svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8 16 4-8 4 8"/><path d="M9.5 13h5"/></svg>
+                                                      <span>Ansible</span>
+                                                  </span>
+                                                  {{end}}
+                                                  {{if .SSID}}
+                                                  <span class="ssid-badge" data-tip="SSID: {{.SSID}}{{if .APName}} &middot; AP: {{.APName}}{{end}}{{if .RadioBand}} ({{.RadioBand}}){{end}}{{if .Signal}} ({{.Signal}} dBm){{end}}">
+                                                      📶 {{.SSID}}
+                                                  </span>
+                                                  {{end}}
+                                                  {{if .SwitchPort}}
+                                                  <span class="switch-badge" data-tip="Switch: {{.SwitchName}} &middot; Port: {{.SwitchPort}}{{if .SwitchVLAN}} &middot; VLAN: {{.SwitchVLAN}}{{end}}{{if .SwitchLinkState}} &middot; Link: {{.SwitchLinkState}}{{end}}{{if .SwitchLinkSpeed}} &middot; {{formatSpeed .SwitchLinkSpeed}}{{end}}">
+                                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h.01M11 8h.01M15 8h.01M7 16h10"/></svg>
+                                                      <span>{{.SwitchName}} &middot; {{.SwitchPort}}{{if .SwitchVLAN}} (VLAN {{.SwitchVLAN}}){{end}}{{if .SwitchLinkSpeed}} &middot; {{formatSpeed .SwitchLinkSpeed}}{{end}}</span>
+                                                  </span>
+                                                  {{end}}
+                                                  {{if and (not .SSID) (not .SwitchPort) (not (hasSSH .Device)) (not .AnsibleManaged)}}
+                                                  <span class="connection-none" style="color: var(--text-muted); font-size: 0.75rem;">—</span>
+                                                  {{end}}
+                                              </div>
+                                              <div class="connection-strip-right">
+                                                  {{if or (gt .RxRateBps 0) (gt .TxRateBps 0) (gt .RxBytes 0) (and .IsOnline (ne .TrafficSource "opnsense"))}}
+                                                  <span class="traffic-badge" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Local Link Throughput (Click to view history)">
+                                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                                                      <span><strong style="color: #10b981;">↓ {{formatBandwidth .RxRateBps}}</strong> &nbsp; <strong style="color: #3b82f6;">↑ {{formatBandwidth .TxRateBps}}</strong>{{if gt .RxBytes 0}} &middot; Total: {{formatBytes .RxBytes}}{{end}}{{if and .TrafficSource (ne .TrafficSource "opnsense")}} <span style="opacity: 0.75;">[{{.TrafficSource}}]</span>{{end}}</span>
+                                                  </span>
+                                                  {{end}}
+                                                  {{if or (gt .WanRxRateBps 0) (gt .WanTxRateBps 0) (gt .WanRxBytes 0) (eq .TrafficSource "opnsense")}}
+                                                  <span class="traffic-badge traffic-badge-wan" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Firewall WAN/Internet Throughput via OPNsense NetFlow">
+                                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                                      <span>WAN: <strong style="color: #10b981;">↓ {{formatBandwidth .WanRxRateBps}}</strong> &nbsp; <strong style="color: #3b82f6;">↑ {{formatBandwidth .WanTxRateBps}}</strong>{{if gt .WanRxBytes 0}} &middot; Total: {{formatBytes .WanRxBytes}}{{end}} <span style="opacity: 0.75;">[opnsense]</span></span>
+                                                  </span>
+                                                  {{end}}
+                                              </div>
+                                          </div>
+                                      </td>
                                  </tr>
                                  {{end}}
                             </tbody>
@@ -541,35 +545,47 @@ orangutan export out.csv</code></pre>
 
                          <!-- Sidebar Scrollable Body -->
                          <div class="sidebar-scrollable-body">
-                            <!-- Card: Traffic & Bandwidth -->
+                            <!-- Card: Local Link Traffic -->
                             <div id="sb-traffic-card" class="sidebar-card">
                                 <div class="sidebar-card-header" style="display: flex; justify-content: space-between; align-items: center;">
-                                    <h4 class="sidebar-card-title">Traffic &amp; Bandwidth</h4>
+                                    <h4 class="sidebar-card-title">⚡ Link Bandwidth</h4>
                                     <span id="sb-traffic-source-badge" class="badge" style="font-size: 0.7rem; text-transform: uppercase;"></span>
                                 </div>
                                 <div class="sidebar-card-body">
                                     <ul class="sidebar-spec-list">
                                         <li>
-                                            <span class="spec-label">Link Rate:</span>
+                                            <span class="spec-label">Rate:</span>
                                             <span class="spec-val" id="sb-traffic-rates">—</span>
                                         </li>
                                         <li>
-                                            <span class="spec-label">Link Total:</span>
+                                            <span class="spec-label">Total Data:</span>
                                             <span class="spec-val" id="sb-traffic-total">—</span>
-                                        </li>
-                                        <li id="sb-traffic-wan-rate-row">
-                                            <span class="spec-label">WAN Rate:</span>
-                                            <span class="spec-val" id="sb-traffic-wan-rates">—</span>
-                                        </li>
-                                        <li id="sb-traffic-wan-total-row">
-                                            <span class="spec-label">WAN Total:</span>
-                                            <span class="spec-val" id="sb-traffic-wan-total">—</span>
                                         </li>
                                     </ul>
                                     <button type="button" id="sb-traffic-btn" class="btn" style="width: 100%; margin-top: 0.5rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: var(--bg-card-hover); border: 1px solid var(--border);" onclick="openTrafficModalForCurrentDevice()">
                                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
                                         <span>View Traffic History</span>
                                     </button>
+                                </div>
+                            </div>
+
+                            <!-- Card: Firewall & NetFlow (WAN) -->
+                            <div id="sb-netflow-card" class="sidebar-card">
+                                <div class="sidebar-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                                    <h4 class="sidebar-card-title">🌐 Firewall &amp; NetFlow</h4>
+                                    <span id="sb-netflow-source-badge" class="badge" style="font-size: 0.7rem; text-transform: uppercase;">OPNsense</span>
+                                </div>
+                                <div class="sidebar-card-body">
+                                    <ul class="sidebar-spec-list">
+                                        <li>
+                                            <span class="spec-label">Internet Rate:</span>
+                                            <span class="spec-val" id="sb-netflow-rates">—</span>
+                                        </li>
+                                        <li>
+                                            <span class="spec-label">Internet Total:</span>
+                                            <span class="spec-val" id="sb-netflow-total">—</span>
+                                        </li>
+                                    </ul>
                                 </div>
                             </div>
 
