@@ -515,7 +515,7 @@ func TestFetchOPNsenseNetFlow(t *testing.T) {
 	t.Run("NetFlowEndpointSuccess", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			if r.URL.Path == "/api/diagnostics/netflow/getData" {
+			if r.URL.Path == "/api/diagnostics/networkinsight/top" {
 				records := []map[string]interface{}{
 					{
 						"source":      "10.0.0.55",
@@ -558,12 +558,12 @@ func TestFetchOPNsenseNetFlow(t *testing.T) {
 	t.Run("FallbackToQueryStates", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			if r.URL.Path == "/api/diagnostics/netflow/getData" {
+			if r.URL.Path == "/api/diagnostics/networkinsight/top" {
 				// NetFlow returns 404 or empty
 				http.NotFound(w, r)
 				return
 			}
-			if r.URL.Path == "/api/diagnostics/firewall/queryStates" {
+			if r.URL.Path == "/api/diagnostics/firewall/query_states" {
 				resp := map[string]interface{}{
 					"rows": []map[string]interface{}{
 						{
@@ -608,7 +608,7 @@ func TestFetchOPNsenseNetFlow(t *testing.T) {
 	t.Run("NetFlowRowsEnvelope", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			if r.URL.Path == "/api/diagnostics/netflow/getData" {
+			if r.URL.Path == "/api/diagnostics/networkinsight/top" {
 				records := map[string]interface{}{
 					"rows": []map[string]interface{}{
 						{
@@ -653,11 +653,11 @@ func TestFetchOPNsenseNetFlow(t *testing.T) {
 	t.Run("QueryStatesSlashedBytesAndArrows", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			if r.URL.Path == "/api/diagnostics/netflow/getData" {
+			if r.URL.Path == "/api/diagnostics/networkinsight/top" {
 				http.NotFound(w, r)
 				return
 			}
-			if r.URL.Path == "/api/diagnostics/firewall/queryStates" {
+			if r.URL.Path == "/api/diagnostics/firewall/query_states" {
 				resp := map[string]interface{}{
 					"rows": []map[string]interface{}{
 						{

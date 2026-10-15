@@ -500,19 +500,13 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 
 	result := make(map[string]*types.NetFlowDeviceStats)
 
-	// 1. Try NetFlow endpoint first
-	nowSec := time.Now().Unix()
-	bodyJSON, _ := json.Marshal(map[string]interface{}{
-		"start_time": nowSec - 300,
-		"end_time":   nowSec,
-	})
-	reqFlow, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/diagnostics/netflow/getData", bytes.NewReader(bodyJSON))
+	// 1. Try NetFlow / NetworkInsight endpoint first
+	reqFlow, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/diagnostics/networkinsight/top?field=address&measure=bytes", nil)
 	if err == nil {
 		reqFlow.SetBasicAuth(cfg.APIKey, cfg.APISecret)
-		reqFlow.Header.Set("Content-Type", "application/json")
 		respFlow, err := client.Do(reqFlow)
 		if err != nil {
-			logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense netflow/getData connection failed: %v", err))
+			logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense networkinsight/top connection failed: %v", err))
 		} else {
 			defer respFlow.Body.Close()
 			rawBody, _ := io.ReadAll(respFlow.Body)
@@ -520,12 +514,14 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 			if len(preview) > 160 {
 				preview = preview[:160] + "..."
 			}
-			logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense netflow/getData: HTTP %d, %d bytes: %s", respFlow.StatusCode, len(rawBody), preview))
 
-			if respFlow.StatusCode == http.StatusOK {
+			if respFlow.StatusCode != http.StatusOK {
+				logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense networkinsight/top returned HTTP %d %s: %s", respFlow.StatusCode, respFlow.Status, preview))
+			} else {
 				records := parseNetFlowRecords(rawBody)
+				logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense networkinsight/top: HTTP 200, parsed %d flow records", len(records)))
 				for _, rec := range records {
-					srcIP := cleanHostIP(extractFlowField(rec, "source", "src", "src_addr", "source_address"))
+					srcIP := cleanHostIP(extractFlowField(rec, "source", "src", "src_addr", "source_address", "address", "ip"))
 					dstIP := cleanHostIP(extractFlowField(rec, "destination", "dst", "dst_addr", "destination_address"))
 					octets := extractFlowBytes(rec, "octets", "bytes", "byte_count", "total_bytes")
 					if octets <= 0 {
@@ -555,9 +551,9 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 		}
 	}
 
-	// 2. Fallback to active firewall states query
+	// 2. Active firewall states query
 	searchBody := []byte(`{"current": 1, "rowCount": 500}`)
-	reqStates, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/diagnostics/firewall/queryStates", bytes.NewReader(searchBody))
+	reqStates, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/diagnostics/firewall/query_states", bytes.NewReader(searchBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create states request: %w", err)
 	}
@@ -565,30 +561,70 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 	reqStates.Header.Set("Content-Type", "application/json")
 	respStates, err := client.Do(reqStates)
 	if err != nil {
-		logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense firewall/queryStates connection failed: %v", err))
+		logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense firewall/query_states connection failed: %v", err))
 		return nil, fmt.Errorf("failed to execute firewall states request: %w", err)
 	}
 	defer respStates.Body.Close()
+
+	if respStates.StatusCode != http.StatusOK {
+		logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense firewall/query_states returned HTTP %d %s", respStates.StatusCode, respStates.Status))
+		// Fallback to GET /api/diagnostics/firewall/pf_states
+		reqPf, errPf := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/diagnostics/firewall/pf_states", nil)
+		if errPf == nil {
+			reqPf.SetBasicAuth(cfg.APIKey, cfg.APISecret)
+			respPf, errDo := client.Do(reqPf)
+			if errDo == nil && respPf.StatusCode == http.StatusOK {
+				defer respPf.Body.Close()
+				rawPf, _ := io.ReadAll(respPf.Body)
+				records := parseNetFlowRecords(rawPf)
+				logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense firewall/pf_states: HTTP 200, parsed %d records", len(records)))
+				for _, rec := range records {
+					bytesVal := extractFlowBytes(rec, "bytes", "octets", "byte_count")
+					if bytesVal <= 0 {
+						continue
+					}
+					srcIP := cleanHostIP(extractFlowField(rec, "src_addr", "source", "src", "address"))
+					dstIP := cleanHostIP(extractFlowField(rec, "dst_addr", "destination", "dst"))
+					if srcIP != "" {
+						st, ok := result[srcIP]
+						if !ok {
+							st = &types.NetFlowDeviceStats{IP: srcIP}
+							result[srcIP] = st
+						}
+						st.TxBytes += bytesVal
+					}
+					if dstIP != "" {
+						st, ok := result[dstIP]
+						if !ok {
+							st = &types.NetFlowDeviceStats{IP: dstIP}
+							result[dstIP] = st
+						}
+						st.RxBytes += bytesVal
+					}
+				}
+				if len(result) > 0 {
+					return result, nil
+				}
+			} else if respPf != nil {
+				respPf.Body.Close()
+			}
+		}
+		return nil, fmt.Errorf("unexpected firewall states response status: %s", respStates.Status)
+	}
 
 	rawStates, _ := io.ReadAll(respStates.Body)
 	previewStates := string(rawStates)
 	if len(previewStates) > 160 {
 		previewStates = previewStates[:160] + "..."
 	}
-	logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense firewall/queryStates: HTTP %d, %d bytes: %s", respStates.StatusCode, len(rawStates), previewStates))
-
-	if respStates.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected firewall states response status: %s", respStates.Status)
-	}
-
 	records := parseNetFlowRecords(rawStates)
-	logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense firewall/queryStates: parsed %d state records", len(records)))
+	logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense firewall/query_states: HTTP 200, %d bytes, parsed %d records: %s", len(rawStates), len(records), previewStates))
 	for _, rec := range records {
 		bytesVal := extractFlowBytes(rec, "bytes", "octets", "byte_count")
 		if bytesVal <= 0 {
 			continue
 		}
-		srcIP := cleanHostIP(extractFlowField(rec, "src_addr", "source", "src"))
+		srcIP := cleanHostIP(extractFlowField(rec, "src_addr", "source", "src", "address"))
 		dstIP := cleanHostIP(extractFlowField(rec, "dst_addr", "destination", "dst"))
 		if srcIP != "" {
 			st, ok := result[srcIP]

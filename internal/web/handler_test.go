@@ -650,9 +650,16 @@ func TestIndexPageKeepsDeviceIndicatorsOutOfHostnameCell(t *testing.T) {
 	if strings.Contains(body[hostnameStart:networkStart], "ssh-indicator") || strings.Contains(body[hostnameStart:networkStart], "notes-indicator") || strings.Contains(body[hostnameStart:networkStart], "ansible-indicator") {
 		t.Error("device status indicators should not consume hostname column space")
 	}
-	for _, indicator := range []string{"ssh-indicator", "notes-indicator", "ansible-indicator"} {
-		if !strings.Contains(body[networkStart:macStart], indicator) {
-			t.Errorf("network cell should contain %q", indicator)
+	if !strings.Contains(body[networkStart:macStart], "notes-indicator") {
+		t.Error("network cell should contain notes-indicator")
+	}
+	stripStart := strings.Index(body, `class="device-connection-strip"`)
+	if stripStart < 0 {
+		t.Fatal("expected device-connection-strip")
+	}
+	for _, indicator := range []string{"ssh-indicator", "ansible-indicator"} {
+		if !strings.Contains(body[stripStart:], indicator) {
+			t.Errorf("connection strip should contain %q", indicator)
 		}
 	}
 }

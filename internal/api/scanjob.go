@@ -715,7 +715,6 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	}
 
 	if ctx.Err() == nil {
-		h.runTrafficCycle(ctx)
 		var activeIPs []string
 		for ip := range activeIPsMap {
 			activeIPs = append(activeIPs, ip)
