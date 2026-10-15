@@ -1075,3 +1075,121 @@ networks = 10.0.4.0/24
 		t.Fatalf("opn scanner = %+v, want User='ipam' Sudo=true SSHKeyFile='/var/secrets/opnsense.key'", opn)
 	}
 }
+
+func TestOpenWrtNlbwmonConfig(t *testing.T) {
+	t.Run("INI base openwrt and secondary router", func(t *testing.T) {
+		path := writeConfig(t, `
+[openwrt]
+enable = true
+url = https://10.5.5.1
+nlbwmon = true
+networks = 10.5.5.0/24
+
+[openwrt.secondary]
+enable = true
+url = https://10.6.6.1
+nlbwmon = true
+networks = 10.6.6.0/24
+
+[openwrt.tertiary]
+enable = true
+url = https://10.7.7.1
+nlbwmon = false
+networks = 10.7.7.0/24
+`)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		if !cfg.OpenWrt.Nlbwmon {
+			t.Errorf("base OpenWrt.Nlbwmon = %v, want true", cfg.OpenWrt.Nlbwmon)
+		}
+
+		sec, ok := cfg.OpenWrts.Configs["secondary"]
+		if !ok {
+			t.Fatal("secondary router config not found")
+		}
+		if !sec.Nlbwmon {
+			t.Errorf("secondary OpenWrt.Nlbwmon = %v, want true", sec.Nlbwmon)
+		}
+
+		tert, ok := cfg.OpenWrts.Configs["tertiary"]
+		if !ok {
+			t.Fatal("tertiary router config not found")
+		}
+		if tert.Nlbwmon {
+			t.Errorf("tertiary OpenWrt.Nlbwmon = %v, want false", tert.Nlbwmon)
+		}
+	})
+
+	t.Run("environment variable overrides base and secondary", func(t *testing.T) {
+		path := writeConfig(t, `
+[openwrt]
+enable = true
+url = https://10.5.5.1
+nlbwmon = false
+networks = 10.5.5.0/24
+
+[openwrt.secondary]
+enable = true
+url = https://10.6.6.1
+nlbwmon = false
+networks = 10.6.6.0/24
+`)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		t.Setenv("OPENWRT_NLBWMON", "true")
+		t.Setenv("OPENWRT_SECONDARY_NLBWMON", "true")
+
+		if err := cfg.ApplyEnv(); err != nil {
+			t.Fatalf("ApplyEnv: %v", err)
+		}
+
+		if !cfg.OpenWrt.Nlbwmon {
+			t.Errorf("base OpenWrt.Nlbwmon = %v after OPENWRT_NLBWMON=true, want true", cfg.OpenWrt.Nlbwmon)
+		}
+		sec := cfg.OpenWrts.Configs["secondary"]
+		if !sec.Nlbwmon {
+			t.Errorf("secondary OpenWrt.Nlbwmon = %v after OPENWRT_SECONDARY_NLBWMON=true, want true", sec.Nlbwmon)
+		}
+	})
+
+	t.Run("orangutan prefixed environment variable overrides", func(t *testing.T) {
+		path := writeConfig(t, `
+[openwrt]
+enable = true
+url = https://10.5.5.1
+nlbwmon = false
+networks = 10.5.5.0/24
+
+[openwrt.secondary]
+enable = true
+url = https://10.6.6.1
+nlbwmon = false
+networks = 10.6.6.0/24
+`)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		t.Setenv("ORANGUTAN_OPENWRT_NLBWMON", "true")
+		t.Setenv("ORANGUTAN_OPENWRT_SECONDARY_NLBWMON", "true")
+
+		if err := cfg.ApplyEnv(); err != nil {
+			t.Fatalf("ApplyEnv: %v", err)
+		}
+
+		if !cfg.OpenWrt.Nlbwmon {
+			t.Errorf("base OpenWrt.Nlbwmon = %v after ORANGUTAN_OPENWRT_NLBWMON=true, want true", cfg.OpenWrt.Nlbwmon)
+		}
+		sec := cfg.OpenWrts.Configs["secondary"]
+		if !sec.Nlbwmon {
+			t.Errorf("secondary OpenWrt.Nlbwmon = %v after ORANGUTAN_OPENWRT_SECONDARY_NLBWMON=true, want true", sec.Nlbwmon)
+		}
+	})
+}

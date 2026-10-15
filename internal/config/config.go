@@ -107,6 +107,7 @@ type OpenWrtConfig struct {
 	APIToken    string   `json:"-"`
 	VerifySSL   bool     `json:"verify_ssl"`
 	RemoteScan  bool     `json:"remote_scan"`
+	Nlbwmon     bool     `json:"nlbwmon"`
 	SSHHost     string   `json:"ssh_host,omitempty"`
 	SSHPort     int      `json:"ssh_port,omitempty"`
 	SSHUser     string   `json:"ssh_user,omitempty"`
@@ -569,6 +570,8 @@ func (c *Config) setValue(section, key, value string) {
 			c.OpenWrt.VerifySSL = parseBool(value)
 		case "remote_scan":
 			c.OpenWrt.RemoteScan = parseBool(value)
+		case "nlbwmon":
+			c.OpenWrt.Nlbwmon = parseBool(value)
 		case "ssh_host", "host":
 			c.OpenWrt.SSHHost = value
 		case "ssh_port", "port":
@@ -784,6 +787,8 @@ func (c *Config) setOpenWrtValue(id, key, value string) {
 		cfg.VerifySSL = parseBool(value)
 	case "remote_scan":
 		cfg.RemoteScan = parseBool(value)
+	case "nlbwmon":
+		cfg.Nlbwmon = parseBool(value)
 	case "ssh_host", "host":
 		cfg.SSHHost = value
 	case "ssh_port", "port":
@@ -1001,6 +1006,11 @@ func (c *Config) ApplyEnv() error {
 	if v := os.Getenv("ORANGUTAN_OPENWRT_REMOTE_SCAN"); v != "" {
 		c.OpenWrt.RemoteScan = parseBool(v)
 	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_NLBWMON"); v != "" {
+		c.OpenWrt.Nlbwmon = parseBool(v)
+	} else if v := os.Getenv("OPENWRT_NLBWMON"); v != "" {
+		c.OpenWrt.Nlbwmon = parseBool(v)
+	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_HOST"); v != "" {
 		c.OpenWrt.SSHHost = v
 	} else if v := os.Getenv("ORANGUTAN_OPENWRT_HOST"); v != "" {
@@ -1048,6 +1058,7 @@ func (c *Config) ApplyEnv() error {
 	}
 	for _, id := range c.OpenWrts.Names {
 		prefix := "ORANGUTAN_OPENWRT_" + strings.ToUpper(id) + "_"
+		prefixAlt := "OPENWRT_" + strings.ToUpper(id) + "_"
 		for _, setting := range []struct {
 			key string
 			env string
@@ -1056,6 +1067,7 @@ func (c *Config) ApplyEnv() error {
 			{"api_token", "API_TOKEN"},
 			{"verify_ssl", "VERIFY_SSL"},
 			{"remote_scan", "REMOTE_SCAN"},
+			{"nlbwmon", "NLBWMON"},
 			{"ssh_host", "SSH_HOST"},
 			{"host", "HOST"},
 			{"ssh_port", "SSH_PORT"},
@@ -1073,6 +1085,8 @@ func (c *Config) ApplyEnv() error {
 			{"networks", "NETWORKS"},
 		} {
 			if v := os.Getenv(prefix + setting.env); v != "" {
+				c.setOpenWrtValue(id, setting.key, v)
+			} else if v := os.Getenv(prefixAlt + setting.env); v != "" {
 				c.setOpenWrtValue(id, setting.key, v)
 			}
 		}
