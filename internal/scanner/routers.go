@@ -519,12 +519,14 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 				logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense networkinsight/top returned HTTP %d %s: %s", respFlow.StatusCode, respFlow.Status, preview))
 			} else {
 				records := parseNetFlowRecords(rawBody)
-				logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense networkinsight/top: HTTP 200, parsed %d flow records", len(records)))
+				if len(records) > 0 {
+					logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense networkinsight/top: HTTP 200, parsed %d flow records", len(records)))
+				}
 				for _, rec := range records {
 					srcIP := cleanHostIP(extractFlowField(rec, "source", "src", "src_addr", "source_address", "address", "ip"))
 					dstIP := cleanHostIP(extractFlowField(rec, "destination", "dst", "dst_addr", "destination_address"))
-					octets := extractFlowBytes(rec, "octets", "bytes", "byte_count", "total_bytes")
-					if octets <= 0 {
+					origBytes, replyBytes := extractFlowDirectionalBytes(rec, "octets", "bytes", "byte_count", "total_bytes")
+					if origBytes <= 0 && replyBytes <= 0 {
 						continue
 					}
 					if srcIP != "" {
@@ -533,7 +535,8 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 							st = &types.NetFlowDeviceStats{IP: srcIP}
 							result[srcIP] = st
 						}
-						st.TxBytes += octets
+						st.TxBytes += origBytes
+						st.RxBytes += replyBytes
 					}
 					if dstIP != "" {
 						st, ok := result[dstIP]
@@ -541,7 +544,8 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 							st = &types.NetFlowDeviceStats{IP: dstIP}
 							result[dstIP] = st
 						}
-						st.RxBytes += octets
+						st.RxBytes += origBytes
+						st.TxBytes += replyBytes
 					}
 				}
 				if len(result) > 0 {
@@ -552,7 +556,7 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 	}
 
 	// 2. Active firewall states query
-	searchBody := []byte(`{"current": 1, "rowCount": 500}`)
+	searchBody := []byte(`{"current": 1, "rowCount": 5000}`)
 	reqStates, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/diagnostics/firewall/query_states", bytes.NewReader(searchBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create states request: %w", err)
@@ -579,8 +583,8 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 				records := parseNetFlowRecords(rawPf)
 				logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense firewall/pf_states: HTTP 200, parsed %d records", len(records)))
 				for _, rec := range records {
-					bytesVal := extractFlowBytes(rec, "bytes", "octets", "byte_count")
-					if bytesVal <= 0 {
+					origBytes, replyBytes := extractFlowDirectionalBytes(rec, "bytes", "octets", "byte_count")
+					if origBytes <= 0 && replyBytes <= 0 {
 						continue
 					}
 					srcIP := cleanHostIP(extractFlowField(rec, "src_addr", "source", "src", "address"))
@@ -591,7 +595,8 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 							st = &types.NetFlowDeviceStats{IP: srcIP}
 							result[srcIP] = st
 						}
-						st.TxBytes += bytesVal
+						st.TxBytes += origBytes
+						st.RxBytes += replyBytes
 					}
 					if dstIP != "" {
 						st, ok := result[dstIP]
@@ -599,7 +604,8 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 							st = &types.NetFlowDeviceStats{IP: dstIP}
 							result[dstIP] = st
 						}
-						st.RxBytes += bytesVal
+						st.RxBytes += origBytes
+						st.TxBytes += replyBytes
 					}
 				}
 				if len(result) > 0 {
@@ -620,8 +626,8 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 	records := parseNetFlowRecords(rawStates)
 	logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense firewall/query_states: HTTP 200, %d bytes, parsed %d records: %s", len(rawStates), len(records), previewStates))
 	for _, rec := range records {
-		bytesVal := extractFlowBytes(rec, "bytes", "octets", "byte_count")
-		if bytesVal <= 0 {
+		origBytes, replyBytes := extractFlowDirectionalBytes(rec, "bytes", "octets", "byte_count")
+		if origBytes <= 0 && replyBytes <= 0 {
 			continue
 		}
 		srcIP := cleanHostIP(extractFlowField(rec, "src_addr", "source", "src", "address"))
@@ -632,7 +638,8 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 				st = &types.NetFlowDeviceStats{IP: srcIP}
 				result[srcIP] = st
 			}
-			st.TxBytes += bytesVal
+			st.TxBytes += origBytes
+			st.RxBytes += replyBytes
 		}
 		if dstIP != "" {
 			st, ok := result[dstIP]
@@ -640,7 +647,8 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 				st = &types.NetFlowDeviceStats{IP: dstIP}
 				result[dstIP] = st
 			}
-			st.RxBytes += bytesVal
+			st.RxBytes += origBytes
+			st.TxBytes += replyBytes
 		}
 	}
 
@@ -690,20 +698,79 @@ func extractFlowField(rec map[string]interface{}, keys ...string) string {
 	return ""
 }
 
-func extractFlowBytes(rec map[string]interface{}, keys ...string) int64 {
+func extractFlowDirectionalBytes(rec map[string]interface{}, keys ...string) (int64, int64) {
 	for _, k := range keys {
-		if v, ok := rec[k]; ok && v != nil {
-			if n, ok := parseNumeric(v); ok && n > 0 {
-				return n
-			}
-			if s, ok := v.(string); ok {
-				if n, ok := parseBytesWithUnits(s); ok && n > 0 {
-					return n
+		v, ok := rec[k]
+		if !ok || v == nil {
+			continue
+		}
+
+		// 1. Slice of values (e.g. OPNsense query_states: "bytes": [3450, 89120])
+		if slice, ok := v.([]interface{}); ok {
+			var orig, reply int64
+			if len(slice) >= 1 {
+				if n, ok := parseNumeric(slice[0]); ok {
+					orig = n
 				}
 			}
+			if len(slice) >= 2 {
+				if n, ok := parseNumeric(slice[1]); ok {
+					reply = n
+				}
+			}
+			if orig > 0 || reply > 0 {
+				return orig, reply
+			}
+		}
+
+		if slice, ok := v.([]int64); ok {
+			var orig, reply int64
+			if len(slice) >= 1 {
+				orig = slice[0]
+			}
+			if len(slice) >= 2 {
+				reply = slice[1]
+			}
+			if orig > 0 || reply > 0 {
+				return orig, reply
+			}
+		}
+
+		// 2. Colon-separated string (e.g. "3450:89120" or "3.4M:8.9M")
+		if s, ok := v.(string); ok {
+			s = strings.TrimSpace(s)
+			if strings.Contains(s, ":") {
+				parts := strings.Split(s, ":")
+				var orig, reply int64
+				if len(parts) >= 1 {
+					if n, ok := parseBytesWithUnits(parts[0]); ok {
+						orig = n
+					}
+				}
+				if len(parts) >= 2 {
+					if n, ok := parseBytesWithUnits(parts[1]); ok {
+						reply = n
+					}
+				}
+				if orig > 0 || reply > 0 {
+					return orig, reply
+				}
+			} else if n, ok := parseBytesWithUnits(s); ok && n > 0 {
+				return n, 0
+			}
+		}
+
+		// 3. Scalar numeric value
+		if n, ok := parseNumeric(v); ok && n > 0 {
+			return n, 0
 		}
 	}
-	return 0
+	return 0, 0
+}
+
+func extractFlowBytes(rec map[string]interface{}, keys ...string) int64 {
+	orig, reply := extractFlowDirectionalBytes(rec, keys...)
+	return orig + reply
 }
 
 func parseBytesWithUnits(s string) (int64, bool) {
@@ -752,10 +819,13 @@ func cleanHostIP(addr string) string {
 		parts := strings.Split(addr, "<-")
 		addr = strings.TrimSpace(parts[0])
 	}
-	if idx := strings.Index(addr, ":"); idx != -1 {
+	addr = strings.TrimPrefix(addr, "[")
+	if idx := strings.Index(addr, "]"); idx != -1 {
+		addr = addr[:idx]
+	} else if idx := strings.Index(addr, ":"); idx != -1 {
 		if strings.Count(addr, ":") == 1 {
 			addr = addr[:idx]
 		}
 	}
-	return addr
+	return strings.TrimSpace(addr)
 }
