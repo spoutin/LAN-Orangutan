@@ -78,8 +78,9 @@ func TestTrafficCollector_CollectCycle(t *testing.T) {
 			URL:    "https://unifi.local",
 		},
 		OPNsense: config.OPNsenseConfig{
-			Enable: true,
-			URL:    "https://opnsense.local",
+			Enable:   true,
+			URL:      "https://opnsense.local",
+			Networks: []string{"10.0.0.0/24"},
 		},
 	}
 
@@ -244,6 +245,23 @@ func TestDeviceTrafficAPI(t *testing.T) {
 	if recIP.Code != http.StatusOK {
 		t.Fatalf("expected status 200 by IP, got %d: %s", recIP.Code, recIP.Body.String())
 	}
+
+	// 3. Verify WAN stats sanitization for devices outside OPNsense networks
+	cfg.OPNsense.Networks = []string{"192.168.1.0/24"} // does not include 10.0.0.55
+	recSanitized := httptest.NewRecorder()
+	reqSanitized := httptest.NewRequest("GET", "/api/devices/00:11:22:33:44:55/traffic?range=1h", nil)
+	h.ServeHTTP(recSanitized, reqSanitized)
+	var respSanitized struct {
+		Success bool                        `json:"success"`
+		Data    types.DeviceTrafficResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recSanitized.Body.Bytes(), &respSanitized); err != nil {
+		t.Fatalf("failed to decode sanitized response: %v", err)
+	}
+	if respSanitized.Data.Current.WanRxRateBytesSec != 0 || respSanitized.Data.Current.WanTxRateBytesSec != 0 {
+		t.Errorf("expected 0 WAN rates for device outside OPNsense network, got %d/%d",
+			respSanitized.Data.Current.WanRxRateBytesSec, respSanitized.Data.Current.WanTxRateBytesSec)
+	}
 }
 
 func TestTrafficCollector_DualLinkAndWANTraffic(t *testing.T) {
@@ -267,8 +285,9 @@ func TestTrafficCollector_DualLinkAndWANTraffic(t *testing.T) {
 			},
 		},
 		OPNsense: config.OPNsenseConfig{
-			Enable: true,
-			URL:    "https://opnsense.local",
+			Enable:   true,
+			URL:      "https://opnsense.local",
+			Networks: []string{"10.0.0.0/24"},
 		},
 	}
 	tc := NewTrafficCollector(store, cfg)
@@ -346,5 +365,85 @@ func TestTrafficCollector_DualLinkAndWANTraffic(t *testing.T) {
 	}
 	if storedDev.WanRxBytes != 2120000 || storedDev.WanTxBytes != 330000 {
 		t.Errorf("expected WAN bytes 2120000/330000, got %d/%d", storedDev.WanRxBytes, storedDev.WanTxBytes)
+	}
+}
+
+func TestTrafficCollector_OPNsenseNetworkFiltering(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	devInside := types.Device{IP: "10.0.0.50", MAC: "aa:bb:cc:00:11:01", Hostname: "inside-dev"}
+	devOutside := types.Device{IP: "192.168.1.99", MAC: "aa:bb:cc:00:11:02", Hostname: "outside-dev"}
+	if err := store.UpdateDevice(&devInside); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDevice(&devOutside); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		OPNsense: config.OPNsenseConfig{
+			Enable:   true,
+			URL:      "https://opnsense.local",
+			Networks: []string{"10.0.0.0/24"},
+		},
+	}
+	tc := NewTrafficCollector(store, cfg)
+	now := time.Now()
+
+	fetchNetFlow := func(_ context.Context, _ config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error) {
+		return map[string]*types.NetFlowDeviceStats{
+			"10.0.0.50": {
+				IP:      "10.0.0.50",
+				RxBytes: 1500000,
+				TxBytes: 250000,
+			},
+			"192.168.1.99": {
+				IP:      "192.168.1.99",
+				RxBytes: 3000000,
+				TxBytes: 500000,
+			},
+		}, nil
+	}
+
+	samples, err := tc.CollectCycle(context.Background(), now, nil, nil, fetchNetFlow)
+	if err != nil {
+		t.Fatalf("CollectCycle failed: %v", err)
+	}
+
+	// Only devInside should be collected
+	if len(samples) != 1 {
+		t.Fatalf("expected 1 sample, got %d: %+v", len(samples), samples)
+	}
+	if samples[0].MAC != "aa:bb:cc:00:11:01" {
+		t.Errorf("sample MAC = %q, want aa:bb:cc:00:11:01", samples[0].MAC)
+	}
+
+	storedInside := store.GetDevice("10.0.0.50")
+	if storedInside == nil || storedInside.WanRxBytes != 1500000 {
+		t.Errorf("inside device WAN rx bytes = %v, want 1500000", storedInside)
+	}
+
+	storedOutside := store.GetDevice("192.168.1.99")
+	if storedOutside == nil {
+		t.Fatal("outside device not found")
+	}
+	if storedOutside.WanRxBytes != 0 || storedOutside.WanTxBytes != 0 || storedOutside.WanRxRateBps != 0 || storedOutside.WanTxRateBps != 0 {
+		t.Errorf("outside device should have 0 WAN stats, got RxBytes=%d TxBytes=%d", storedOutside.WanRxBytes, storedOutside.WanTxBytes)
+	}
+
+	// Test with no OPNsense networks configured: zero devices should be tracked
+	cfg.OPNsense.Networks = nil
+	tc2 := NewTrafficCollector(store, cfg)
+	samples2, err := tc2.CollectCycle(context.Background(), now.Add(time.Minute), nil, nil, fetchNetFlow)
+	if err != nil {
+		t.Fatalf("CollectCycle with empty networks failed: %v", err)
+	}
+	if len(samples2) != 0 {
+		t.Errorf("expected 0 samples when OPNsense.Networks is empty, got %d", len(samples2))
 	}
 }

@@ -139,3 +139,21 @@ func ParseNetworkList(s string) []string {
 	}
 	return out
 }
+
+// ContainsIP returns true if ipStr is contained in any of the CIDR subnets in networks.
+func ContainsIP(networks []string, ipStr string) bool {
+	if len(networks) == 0 {
+		return false
+	}
+	ip := net.ParseIP(strings.TrimSpace(ipStr))
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range networks {
+		_, block, err := net.ParseCIDR(strings.TrimSpace(cidr))
+		if err == nil && block.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}

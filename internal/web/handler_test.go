@@ -920,3 +920,65 @@ func TestHandler_NetworkDeepScanningState(t *testing.T) {
 		t.Fatalf("expected 'Services...' status indicator in HTML, got:\n%s", body)
 	}
 }
+
+func TestIndexPageWANAttributionFiltering(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	h.cfg.OPNsense.Enable = true
+	h.cfg.OPNsense.Networks = []string{"10.0.0.0/24"}
+
+	devInside := types.Device{
+		IP:            "10.0.0.50",
+		MAC:           "aa:bb:cc:11:22:33",
+		Hostname:      "inside-host",
+		WanRxRateBps:  1500,
+		WanTxRateBps:  500,
+		WanRxBytes:    50000,
+		TrafficSource: "opnsense",
+		FirstSeen:     time.Now().Add(-1 * time.Hour),
+		LastSeen:      time.Now(),
+	}
+	devOutside := types.Device{
+		IP:            "192.168.1.50",
+		MAC:           "aa:bb:cc:44:55:66",
+		Hostname:      "outside-host",
+		WanRxRateBps:  2500,
+		WanTxRateBps:  800,
+		WanRxBytes:    90000,
+		TrafficSource: "opnsense",
+		FirstSeen:     time.Now().Add(-1 * time.Hour),
+		LastSeen:      time.Now(),
+	}
+
+	if err := h.store.UpdateDevice(&devInside); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.UpdateDevice(&devOutside); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	h.handleIndex(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// Inside device should retain its WAN rate and render the WAN badge
+	if !strings.Contains(body, `data-wan-rx-rate-bps="1500"`) {
+		t.Errorf("expected inside device to have data-wan-rx-rate-bps=1500")
+	}
+	if !strings.Contains(body, "traffic-badge-wan") {
+		t.Errorf("expected traffic-badge-wan to be rendered for inside device")
+	}
+
+	// Outside device should have its WAN stats zeroed out
+	if !strings.Contains(body, `data-mac="aa:bb:cc:44:55:66"`) {
+		t.Fatalf("expected outside device row to exist")
+	}
+	if strings.Contains(body, `data-wan-rx-rate-bps="2500"`) {
+		t.Errorf("outside device should NOT have data-wan-rx-rate-bps=2500")
+	}
+}

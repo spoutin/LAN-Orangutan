@@ -9,6 +9,7 @@ import (
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
 	"github.com/spoutin/LAN-Orangutan/internal/logging"
+	"github.com/spoutin/LAN-Orangutan/internal/network"
 	"github.com/spoutin/LAN-Orangutan/internal/scanner"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
@@ -162,7 +163,8 @@ func (tc *TrafficCollector) CollectCycle(
 	}
 
 	// 3. OPNsense Firewall (NetFlow / Active States for Routed Traffic)
-	if tc.cfg.OPNsense.Enable && tc.cfg.OPNsense.URL != "" && fetchNetFlow != nil && ctx.Err() == nil {
+	// Only collect WAN traffic for devices residing on the firewall's strictly configured networks.
+	if tc.cfg.OPNsense.Enable && tc.cfg.OPNsense.URL != "" && len(tc.cfg.OPNsense.Networks) > 0 && fetchNetFlow != nil && ctx.Err() == nil {
 		flowStats, err := fetchNetFlow(ctx, tc.cfg.OPNsense)
 		if err != nil {
 			logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense NetFlow query failed: %v", err))
@@ -171,6 +173,9 @@ func (tc *TrafficCollector) CollectCycle(
 			for ip, st := range flowStats {
 				dev := tc.store.GetDevice(ip)
 				if dev == nil || dev.MAC == "" {
+					continue
+				}
+				if !network.ContainsIP(tc.cfg.OPNsense.Networks, dev.IP) {
 					continue
 				}
 				normMAC := strings.ToLower(strings.TrimSpace(dev.MAC))
@@ -191,7 +196,7 @@ func (tc *TrafficCollector) CollectCycle(
 				})
 				matchedHosts++
 			}
-			logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense NetFlow: collected flows for %d hosts (%d active in inventory)", len(flowStats), matchedHosts))
+			logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense NetFlow: collected flows for %d hosts (%d active in inventory on firewall networks)", len(flowStats), matchedHosts))
 		}
 	}
 

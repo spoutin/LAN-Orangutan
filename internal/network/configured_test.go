@@ -53,3 +53,33 @@ func TestInvalidCIDRsAreIgnored(t *testing.T) {
 		t.Errorf("kept the wrong network: %q", got[0].CIDR)
 	}
 }
+
+func TestContainsIP(t *testing.T) {
+	networks := []string{"10.0.0.0/24", "10.0.1.0/24"}
+
+	tests := []struct {
+		ip   string
+		want bool
+	}{
+		{"10.0.0.1", true},
+		{"10.0.0.254", true},
+		{"10.0.1.50", true},
+		{"10.0.2.1", false},
+		{"192.168.1.1", false},
+		{"", false},
+		{"invalid-ip", false},
+	}
+
+	for _, tt := range tests {
+		if got := ContainsIP(networks, tt.ip); got != tt.want {
+			t.Errorf("ContainsIP(%v, %q) = %v, want %v", networks, tt.ip, got, tt.want)
+		}
+	}
+
+	if ContainsIP(nil, "10.0.0.1") {
+		t.Errorf("ContainsIP(nil, ...) should be false")
+	}
+	if ContainsIP([]string{}, "10.0.0.1") {
+		t.Errorf("ContainsIP([], ...) should be false")
+	}
+}

@@ -427,6 +427,17 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 			dv.Type = scanner.Classify(resolvedVendor, d.Hostname, nil)
 		}
 
+		// WAN throughput attribution is strictly scoped to the firewall's configured networks
+		if len(h.cfg.OPNsense.Networks) == 0 || !network.ContainsIP(h.cfg.OPNsense.Networks, d.IP) {
+			dv.WanRxRateBps = 0
+			dv.WanTxRateBps = 0
+			dv.WanRxBytes = 0
+			dv.WanTxBytes = 0
+			if dv.TrafficSource == "opnsense" {
+				dv.TrafficSource = ""
+			}
+		}
+
 		if d.IsRecent(cycleInterval) {
 			dv.Status = "online"
 			dv.StatusClass = "status-online"
