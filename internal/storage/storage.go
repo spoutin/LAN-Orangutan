@@ -3161,7 +3161,7 @@ func (s *Storage) RecordTrafficSamples(samples []types.TrafficSample) error {
 
 	stmtUpdateDeviceWAN, err := tx.Prepare(`
 		UPDATE devices SET
-			traffic_source = CASE WHEN traffic_source = '' THEN 'opnsense' ELSE traffic_source END,
+			traffic_source = CASE WHEN traffic_source = '' THEN ? ELSE traffic_source END,
 			wan_rx_rate_bps = ?,
 			wan_tx_rate_bps = ?,
 			wan_rx_bytes = CASE WHEN ? > 0 THEN ? ELSE wan_rx_bytes END,
@@ -3187,8 +3187,8 @@ func (s *Storage) RecordTrafficSamples(samples []types.TrafficSample) error {
 			return fmt.Errorf("failed to insert traffic sample: %w", err)
 		}
 
-		if sample.Source == "opnsense" {
-			_, err = stmtUpdateDeviceWAN.Exec(sample.RxRate, sample.TxRate, sample.RxBytes, sample.RxBytes, sample.TxBytes, sample.TxBytes, normMAC)
+		if sample.Source == "opnsense" || sample.Source == "openwrt" {
+			_, err = stmtUpdateDeviceWAN.Exec(sample.Source, sample.RxRate, sample.TxRate, sample.RxBytes, sample.RxBytes, sample.TxBytes, sample.TxBytes, normMAC)
 		} else {
 			_, err = stmtUpdateDeviceLink.Exec(sample.Source, sample.RxRate, sample.TxRate, sample.RxBytes, sample.RxBytes, sample.TxBytes, sample.TxBytes, normMAC)
 		}

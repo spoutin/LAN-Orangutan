@@ -1611,3 +1611,183 @@ func TestTrafficStorage_RecordSeriesRollupPrune(t *testing.T) {
 	}
 	t.Logf("pruned rows: %d", pruned)
 }
+
+func TestRecordTrafficSamples_OpenWrtWAN(t *testing.T) {
+	s := newTestStorage(t)
+	defer s.Close()
+	now := time.Now()
+
+	// Device 1: Has link traffic metrics from "switch"
+	dev1 := types.Device{
+		IP:       "10.0.0.101",
+		MAC:      "00:11:22:33:44:01",
+		Hostname: "switch-device",
+	}
+	if err := s.UpdateDevice(&dev1); err != nil {
+		t.Fatalf("failed to create dev1: %v", err)
+	}
+
+	linkSamples := []types.TrafficSample{
+		{
+			MAC:       dev1.MAC,
+			Timestamp: now.Add(-10 * time.Minute),
+			RxBytes:   1000000,
+			TxBytes:   200000,
+			RxRate:    15000,
+			TxRate:    3000,
+			Source:    "switch",
+		},
+	}
+	if err := s.RecordTrafficSamples(linkSamples); err != nil {
+		t.Fatalf("RecordTrafficSamples(switch) failed: %v", err)
+	}
+
+	// Device 2: Fresh device with empty traffic_source
+	dev2 := types.Device{
+		IP:       "10.0.0.102",
+		MAC:      "00:11:22:33:44:02",
+		Hostname: "fresh-device",
+	}
+	if err := s.UpdateDevice(&dev2); err != nil {
+		t.Fatalf("failed to create dev2: %v", err)
+	}
+
+	// Device 3: Fresh device with empty traffic_source tested with opnsense
+	dev3 := types.Device{
+		IP:       "10.0.0.103",
+		MAC:      "00:11:22:33:44:03",
+		Hostname: "opnsense-device",
+	}
+	if err := s.UpdateDevice(&dev3); err != nil {
+		t.Fatalf("failed to create dev3: %v", err)
+	}
+
+	// Record WAN traffic samples with Source: "openwrt" and "opnsense"
+	wanSamples := []types.TrafficSample{
+		{
+			MAC:       dev1.MAC,
+			Timestamp: now.Add(-1 * time.Minute),
+			RxBytes:   5000000,
+			TxBytes:   800000,
+			RxRate:    50000,
+			TxRate:    8000,
+			Source:    "openwrt",
+		},
+		{
+			MAC:       dev2.MAC,
+			Timestamp: now.Add(-1 * time.Minute),
+			RxBytes:   7000000,
+			TxBytes:   900000,
+			RxRate:    70000,
+			TxRate:    9000,
+			Source:    "openwrt",
+		},
+		{
+			MAC:       dev3.MAC,
+			Timestamp: now.Add(-1 * time.Minute),
+			RxBytes:   3000000,
+			TxBytes:   400000,
+			RxRate:    30000,
+			TxRate:    4000,
+			Source:    "opnsense",
+		},
+	}
+	if err := s.RecordTrafficSamples(wanSamples); err != nil {
+		t.Fatalf("RecordTrafficSamples(wanSamples) failed: %v", err)
+	}
+
+	// 1, 3, 4: Verify dev1:
+	// - WAN metrics updated
+	// - Link metrics preserved (not overwritten)
+	// - traffic_source preserved as "switch"
+	updatedDev1 := s.GetDevice(dev1.IP)
+	if updatedDev1 == nil {
+		t.Fatalf("dev1 not found")
+	}
+	if updatedDev1.TrafficSource != "switch" {
+		t.Errorf("dev1: expected traffic_source 'switch', got %q", updatedDev1.TrafficSource)
+	}
+	if updatedDev1.WanRxRateBps != 50000 || updatedDev1.WanTxRateBps != 8000 {
+		t.Errorf("dev1: expected wan rates 50000/8000, got %d/%d", updatedDev1.WanRxRateBps, updatedDev1.WanTxRateBps)
+	}
+	if updatedDev1.WanRxBytes != 5000000 || updatedDev1.WanTxBytes != 800000 {
+		t.Errorf("dev1: expected wan bytes 5000000/800000, got %d/%d", updatedDev1.WanRxBytes, updatedDev1.WanTxBytes)
+	}
+	if updatedDev1.RxRateBps != 15000 || updatedDev1.TxRateBps != 3000 {
+		t.Errorf("dev1: expected link rates preserved at 15000/3000, got %d/%d", updatedDev1.RxRateBps, updatedDev1.TxRateBps)
+	}
+	if updatedDev1.RxBytes != 1000000 || updatedDev1.TxBytes != 200000 {
+		t.Errorf("dev1: expected link bytes preserved at 1000000/200000, got %d/%d", updatedDev1.RxBytes, updatedDev1.TxBytes)
+	}
+
+	// 1, 4: Verify dev2:
+	// - WAN metrics updated
+	// - traffic_source set to "openwrt" (was empty)
+	// - Link metrics remain 0
+	updatedDev2 := s.GetDevice(dev2.IP)
+	if updatedDev2 == nil {
+		t.Fatalf("dev2 not found")
+	}
+	if updatedDev2.TrafficSource != "openwrt" {
+		t.Errorf("dev2: expected traffic_source 'openwrt', got %q", updatedDev2.TrafficSource)
+	}
+	if updatedDev2.WanRxRateBps != 70000 || updatedDev2.WanTxRateBps != 9000 {
+		t.Errorf("dev2: expected wan rates 70000/9000, got %d/%d", updatedDev2.WanRxRateBps, updatedDev2.WanTxRateBps)
+	}
+	if updatedDev2.WanRxBytes != 7000000 || updatedDev2.WanTxBytes != 900000 {
+		t.Errorf("dev2: expected wan bytes 7000000/900000, got %d/%d", updatedDev2.WanRxBytes, updatedDev2.WanTxBytes)
+	}
+	if updatedDev2.RxRateBps != 0 || updatedDev2.TxRateBps != 0 {
+		t.Errorf("dev2: expected link rates to remain 0, got %d/%d", updatedDev2.RxRateBps, updatedDev2.TxRateBps)
+	}
+	if updatedDev2.RxBytes != 0 || updatedDev2.TxBytes != 0 {
+		t.Errorf("dev2: expected link bytes to remain 0, got %d/%d", updatedDev2.RxBytes, updatedDev2.TxBytes)
+	}
+
+	// Verify dev3 (opnsense):
+	// - WAN metrics updated
+	// - traffic_source set to "opnsense" (was empty)
+	// - Link metrics remain 0
+	updatedDev3 := s.GetDevice(dev3.IP)
+	if updatedDev3 == nil {
+		t.Fatalf("dev3 not found")
+	}
+	if updatedDev3.TrafficSource != "opnsense" {
+		t.Errorf("dev3: expected traffic_source 'opnsense', got %q", updatedDev3.TrafficSource)
+	}
+	if updatedDev3.WanRxRateBps != 30000 || updatedDev3.WanTxRateBps != 4000 {
+		t.Errorf("dev3: expected wan rates 30000/4000, got %d/%d", updatedDev3.WanRxRateBps, updatedDev3.WanTxRateBps)
+	}
+	if updatedDev3.WanRxBytes != 3000000 || updatedDev3.WanTxBytes != 400000 {
+		t.Errorf("dev3: expected wan bytes 3000000/400000, got %d/%d", updatedDev3.WanRxBytes, updatedDev3.WanTxBytes)
+	}
+	if updatedDev3.RxRateBps != 0 || updatedDev3.TxRateBps != 0 {
+		t.Errorf("dev3: expected link rates to remain 0, got %d/%d", updatedDev3.RxRateBps, updatedDev3.TxRateBps)
+	}
+	if updatedDev3.RxBytes != 0 || updatedDev3.TxBytes != 0 {
+		t.Errorf("dev3: expected link bytes to remain 0, got %d/%d", updatedDev3.RxBytes, updatedDev3.TxBytes)
+	}
+
+	// 2: Verify samples are recorded in traffic_samples table with source = 'openwrt'
+	for _, mac := range []string{dev1.MAC, dev2.MAC} {
+		var count int
+		err := s.db.QueryRow("SELECT COUNT(*) FROM traffic_samples WHERE LOWER(mac) = LOWER(?) AND source = 'openwrt'", mac).Scan(&count)
+		if err != nil {
+			t.Fatalf("failed to query traffic_samples for %s: %v", mac, err)
+		}
+		if count != 1 {
+			t.Errorf("expected 1 traffic_sample with source='openwrt' for %s, got %d", mac, count)
+		}
+	}
+
+	// Also verify dev3 sample was recorded with source = 'opnsense'
+	var opnSampleCount int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM traffic_samples WHERE LOWER(mac) = LOWER(?) AND source = 'opnsense'", dev3.MAC).Scan(&opnSampleCount)
+	if err != nil {
+		t.Fatalf("failed to query traffic_samples for %s: %v", dev3.MAC, err)
+	}
+	if opnSampleCount != 1 {
+		t.Errorf("expected 1 traffic_sample with source='opnsense' for %s, got %d", dev3.MAC, opnSampleCount)
+	}
+}
+
