@@ -810,3 +810,230 @@ func TestFetchOPNsenseNetFlow(t *testing.T) {
 		}
 	})
 }
+
+func TestFetchOpenWrtNlbwmon(t *testing.T) {
+	t.Run("StandardResultAndAuth", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				t.Errorf("expected POST, got %s", r.Method)
+			}
+			if r.URL.Path != "/ubus" {
+				t.Errorf("expected /ubus, got %s", r.URL.Path)
+			}
+			if auth := r.Header.Get("Authorization"); auth != "Bearer secret-token-123" {
+				t.Errorf("expected Bearer secret-token-123, got %s", auth)
+			}
+			if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+				t.Errorf("expected application/json, got %s", ct)
+			}
+
+			var reqBody struct {
+				JSONRPC string        `json:"jsonrpc"`
+				ID      int           `json:"id"`
+				Method  string        `json:"method"`
+				Params  []interface{} `json:"params"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+				t.Fatalf("failed to decode req body: %v", err)
+			}
+			if reqBody.Method != "call" {
+				t.Errorf("expected method call, got %s", reqBody.Method)
+			}
+			if len(reqBody.Params) != 4 {
+				t.Fatalf("expected 4 params, got %d", len(reqBody.Params))
+			}
+			if reqBody.Params[0] != "secret-token-123" {
+				t.Errorf("expected param[0] secret-token-123, got %v", reqBody.Params[0])
+			}
+			if reqBody.Params[1] != "nlbwmon" {
+				t.Errorf("expected param[1] nlbwmon, got %v", reqBody.Params[1])
+			}
+			if reqBody.Params[2] != "dump" {
+				t.Errorf("expected param[2] dump, got %v", reqBody.Params[2])
+			}
+			p3, ok := reqBody.Params[3].(map[string]interface{})
+			if !ok || p3["format"] != "json" {
+				t.Errorf("expected param[3] format json, got %v", reqBody.Params[3])
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			resp := map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result": []interface{}{
+					0,
+					map[string]interface{}{
+						"columns": []string{"mac", "ip", "in", "out"},
+						"rows": []interface{}{
+							[]interface{}{"aa:bb:cc:dd:ee:01", "10.5.5.10", 1000, 500},
+						},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:   true,
+			URL:      server.URL,
+			APIToken: "secret-token-123",
+		}
+
+		stats, err := FetchOpenWrtNlbwmon(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("FetchOpenWrtNlbwmon failed: %v", err)
+		}
+		if len(stats) != 1 {
+			t.Fatalf("expected 1 stat, got %d", len(stats))
+		}
+		dev, ok := stats["10.5.5.10"]
+		if !ok {
+			t.Fatalf("expected stats for 10.5.5.10, got %+v", stats)
+		}
+		if dev.RxBytes != 1000 {
+			t.Errorf("expected 1000 RxBytes, got %d", dev.RxBytes)
+		}
+		if dev.TxBytes != 500 {
+			t.Errorf("expected 500 TxBytes, got %d", dev.TxBytes)
+		}
+	})
+
+	t.Run("AlternateColumnsAndMultipleRowsAggregation", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// Direct object result and alternate column names
+			resp := map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result": map[string]interface{}{
+					"columns": []string{"host", "ether", "rx_bytes", "tx_bytes"},
+					"rows": []interface{}{
+						[]interface{}{"10.5.5.20", "aa:bb:cc:dd:ee:02", 2000, 1000},
+						[]interface{}{"10.5.5.20", "aa:bb:cc:dd:ee:02", 3000, 500},
+						[]interface{}{"10.5.5.30", "aa:bb:cc:dd:ee:03", 5000, 2500},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:   true,
+			URL:      server.URL,
+			APIToken: "token",
+		}
+
+		stats, err := FetchOpenWrtNlbwmon(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("FetchOpenWrtNlbwmon failed: %v", err)
+		}
+		if len(stats) != 2 {
+			t.Fatalf("expected 2 stats, got %d", len(stats))
+		}
+
+		dev20, ok := stats["10.5.5.20"]
+		if !ok {
+			t.Fatalf("expected stats for 10.5.5.20, got %+v", stats)
+		}
+		if dev20.RxBytes != 5000 || dev20.TxBytes != 1500 {
+			t.Errorf("expected 5000 Rx and 1500 Tx, got %d Rx, %d Tx", dev20.RxBytes, dev20.TxBytes)
+		}
+
+		dev30, ok := stats["10.5.5.30"]
+		if !ok {
+			t.Fatalf("expected stats for 10.5.5.30, got %+v", stats)
+		}
+		if dev30.RxBytes != 5000 || dev30.TxBytes != 2500 {
+			t.Errorf("expected 5000 Rx and 2500 Tx, got %d Rx, %d Tx", dev30.RxBytes, dev30.TxBytes)
+		}
+	})
+
+	t.Run("RobustNumberParsingAndAlternativeColumnAliases", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			resp := map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result": []interface{}{
+					0,
+					map[string]interface{}{
+						"columns": []string{"addr", "hw", "download", "upload"},
+						"rows": []interface{}{
+							[]interface{}{"10.5.5.40", "00:11:22:33:44:55", "12345", 6789.0},
+						},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:   true,
+			URL:      server.URL,
+			APIToken: "token",
+		}
+
+		stats, err := FetchOpenWrtNlbwmon(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("FetchOpenWrtNlbwmon failed: %v", err)
+		}
+		dev40, ok := stats["10.5.5.40"]
+		if !ok {
+			t.Fatalf("expected stats for 10.5.5.40, got %+v", stats)
+		}
+		if dev40.RxBytes != 12345 || dev40.TxBytes != 6789 {
+			t.Errorf("expected 12345 Rx and 6789 Tx, got %d Rx, %d Tx", dev40.RxBytes, dev40.TxBytes)
+		}
+	})
+
+	t.Run("ErrorHandling", func(t *testing.T) {
+		// 1. Non-200 HTTP status
+		s500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+		}))
+		defer s500.Close()
+
+		_, err := FetchOpenWrtNlbwmon(context.Background(), config.OpenWrtConfig{URL: s500.URL})
+		if err == nil {
+			t.Errorf("expected error for HTTP 500, got nil")
+		}
+
+		// 2. Ubus error code in result array
+		sUbusErr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result":  []interface{}{6, nil},
+			})
+		}))
+		defer sUbusErr.Close()
+
+		_, err = FetchOpenWrtNlbwmon(context.Background(), config.OpenWrtConfig{URL: sUbusErr.URL})
+		if err == nil {
+			t.Errorf("expected error for ubus error code 6, got nil")
+		}
+
+		// 3. JSON-RPC error field
+		sRPCErr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"error": map[string]interface{}{
+					"code":    -32600,
+					"message": "Invalid Request",
+				},
+			})
+		}))
+		defer sRPCErr.Close()
+
+		_, err = FetchOpenWrtNlbwmon(context.Background(), config.OpenWrtConfig{URL: sRPCErr.URL})
+		if err == nil {
+			t.Errorf("expected error for JSON-RPC error, got nil")
+		}
+	})
+}

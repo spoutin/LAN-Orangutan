@@ -319,6 +319,175 @@ func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []t
 	return leases, reservations, nil
 }
 
+// FetchOpenWrtNlbwmon queries OpenWrt via ubus JSON-RPC for nlbwmon traffic counters.
+func FetchOpenWrtNlbwmon(ctx context.Context, cfg config.OpenWrtConfig) (map[string]*types.NetFlowDeviceStats, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
+	if baseURL == "" {
+		return nil, fmt.Errorf("missing openwrt url")
+	}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
+	}
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			if len(via) > 0 && req.URL.Hostname() == via[0].URL.Hostname() {
+				if auth := via[0].Header.Get("Authorization"); auth != "" {
+					req.Header.Set("Authorization", auth)
+				}
+			}
+			return nil
+		},
+	}
+
+	rpcReq := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "call",
+		"params": []interface{}{
+			cfg.APIToken,
+			"nlbwmon",
+			"dump",
+			map[string]interface{}{"format": "json"},
+		},
+	}
+	reqBytes, err := json.Marshal(rpcReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal nlbwmon request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/ubus", bytes.NewReader(reqBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create nlbwmon request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.APIToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute nlbwmon request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected openwrt ubus response status: %s", resp.Status)
+	}
+
+	var rpcResp struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      interface{}     `json:"id"`
+		Error   interface{}     `json:"error"`
+		Result  json.RawMessage `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return nil, fmt.Errorf("failed to decode ubus response: %w", err)
+	}
+	if rpcResp.Error != nil {
+		return nil, fmt.Errorf("openwrt ubus rpc error: %v", rpcResp.Error)
+	}
+
+	result := make(map[string]*types.NetFlowDeviceStats)
+	if len(rpcResp.Result) == 0 || string(rpcResp.Result) == "null" {
+		return result, nil
+	}
+
+	var resultArr []json.RawMessage
+	dataRaw := rpcResp.Result
+	if err := json.Unmarshal(rpcResp.Result, &resultArr); err == nil {
+		if len(resultArr) >= 1 {
+			var code int
+			if err := json.Unmarshal(resultArr[0], &code); err == nil && code != 0 {
+				return nil, fmt.Errorf("openwrt ubus call failed with code: %d", code)
+			}
+		}
+		if len(resultArr) >= 2 {
+			dataRaw = resultArr[1]
+		} else {
+			return result, nil
+		}
+	}
+
+	var dump struct {
+		Columns []string        `json:"columns"`
+		Rows    [][]interface{} `json:"rows"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(dataRaw))
+	dec.UseNumber()
+	if err := dec.Decode(&dump); err != nil {
+		return nil, fmt.Errorf("failed to decode nlbwmon dump data: %w", err)
+	}
+
+	findCol := func(columns []string, candidates ...string) int {
+		for _, cand := range candidates {
+			for idx, col := range columns {
+				if strings.EqualFold(strings.TrimSpace(col), cand) {
+					return idx
+				}
+			}
+		}
+		return -1
+	}
+
+	ipIdx := findCol(dump.Columns, "ip", "addr", "host")
+	rxIdx := findCol(dump.Columns, "rx_bytes", "rx", "in", "in_bytes", "download")
+	txIdx := findCol(dump.Columns, "tx_bytes", "tx", "out", "out_bytes", "upload")
+
+	if ipIdx == -1 {
+		return nil, fmt.Errorf("nlbwmon dump missing ip column")
+	}
+	if rxIdx == -1 && txIdx == -1 {
+		return nil, fmt.Errorf("nlbwmon dump missing rx/tx columns")
+	}
+
+	for _, row := range dump.Rows {
+		if ipIdx >= len(row) {
+			continue
+		}
+		var ipStr string
+		switch v := row[ipIdx].(type) {
+		case string:
+			ipStr = v
+		default:
+			if v != nil {
+				ipStr = fmt.Sprint(v)
+			}
+		}
+		ip := cleanHostIP(ipStr)
+		if ip == "" {
+			continue
+		}
+
+		var rxBytes int64
+		if rxIdx >= 0 && rxIdx < len(row) {
+			if n, ok := parseNumeric(row[rxIdx]); ok {
+				rxBytes = n
+			}
+		}
+
+		var txBytes int64
+		if txIdx >= 0 && txIdx < len(row) {
+			if n, ok := parseNumeric(row[txIdx]); ok {
+				txBytes = n
+			}
+		}
+
+		st, exists := result[ip]
+		if !exists {
+			st = &types.NetFlowDeviceStats{IP: ip}
+			result[ip] = st
+		}
+		st.RxBytes += rxBytes
+		st.TxBytes += txBytes
+	}
+
+	return result, nil
+}
+
 // FetchOPNsenseDHCP contacts the OPNsense firewall to retrieve Kea leases, reservations, and ARP entries.
 func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases []types.Device, reservations []types.Device, arpEntries []types.Device, err error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
