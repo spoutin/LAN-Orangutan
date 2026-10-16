@@ -20,10 +20,10 @@ fi
 # 3. Install traffic.hosts.uc
 mkdir -p /usr/share/uapi/resources
 if command -v uclient-fetch >/dev/null 2>&1; then
-    uclient-fetch -qO /usr/share/uapi/resources/traffic.hosts.uc \
+    uclient-fetch --no-check-certificate -qO /usr/share/uapi/resources/traffic.hosts.uc \
         "https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/scripts/openwrt/traffic.hosts.uc"
 else
-    curl -sSL -o /usr/share/uapi/resources/traffic.hosts.uc \
+    curl -k -sSL -o /usr/share/uapi/resources/traffic.hosts.uc \
         "https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/scripts/openwrt/traffic.hosts.uc"
 fi
 chmod 644 /usr/share/uapi/resources/traffic.hosts.uc
