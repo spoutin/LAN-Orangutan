@@ -38,7 +38,8 @@ cp "${SRC_PLUGIN}" "${DATA_DIR}/usr/share/uapi/resources/traffic.hosts.uc"
 chmod 644 "${DATA_DIR}/usr/share/uapi/resources/traffic.hosts.uc"
 
 INSTALLED_SIZE=$(du -sk "${DATA_DIR}" | cut -f1)
-BUILD_DATE=$(date +%s 2>/dev/null || date -u +%s)
+SOURCE_DATE_EPOCH="$(date +%s 2>/dev/null || date -u +%s)"
+export SOURCE_DATE_EPOCH
 
 # --- 2. Build .ipk package (for OpenWrt opkg) ---
 IPK_DIR="${TMP_DIR}/ipk"
