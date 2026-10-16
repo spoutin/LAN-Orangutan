@@ -64,7 +64,7 @@ if [ -f /usr/share/uapi/main.uc ]; then
     if ! grep -q '"traffic:hosts"' /usr/share/uapi/main.uc; then
         sed -i '/const RESOURCES = {/a \	"traffic:hosts": handler.make_collection(load_resource("traffic:hosts")),' /usr/share/uapi/main.uc
     fi
-    /etc/init.d/uhttpd restart >/dev/null 2>&1 || true
+    ( sleep 2 && /etc/init.d/uhttpd restart ) >/dev/null 2>&1 &
 fi
 exit 0
 EOF
@@ -74,7 +74,7 @@ cat << 'EOF' > "${IPK_DIR}/control/prerm"
 #!/bin/sh
 if [ -f /usr/share/uapi/main.uc ]; then
     sed -i '/"traffic:hosts"/d' /usr/share/uapi/main.uc
-    /etc/init.d/uhttpd restart >/dev/null 2>&1 || true
+    ( sleep 2 && /etc/init.d/uhttpd restart ) >/dev/null 2>&1 &
 fi
 exit 0
 EOF
@@ -102,7 +102,7 @@ if [ -f /usr/share/uapi/main.uc ]; then
     if ! grep -q '"traffic:hosts"' /usr/share/uapi/main.uc; then
         sed -i '/const RESOURCES = {/a \	"traffic:hosts": handler.make_collection(load_resource("traffic:hosts")),' /usr/share/uapi/main.uc
     fi
-    /etc/init.d/uhttpd restart >/dev/null 2>&1 || true
+    ( sleep 2 && /etc/init.d/uhttpd restart ) >/dev/null 2>&1 &
 fi
 exit 0
 EOF
@@ -112,7 +112,7 @@ cat << 'EOF' > "${TMP_DIR}/pre-deinstall"
 #!/bin/sh
 if [ -f /usr/share/uapi/main.uc ]; then
     sed -i '/"traffic:hosts"/d' /usr/share/uapi/main.uc
-    /etc/init.d/uhttpd restart >/dev/null 2>&1 || true
+    ( sleep 2 && /etc/init.d/uhttpd restart ) >/dev/null 2>&1 &
 fi
 exit 0
 EOF
