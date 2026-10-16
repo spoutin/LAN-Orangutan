@@ -33,6 +33,7 @@ The following key enhancements have been integrated:
 * **Native Go Client Integrations:** Built native clients utilizing Go's high-performance standard library to poll your local routers securely (supporting Basic Auth, Bearer Tokens, and custom/self-signed SSL certificates).
 * **DHCP Lease Merging:** Queries **OPNsense** (Kea DHCP leases and reservations) and **OpenWrt** (leases and static host reservations) and dynamically merges them with your live Nmap scans.
 * **Firewall ARP Tables:** Pulls OPNsense's active ARP tables to find and register other active IP addresses on routed subnets/VLANs, and merges them as secondary discovery.
+* **Live WAN Traffic & Bandwidth Telemetry:** Captures real-time download and upload throughput (`↓ MB/s ↑ KB/s`) and cumulative data volume for devices behind **OPNsense** (NetFlow) and **OpenWrt** (`nlbwmon` via `traffic_monitoring = true`, see [OpenWrt Traffic Guide](docs/OPENWRT_TRAFFIC.md)).
 
 ### 🏷️ Intelligent IP & Subnet Management
 * **Subnet Naming & Auto-Scanning:** Define your subnets and friendly names once in `config.ini` under `[network_names]`. The scanning scheduler automatically derives its scan list from these keys—completely eliminating duplicate configuration entry!
