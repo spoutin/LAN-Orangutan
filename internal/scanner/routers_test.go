@@ -812,8 +812,77 @@ func TestFetchOPNsenseNetFlow(t *testing.T) {
 }
 
 func TestFetchOpenWrtNlbwmon(t *testing.T) {
+	t.Run("UAPIRestEndpoint", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				t.Errorf("expected GET, got %s", r.Method)
+			}
+			if r.URL.Path != "/api/v3/traffic/hosts" {
+				t.Errorf("expected /api/v3/traffic/hosts, got %s", r.URL.Path)
+			}
+			if auth := r.Header.Get("Authorization"); auth != "Bearer secret-token-123" {
+				t.Errorf("expected Bearer secret-token-123, got %s", auth)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			resp := []map[string]interface{}{
+				{
+					"id":       "c4:4e:ac:e7:85:49:IP:0",
+					"ip":       "10.5.5.217",
+					"mac":      "c4:4e:ac:e7:85:49",
+					"rx_bytes": 5000000000,
+					"tx_bytes": 54000000,
+				},
+				{
+					"id":       "c4:4e:ac:e7:85:49:UDP:443",
+					"ip":       "10.5.5.217",
+					"mac":      "c4:4e:ac:e7:85:49",
+					"rx_bytes": 600000000,
+					"tx_bytes": 5000000,
+				},
+				{
+					"id":       "bc:24:11:9c:71:80:IP:0",
+					"ip":       "10.5.5.34",
+					"mac":      "bc:24:11:9c:71:80",
+					"rx_bytes": 3700000000,
+					"tx_bytes": 1100000000,
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:            true,
+			URL:               server.URL,
+			APIToken:          "secret-token-123",
+			TrafficMonitoring: true,
+		}
+
+		stats, err := FetchOpenWrtNlbwmon(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("FetchOpenWrtNlbwmon failed: %v", err)
+		}
+		if len(stats) != 2 {
+			t.Fatalf("expected 2 hosts, got %d", len(stats))
+		}
+		host1, ok := stats["10.5.5.217"]
+		if !ok {
+			t.Fatalf("expected stats for 10.5.5.217")
+		}
+		if host1.RxBytes != 5600000000 {
+			t.Errorf("expected 5600000000 RxBytes, got %d", host1.RxBytes)
+		}
+		if host1.TxBytes != 59000000 {
+			t.Errorf("expected 59000000 TxBytes, got %d", host1.TxBytes)
+		}
+	})
+
 	t.Run("StandardResultAndAuth", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v3/traffic/hosts" {
+				http.NotFound(w, r)
+				return
+			}
 			if r.Method != http.MethodPost {
 				t.Errorf("expected POST, got %s", r.Method)
 			}
@@ -901,6 +970,10 @@ func TestFetchOpenWrtNlbwmon(t *testing.T) {
 
 	t.Run("AlternateColumnsAndMultipleRowsAggregation", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v3/traffic/hosts" {
+				http.NotFound(w, r)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			// Direct object result and alternate column names
 			resp := map[string]interface{}{
@@ -952,6 +1025,10 @@ func TestFetchOpenWrtNlbwmon(t *testing.T) {
 
 	t.Run("RobustNumberParsingAndAlternativeColumnAliases", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v3/traffic/hosts" {
+				http.NotFound(w, r)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			resp := map[string]interface{}{
 				"jsonrpc": "2.0",

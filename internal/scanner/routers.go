@@ -319,7 +319,8 @@ func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []t
 	return leases, reservations, nil
 }
 
-// FetchOpenWrtNlbwmon queries OpenWrt via ubus JSON-RPC for nlbwmon traffic counters.
+// FetchOpenWrtNlbwmon queries OpenWrt via uapi REST API (/api/v3/traffic/hosts)
+// or falls back to ubus JSON-RPC for nlbwmon traffic counters.
 func FetchOpenWrtNlbwmon(ctx context.Context, cfg config.OpenWrtConfig) (map[string]*types.NetFlowDeviceStats, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	if baseURL == "" {
@@ -344,6 +345,48 @@ func FetchOpenWrtNlbwmon(ctx context.Context, cfg config.OpenWrtConfig) (map[str
 		},
 	}
 
+	// 1. Try uapi REST endpoint: GET /api/v3/traffic/hosts
+	reqUAPI, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/v3/traffic/hosts", nil)
+	if err == nil {
+		if cfg.APIToken != "" {
+			reqUAPI.Header.Set("Authorization", "Bearer "+cfg.APIToken)
+		}
+		reqUAPI.Header.Set("Accept", "application/json")
+		respUAPI, err := client.Do(reqUAPI)
+		if err == nil {
+			defer respUAPI.Body.Close()
+			if respUAPI.StatusCode == http.StatusOK {
+				var items []struct {
+					IP      string      `json:"ip"`
+					MAC     string      `json:"mac"`
+					RxBytes interface{} `json:"rx_bytes"`
+					TxBytes interface{} `json:"tx_bytes"`
+				}
+				if err := json.NewDecoder(respUAPI.Body).Decode(&items); err == nil && len(items) > 0 {
+					result := make(map[string]*types.NetFlowDeviceStats)
+					for _, item := range items {
+						ip := cleanHostIP(item.IP)
+						if ip == "" {
+							continue
+						}
+						rxBytes, _ := parseNumeric(item.RxBytes)
+						txBytes, _ := parseNumeric(item.TxBytes)
+
+						st, exists := result[ip]
+						if !exists {
+							st = &types.NetFlowDeviceStats{IP: ip}
+							result[ip] = st
+						}
+						st.RxBytes += rxBytes
+						st.TxBytes += txBytes
+					}
+					return result, nil
+				}
+			}
+		}
+	}
+
+	// 2. Fallback: ubus JSON-RPC call
 	rpcReq := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -415,11 +458,17 @@ func FetchOpenWrtNlbwmon(ctx context.Context, cfg config.OpenWrtConfig) (map[str
 	var dump struct {
 		Columns []string        `json:"columns"`
 		Rows    [][]interface{} `json:"rows"`
+		Data    [][]interface{} `json:"data"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(dataRaw))
 	dec.UseNumber()
 	if err := dec.Decode(&dump); err != nil {
 		return nil, fmt.Errorf("failed to decode nlbwmon dump data: %w", err)
+	}
+
+	rows := dump.Rows
+	if len(rows) == 0 && len(dump.Data) > 0 {
+		rows = dump.Data
 	}
 
 	findCol := func(columns []string, candidates ...string) int {
@@ -444,7 +493,7 @@ func FetchOpenWrtNlbwmon(ctx context.Context, cfg config.OpenWrtConfig) (map[str
 		return nil, fmt.Errorf("nlbwmon dump missing rx/tx columns")
 	}
 
-	for _, row := range dump.Rows {
+	for _, row := range rows {
 		if ipIdx >= len(row) {
 			continue
 		}
