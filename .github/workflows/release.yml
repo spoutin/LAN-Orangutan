@@ -608,6 +608,12 @@ jobs:
           }
           EOF
 
+      - name: Build OpenWrt .ipk package
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          chmod +x scripts/openwrt/build-ipk.sh
+          ./scripts/openwrt/build-ipk.sh "${VERSION}-1" dist
+
       - name: Debug - List all release files
         run: |
           echo "=== All files in dist/ before release ==="
@@ -624,11 +630,14 @@ jobs:
           echo ""
           echo "=== rpm files ==="
           ls -la dist/*.rpm 2>/dev/null || echo "No rpm files"
+          echo ""
+          echo "=== ipk files ==="
+          ls -la dist/*.ipk 2>/dev/null || echo "No ipk files"
 
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum *.tar.gz *.zip *.deb *.rpm *.apk 2>/dev/null > SHA256SUMS.txt || true
+          sha256sum *.tar.gz *.zip *.deb *.rpm *.apk *.ipk 2>/dev/null > SHA256SUMS.txt || true
           echo "=== SHA256SUMS.txt contents ==="
           cat SHA256SUMS.txt
 
@@ -644,6 +653,7 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/*.apk
+            dist/*.ipk
             dist/*.rb
             dist/*.json
             dist/PKGBUILD

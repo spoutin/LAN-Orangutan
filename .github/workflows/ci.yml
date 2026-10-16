@@ -59,7 +59,24 @@ jobs:
       - name: Check shell scripts
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
-          shellcheck install.sh uninstall.sh scripts/*.sh
+          shellcheck install.sh uninstall.sh scripts/*.sh scripts/openwrt/*.sh
+
+  openwrt-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build OpenWrt IPK package
+        run: |
+          chmod +x scripts/openwrt/build-ipk.sh
+          ./scripts/openwrt/build-ipk.sh 1.0.0-1 dist
+
+      - name: Upload OpenWrt IPK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uapi-traffic-hosts-ipk
+          path: dist/*.ipk
 
   docker:
     runs-on: ubuntu-latest

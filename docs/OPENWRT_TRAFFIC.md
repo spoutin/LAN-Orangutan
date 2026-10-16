@@ -22,9 +22,20 @@ LAN-Orangutan integrates with OpenWrt to track WAN and per-device traffic volume
 
 ## 2. Install the `uapi` Plugin on OpenWrt
 
-If your OpenWrt router runs `uapi` (the native REST API):
+### Method A: Install via LuCI Web GUI (.ipk package - Recommended)
 
-1. **Copy the plugin script**:
+1. Download the latest `uapi-traffic-hosts_<version>_all.ipk` package from:
+   - [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases)
+   - Or GitHub Actions build artifacts for recent commits.
+2. In your OpenWrt LuCI web interface, navigate to **System → Software**.
+3. Click the **Upload Package...** button.
+4. Select the downloaded `.ipk` file and click **Upload**.
+5. Click **Install**.
+   The package installs `/usr/share/uapi/resources/traffic.hosts.uc`, registers `"traffic:hosts"` into `/usr/share/uapi/main.uc`, and restarts `uhttpd` automatically.
+
+### Method B: Manual CLI Installation
+
+If you prefer installing manually via SSH:
    Copy `scripts/openwrt/traffic.hosts.uc` to `/usr/share/uapi/resources/traffic.hosts.uc` on the router.
 
    Or create it directly on the router via SSH:
