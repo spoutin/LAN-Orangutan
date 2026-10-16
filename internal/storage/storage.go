@@ -3161,7 +3161,10 @@ func (s *Storage) RecordTrafficSamples(samples []types.TrafficSample) error {
 
 	stmtUpdateDeviceWAN, err := tx.Prepare(`
 		UPDATE devices SET
-			traffic_source = CASE WHEN traffic_source = '' THEN ? ELSE traffic_source END,
+			traffic_source = CASE
+				WHEN traffic_source = '' OR traffic_source = 'opnsense' OR traffic_source = 'openwrt' THEN ?
+				ELSE traffic_source
+			END,
 			wan_rx_rate_bps = ?,
 			wan_tx_rate_bps = ?,
 			wan_rx_bytes = CASE WHEN ? > 0 THEN ? ELSE wan_rx_bytes END,

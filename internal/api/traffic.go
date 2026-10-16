@@ -179,6 +179,17 @@ func (tc *TrafficCollector) CollectCycle(
 				if !network.ContainsIP(tc.cfg.OPNsense.Networks, dev.IP) {
 					continue
 				}
+				// Skip if the device resides on an enabled OpenWrt network
+				isOnOpenWrt := false
+				for _, wrt := range tc.cfg.AllOpenWrts() {
+					if wrt.Enable && wrt.TrafficMonitoring && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, dev.IP) {
+						isOnOpenWrt = true
+						break
+					}
+				}
+				if isOnOpenWrt {
+					continue
+				}
 				normMAC := strings.ToLower(strings.TrimSpace(dev.MAC))
 				if st.RxBytes == 0 && st.TxBytes == 0 {
 					continue
@@ -219,6 +230,10 @@ func (tc *TrafficCollector) CollectCycle(
 					continue
 				}
 				if !network.ContainsIP(wrt.Networks, dev.IP) {
+					continue
+				}
+				// Skip if the device resides on an enabled OPNsense network
+				if tc.cfg.OPNsense.Enable && len(tc.cfg.OPNsense.Networks) > 0 && network.ContainsIP(tc.cfg.OPNsense.Networks, dev.IP) {
 					continue
 				}
 				normMAC := strings.ToLower(strings.TrimSpace(dev.MAC))

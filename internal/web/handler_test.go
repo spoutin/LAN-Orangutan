@@ -1049,3 +1049,47 @@ func TestIndexPageOpenWrtWANAttribution(t *testing.T) {
 		t.Errorf("outside device should NOT have data-wan-rx-rate-bps=4500")
 	}
 }
+
+func TestIndexPageOpenWrtSubnetReplacesStaleOpnsenseSource(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	h.cfg.OPNsense.Enable = true
+	h.cfg.OPNsense.Networks = []string{"10.0.0.0/24"}
+	h.cfg.OpenWrt.Enable = true
+	h.cfg.OpenWrt.TrafficMonitoring = true
+	h.cfg.OpenWrt.Networks = []string{"10.5.5.0/24"}
+
+	// Stale device in store on OpenWrt network with opnsense traffic source
+	devOpenWrt := types.Device{
+		IP:            "10.5.5.50",
+		MAC:           "aa:bb:cc:55:55:55",
+		Hostname:      "openwrt-device",
+		WanRxRateBps:  2000,
+		WanTxRateBps:  1000,
+		WanRxBytes:    50000,
+		TrafficSource: "opnsense", // stale source
+		FirstSeen:     time.Now().Add(-1 * time.Hour),
+		LastSeen:      time.Now(),
+	}
+
+	if err := h.store.UpdateDevice(&devOpenWrt); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	h.handleIndex(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// Should be rendered as [openwrt], NOT [opnsense]
+	if !strings.Contains(body, "[openwrt]") {
+		t.Errorf("expected OpenWrt device to display [openwrt] badge")
+	}
+	if strings.Contains(body, "[opnsense]") {
+		t.Errorf("OpenWrt device must NOT display [opnsense] badge")
+	}
+}

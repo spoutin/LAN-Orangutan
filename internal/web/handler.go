@@ -427,21 +427,28 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 			dv.Type = scanner.Classify(resolvedVendor, d.Hostname, nil)
 		}
 
-		// WAN throughput attribution is strictly scoped to the firewall's configured networks
-		onFirewallNetwork := false
-		if len(h.cfg.OPNsense.Networks) > 0 && network.ContainsIP(h.cfg.OPNsense.Networks, d.IP) {
-			onFirewallNetwork = true
-		}
-		if !onFirewallNetwork {
-			for _, wrt := range h.cfg.AllOpenWrts() {
-				if wrt.Enable && wrt.TrafficMonitoring && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, d.IP) {
-					onFirewallNetwork = true
-					break
-				}
+		// WAN throughput attribution is strictly scoped to the firewall owning each subnet
+		isOpnsenseNet := len(h.cfg.OPNsense.Networks) > 0 && network.ContainsIP(h.cfg.OPNsense.Networks, d.IP)
+		isOpenWrtNet := false
+		for _, wrt := range h.cfg.AllOpenWrts() {
+			if wrt.Enable && wrt.TrafficMonitoring && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, d.IP) {
+				isOpenWrtNet = true
+				break
 			}
 		}
 
-		if !onFirewallNetwork {
+		if isOpenWrtNet {
+			// Device is on an OpenWrt network: strictly OpenWrt telemetry
+			if dv.TrafficSource == "opnsense" {
+				dv.TrafficSource = "openwrt"
+			}
+		} else if isOpnsenseNet {
+			// Device is on an OPNsense network: strictly OPNsense telemetry
+			if dv.TrafficSource == "openwrt" {
+				dv.TrafficSource = "opnsense"
+			}
+		} else {
+			// Device is outside all configured firewall networks: zero out WAN telemetry
 			dv.WanRxRateBps = 0
 			dv.WanTxRateBps = 0
 			dv.WanRxBytes = 0

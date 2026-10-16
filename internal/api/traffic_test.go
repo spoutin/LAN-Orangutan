@@ -569,3 +569,73 @@ func TestTrafficCollector_OpenWrtNlbwmon(t *testing.T) {
 		t.Errorf("expected 0 samples when TrafficMonitoring is false, got %d", len(samples3))
 	}
 }
+
+func TestTrafficCollector_FirewallSubnetMutualExclusion(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	devOpn := types.Device{IP: "10.0.0.50", MAC: "aa:bb:cc:00:00:01", Hostname: "opn-host"}
+	devWrt := types.Device{IP: "10.5.5.50", MAC: "aa:bb:cc:00:00:02", Hostname: "wrt-host"}
+	if err := store.UpdateDevice(&devOpn); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDevice(&devWrt); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.OPNsense = config.OPNsenseConfig{
+		Enable:   true,
+		URL:      "https://opnsense.local",
+		Networks: []string{"10.0.0.0/24"},
+	}
+	cfg.OpenWrt = config.OpenWrtConfig{
+		ID:                "wrt",
+		Enable:            true,
+		TrafficMonitoring: true,
+		URL:               "https://10.5.5.1",
+		Networks:          []string{"10.5.5.0/24"},
+	}
+
+	tc := NewTrafficCollector(store, cfg)
+	now := time.Now()
+
+	// Both routers report flows for BOTH IPs (simulating cross-chatter)
+	fetchNetFlow := func(_ context.Context, _ config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error) {
+		return map[string]*types.NetFlowDeviceStats{
+			"10.0.0.50": {IP: "10.0.0.50", RxBytes: 1000, TxBytes: 500},
+			"10.5.5.50": {IP: "10.5.5.50", RxBytes: 9999, TxBytes: 9999}, // should be rejected by OPNsense collector
+		}, nil
+	}
+	fetchNlbwmon := func(_ context.Context, _ config.OpenWrtConfig) (map[string]*types.NetFlowDeviceStats, error) {
+		return map[string]*types.NetFlowDeviceStats{
+			"10.0.0.50": {IP: "10.0.0.50", RxBytes: 8888, TxBytes: 8888}, // should be rejected by OpenWrt collector
+			"10.5.5.50": {IP: "10.5.5.50", RxBytes: 2000, TxBytes: 1000},
+		}, nil
+	}
+
+	samples, err := tc.CollectCycle(context.Background(), now, nil, nil, fetchNetFlow, fetchNlbwmon)
+	if err != nil {
+		t.Fatalf("CollectCycle failed: %v", err)
+	}
+
+	if len(samples) != 2 {
+		t.Fatalf("expected exactly 2 samples, got %d: %+v", len(samples), samples)
+	}
+
+	for _, s := range samples {
+		if s.MAC == "aa:bb:cc:00:00:01" {
+			if s.Source != "opnsense" || s.RxBytes != 1000 {
+				t.Errorf("expected opnsense source with 1000 bytes for opn host, got %+v", s)
+			}
+		} else if s.MAC == "aa:bb:cc:00:00:02" {
+			if s.Source != "openwrt" || s.RxBytes != 2000 {
+				t.Errorf("expected openwrt source with 2000 bytes for wrt host, got %+v", s)
+			}
+		}
+	}
+}

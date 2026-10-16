@@ -926,19 +926,27 @@ func (h *Handler) handleDeviceTraffic(w http.ResponseWriter, r *http.Request, id
 	}
 
 	if series != nil {
-		onFirewallNetwork := false
-		if len(h.cfg.OPNsense.Networks) > 0 && network.ContainsIP(h.cfg.OPNsense.Networks, series.IP) {
-			onFirewallNetwork = true
-		}
-		if !onFirewallNetwork {
-			for _, wrt := range h.cfg.AllOpenWrts() {
-				if wrt.Enable && wrt.TrafficMonitoring && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, series.IP) {
-					onFirewallNetwork = true
-					break
-				}
+		isOpnsenseNet := len(h.cfg.OPNsense.Networks) > 0 && network.ContainsIP(h.cfg.OPNsense.Networks, series.IP)
+		isOpenWrtNet := false
+		for _, wrt := range h.cfg.AllOpenWrts() {
+			if wrt.Enable && wrt.TrafficMonitoring && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, series.IP) {
+				isOpenWrtNet = true
+				break
 			}
 		}
-		if !onFirewallNetwork {
+
+		if isOpenWrtNet {
+			// Device is on an OpenWrt network: strictly OpenWrt telemetry
+			if series.Source == "opnsense" {
+				series.Source = "openwrt"
+			}
+		} else if isOpnsenseNet {
+			// Device is on an OPNsense network: strictly OPNsense telemetry
+			if series.Source == "openwrt" {
+				series.Source = "opnsense"
+			}
+		} else {
+			// Device is outside all configured firewall networks: zero out WAN telemetry
 			series.Current.WanRxRateBytesSec = 0
 			series.Current.WanTxRateBytesSec = 0
 			series.Current.WanRxBytesTotal = 0
