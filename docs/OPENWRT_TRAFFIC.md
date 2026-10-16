@@ -22,7 +22,29 @@ LAN-Orangutan integrates with OpenWrt to track WAN and per-device traffic volume
 
 ## 2. Install the `uapi` Plugin on OpenWrt
 
-### Method A: Install via LuCI Web GUI (.apk or .ipk - Recommended)
+### Method A: One-Command Installer (Recommended)
+
+Run this single command via SSH on your OpenWrt router:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/scripts/openwrt/install.sh | sh
+```
+*(Or if curl isn't installed: `uclient-fetch -qO - https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/scripts/openwrt/install.sh | sh`)*
+
+This script automatically:
+1. Installs and starts `nlbwmon` if not already running.
+2. Installs `/usr/share/uapi/resources/traffic.hosts.uc`.
+3. Registers `"traffic:hosts"` into `/usr/share/uapi/main.uc`.
+4. Restarts `uhttpd` so the API is live immediately.
+
+To uninstall at any time:
+```sh
+curl -sSL https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/scripts/openwrt/uninstall.sh | sh
+```
+
+---
+
+### Method B: Install via LuCI Web GUI (.apk or .ipk package)
 
 1. *(Optional one-time setup for LuCI)*: To allow LuCI to install signed `.apk` packages without untrusted signature warnings, trust the Orangutan release public key:
    ```sh
@@ -38,19 +60,7 @@ LAN-Orangutan integrates with OpenWrt to track WAN and per-device traffic volume
 6. Click **Install**.
    The package installs `/usr/share/uapi/resources/traffic.hosts.uc`, registers `"traffic:hosts"` into `/usr/share/uapi/main.uc`, and restarts `uhttpd` automatically.
 
-### Method B: Install via Router Terminal
-
-**For modern OpenWrt (`apk`):**
-```sh
-uclient-fetch -qO /tmp/traffic.apk "https://github.com/spoutin/LAN-Orangutan/releases/download/<version>/uapi-traffic-hosts-<version>-r1.apk"
-apk add --allow-untrusted /tmp/traffic.apk
-```
-
-**For legacy OpenWrt (`opkg`):**
-```sh
-uclient-fetch -qO /tmp/traffic.ipk "https://github.com/spoutin/LAN-Orangutan/releases/download/<version>/uapi-traffic-hosts_<version>-1_all.ipk"
-opkg install /tmp/traffic.ipk
-```
+---
 
 ### Method C: Manual Script Copy
 

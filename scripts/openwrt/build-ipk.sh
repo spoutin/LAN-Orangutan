@@ -94,9 +94,9 @@ APK_BUILD="${TMP_DIR}/apk_build"
 mkdir -p "${APK_BUILD}/data" "${APK_BUILD}/control"
 cp -r "${DATA_DIR}/"* "${APK_BUILD}/data/"
 
-# Create data stream
+# Create data stream (pack usr directly without leading ./)
 DATA_TAR="${APK_BUILD}/data.tar.gz"
-( cd "${APK_BUILD}/data" && tar -czf "${DATA_TAR}" . )
+( cd "${APK_BUILD}/data" && tar -czf "${DATA_TAR}" usr )
 
 if command -v sha256sum >/dev/null 2>&1; then
     DATA_HASH=$(sha256sum "${DATA_TAR}" | cut -d' ' -f1)
