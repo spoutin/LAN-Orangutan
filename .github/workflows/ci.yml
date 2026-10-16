@@ -79,6 +79,7 @@ jobs:
           path: |
             dist/*.ipk
             dist/*.apk
+            dist/*.rsa.pub
 
   docker:
     runs-on: ubuntu-latest

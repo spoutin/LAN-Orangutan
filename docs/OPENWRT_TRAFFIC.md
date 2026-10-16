@@ -24,13 +24,18 @@ LAN-Orangutan integrates with OpenWrt to track WAN and per-device traffic volume
 
 ### Method A: Install via LuCI Web GUI (.apk or .ipk - Recommended)
 
-1. Download the package matching your OpenWrt package manager from [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases):
+1. *(Optional one-time setup for LuCI)*: To allow LuCI to install signed `.apk` packages without untrusted signature warnings, trust the Orangutan release public key:
+   ```sh
+   uclient-fetch -qO /etc/apk/keys/orangutan.rsa.pub \
+     "https://github.com/spoutin/LAN-Orangutan/releases/download/<version>/orangutan.rsa.pub"
+   ```
+2. Download the package matching your OpenWrt package manager from [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases):
    - **For modern OpenWrt (`apk`-based, 24.10+ / 25.x):** download `uapi-traffic-hosts-<version>-r1.apk` (or `uapi-traffic-hosts_<version>_all.apk`).
    - **For legacy OpenWrt (`opkg`-based, 23.x / 22.x):** download `uapi-traffic-hosts_<version>-1_all.ipk`.
-2. In your OpenWrt LuCI web interface, navigate to **System → Software**.
-3. Click the **Upload Package...** button.
-4. Select the downloaded file from your computer and click **Upload**.
-5. Click **Install**.
+3. In your OpenWrt LuCI web interface, navigate to **System → Software**.
+4. Click the **Upload Package...** button.
+5. Select the downloaded file from your computer and click **Upload**.
+6. Click **Install**.
    The package installs `/usr/share/uapi/resources/traffic.hosts.uc`, registers `"traffic:hosts"` into `/usr/share/uapi/main.uc`, and restarts `uhttpd` automatically.
 
 ### Method B: Install via Router Terminal
