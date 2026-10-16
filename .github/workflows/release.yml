@@ -608,11 +608,11 @@ jobs:
           }
           EOF
 
-      - name: Build OpenWrt .ipk package
+      - name: Build OpenWrt .ipk and .apk packages
         run: |
           VERSION=${{ steps.version.outputs.VERSION }}
           chmod +x scripts/openwrt/build-ipk.sh
-          ./scripts/openwrt/build-ipk.sh "${VERSION}-1" dist
+          ./scripts/openwrt/build-ipk.sh "${VERSION}" dist
 
       - name: Debug - List all release files
         run: |

@@ -22,20 +22,34 @@ LAN-Orangutan integrates with OpenWrt to track WAN and per-device traffic volume
 
 ## 2. Install the `uapi` Plugin on OpenWrt
 
-### Method A: Install via LuCI Web GUI (.ipk package - Recommended)
+### Method A: Install via LuCI Web GUI (.apk or .ipk - Recommended)
 
-1. Download the latest `uapi-traffic-hosts_<version>_all.ipk` package from:
-   - [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases)
-   - Or GitHub Actions build artifacts for recent commits.
+1. Download the package matching your OpenWrt package manager from [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases):
+   - **For modern OpenWrt (`apk`-based, 24.10+ / 25.x):** download `uapi-traffic-hosts-<version>-r1.apk` (or `uapi-traffic-hosts_<version>_all.apk`).
+   - **For legacy OpenWrt (`opkg`-based, 23.x / 22.x):** download `uapi-traffic-hosts_<version>-1_all.ipk`.
 2. In your OpenWrt LuCI web interface, navigate to **System → Software**.
 3. Click the **Upload Package...** button.
-4. Select the downloaded `.ipk` file and click **Upload**.
+4. Select the downloaded file from your computer and click **Upload**.
 5. Click **Install**.
    The package installs `/usr/share/uapi/resources/traffic.hosts.uc`, registers `"traffic:hosts"` into `/usr/share/uapi/main.uc`, and restarts `uhttpd` automatically.
 
-### Method B: Manual CLI Installation
+### Method B: Install via Router Terminal
 
-If you prefer installing manually via SSH:
+**For modern OpenWrt (`apk`):**
+```sh
+uclient-fetch -qO /tmp/traffic.apk "https://github.com/spoutin/LAN-Orangutan/releases/download/<version>/uapi-traffic-hosts-<version>-r1.apk"
+apk add --allow-untrusted /tmp/traffic.apk
+```
+
+**For legacy OpenWrt (`opkg`):**
+```sh
+uclient-fetch -qO /tmp/traffic.ipk "https://github.com/spoutin/LAN-Orangutan/releases/download/<version>/uapi-traffic-hosts_<version>-1_all.ipk"
+opkg install /tmp/traffic.ipk
+```
+
+### Method C: Manual Script Copy
+
+If you prefer copying the script manually via SSH:
    Copy `scripts/openwrt/traffic.hosts.uc` to `/usr/share/uapi/resources/traffic.hosts.uc` on the router.
 
    Or create it directly on the router via SSH:
