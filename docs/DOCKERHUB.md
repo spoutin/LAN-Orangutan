@@ -7,8 +7,8 @@ Scan your networks, discover devices, label and track them, all from a clean web
 By [291 Group](https://291group.com) · [GitHub](https://github.com/spoutin/LAN-Orangutan) · MIT licensed
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/291-Group/LAN-Orangutan/main/docs/LO1.png" width="48%" />
-  <img src="https://raw.githubusercontent.com/291-Group/LAN-Orangutan/main/docs/LO2.png" width="48%" />
+  <img src="https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/docs/LO1.png" width="48%" />
+  <img src="https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/docs/LO2.png" width="48%" />
 </p>
 
 ---
@@ -40,7 +40,7 @@ docker run -d \
   --cap-add NET_RAW --cap-add NET_ADMIN --cap-add NET_BIND_SERVICE \
   -v $(pwd)/data:/var/lib/lan-orangutan \
   --restart unless-stopped \
-  291group/lan-orangutan:latest
+  ghcr.io/spoutin/lan-orangutan:latest
 ```
 
 Then open `http://<that-machine>:291` and create a password. Nothing is reachable until you do. There is no default password and none is generated for you.
@@ -48,16 +48,16 @@ Then open `http://<that-machine>:291` and create a password. Nothing is reachabl
 ### docker compose
 
 ```bash
-curl -O https://raw.githubusercontent.com/291-Group/LAN-Orangutan/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/docker-compose.yml
 docker compose up -d
 ```
 
-The published compose file pulls from GHCR. To use Docker Hub instead, change the `image:` line to `291group/lan-orangutan:latest`.
+The compose file pulls from GHCR (`ghcr.io/spoutin/lan-orangutan:latest`).
 
 ```yaml
 services:
   lan-orangutan:
-    image: 291group/lan-orangutan:latest
+    image: ghcr.io/spoutin/lan-orangutan:latest
     container_name: lan-orangutan
     restart: unless-stopped
     network_mode: host
@@ -83,7 +83,7 @@ services:
 
 Built for **linux/amd64** and **linux/arm64** (multi-arch manifest, so Raspberry Pi 4/5 and other arm64 boards pull the right image automatically).
 
-Also published to GHCR as `ghcr.io/291-group/lan-orangutan`. Identical images; pull from whichever you prefer.
+Published to GHCR as `ghcr.io/spoutin/lan-orangutan`.
 
 ---
 

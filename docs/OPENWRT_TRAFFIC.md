@@ -7,12 +7,18 @@ LAN-Orangutan integrates with OpenWrt to track WAN and per-device traffic volume
 ## 1. Prerequisites on OpenWrt
 
 1. **Install and start `nlbwmon`**:
-   ```sh
-   opkg update
-   opkg install nlbwmon
-   /etc/init.d/nlbwmon enable
-   /etc/init.d/nlbwmon start
-   ```
+   - For modern OpenWrt (`apk`-based, 24.10+ / 25.x):
+     ```sh
+     apk add nlbwmon
+     /etc/init.d/nlbwmon enable
+     /etc/init.d/nlbwmon start
+     ```
+   - For legacy OpenWrt (`opkg`-based, 23.x / 22.x):
+     ```sh
+     opkg update && opkg install nlbwmon
+     /etc/init.d/nlbwmon enable
+     /etc/init.d/nlbwmon start
+     ```
 2. Verify `nlbw` runs:
    ```sh
    nlbw -c json
@@ -48,7 +54,7 @@ curl -sSL https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/scripts/o
 
 1. *(Optional one-time setup for LuCI)*: To allow LuCI to install signed `.apk` packages without untrusted signature warnings, trust the Orangutan release public key:
    ```sh
-   uclient-fetch -qO /etc/apk/keys/orangutan.rsa.pub \
+   uclient-fetch --no-check-certificate -qO /etc/apk/keys/orangutan.rsa.pub \
      "https://github.com/spoutin/LAN-Orangutan/releases/download/<version>/orangutan.rsa.pub"
    ```
 2. Download the package matching your OpenWrt package manager from [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases):

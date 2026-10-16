@@ -1,16 +1,12 @@
 # 🦧 LAN Orangutan 
 
 <p align="left">
-  <img src="https://291grp.com/assets/badges/stars.svg?v=1" alt="Stars" height="20">
-  <img src="https://291grp.com/assets/badges/forks.svg?v=1" alt="Forks" height="20">
-  <img src="https://291grp.com/assets/badges/release.svg?v=1" alt="Release" height="20">
-  <img src="https://291grp.com/assets/badges/build.svg?v=1" alt="Build" height="20">
-  <img src="https://291grp.com/assets/badges/license.svg?v=1" alt="License" height="20">&nbsp;
-  <a href="https://github.com/avelino/awesome-go#utilities"><img src="https://291grp.com/assets/awards/mentioned-in-awesome.svg" alt="Mentioned in Awesome" height="20"></a>&nbsp;&nbsp;<a href="https://devhunt.org/tool/lan-orangutan"><img src="https://291grp.com/assets/awards/devhunt.svg" alt="DevHunt - 2nd Product of the Week" height="20"></a>
+  <a href="https://github.com/spoutin/LAN-Orangutan/releases"><img src="https://img.shields.io/github/v/release/spoutin/LAN-Orangutan?color=f97316&label=Release" alt="Release"></a>
+  <a href="https://github.com/spoutin/LAN-Orangutan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/spoutin/LAN-Orangutan/ci.yml?branch=main&label=Build" alt="Build Status"></a>
+  <a href="https://github.com/spoutin/LAN-Orangutan/stargazers"><img src="https://img.shields.io/github/stars/spoutin/LAN-Orangutan?color=eab308" alt="Stars"></a>
+  <a href="https://github.com/spoutin/LAN-Orangutan/network/members"><img src="https://img.shields.io/github/forks/spoutin/LAN-Orangutan?color=3b82f6" alt="Forks"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/spoutin/LAN-Orangutan?color=10b981" alt="License"></a>
 </p>
-
-
-<a href="https://trendshift.io/repositories/17888?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-17888" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/17888/daily?language=Go" alt="291-Group%2FLAN-Orangutan | Trendshift" width="250" height="55"/></a>
 
 **Self-hosted network discovery for homelabbers with Tailscale support.**
 
@@ -81,22 +77,22 @@ Grab the latest release of LAN Orangutan for your platform from [GitHub Releases
 
 ### Docker
 
-Pull the image from Docker Hub:
+Pull the container image from GitHub Container Registry (GHCR):
 
 ```bash
-docker pull 291group/lan-orangutan
+docker pull ghcr.io/spoutin/lan-orangutan:latest
 ```
 
 Or use the compose file for the full setup with host networking and a persistent data folder:
 
 ```bash
-curl -O https://raw.githubusercontent.com/291-Group/LAN-Orangutan/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/docker-compose.yml
 docker compose up -d
 ```
 
 Then open `http://<that-machine>:291` and create a password. Your data is kept in a `data/` folder next to the compose file.
 
-The image is published to both [Docker Hub](https://hub.docker.com/r/291group/lan-orangutan) (`291group/lan-orangutan`) and [GitHub Container Registry](https://github.com/spoutin/LAN-Orangutan/pkgs/container/lan-orangutan) (`ghcr.io/291-group/lan-orangutan`). The compose file uses GHCR; pull from whichever you prefer.
+To supply custom configuration (such as OPNsense or OpenWrt router credentials), copy `config.example.ini` to `config.ini` in the same directory and uncomment the config volume in `docker-compose.yml`.
 
 **Docker requires Linux.** The container uses host networking, because on Docker's own private network it would only ever see other containers (`172.17.0.0/16`) rather than the devices on your LAN. Docker Desktop on macOS and Windows runs Linux inside a virtual machine, so host networking attaches to that VM instead of your computer: the dashboard is unreachable and a scan finds nothing but the VM. On macOS and Windows, download the binary and run it directly, as described below.
 
@@ -371,6 +367,30 @@ Environment variables supported:
 * `ORANGUTAN_REMOTE_SCAN_KEY`: in-memory OpenSSH private key PEM.
 
 **Failure Isolation & Alerting:** If an edge scanner fails (SSH unreachable, authentication rejected, or Nmap missing on the gateway), the scan for that subnet is skipped to protect firewall state tables, and an alert is immediately dispatched to the Slack webhook configured for that network.
+
+### OpenWrt Traffic & Bandwidth Monitoring
+
+LAN Orangutan tracks real-time WAN download and upload throughput (`↓ MB/s ↑ KB/s`) as well as cumulative data volume for devices behind OpenWrt routers using `nlbwmon` (Netlink Bandwidth Monitor) and the router's native `uapi` REST service.
+
+To enable traffic monitoring:
+1. **Install the Companion Plugin on OpenWrt:**
+   - **Method A (LuCI Web GUI):** In OpenWrt navigate to **System → Software → Upload Package...**, upload the signed `uapi-traffic-hosts-<version>-r1.apk` (or `.ipk` for legacy versions) from [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases), and click **Install**.
+   - **Method B (One-Command Installer via SSH):**
+     ```sh
+     curl -sSL https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/scripts/openwrt/install.sh | sh
+     ```
+2. **Enable in LAN Orangutan:**
+   In your `config.ini`:
+   ```ini
+   [openwrt]
+   enable = true
+   url = https://10.5.5.1
+   api_token = <your-uapi-token>
+   traffic_monitoring = true
+   networks = 10.5.5.0/24
+   ```
+
+For full prerequisite details, public key trust setup, and uninstall instructions, see the dedicated [OpenWrt Traffic Guide](docs/OPENWRT_TRAFFIC.md).
 
 ## Building from Source
 

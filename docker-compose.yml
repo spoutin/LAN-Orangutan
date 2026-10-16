@@ -13,7 +13,7 @@
 
 services:
   lan-orangutan:
-    image: ghcr.io/291-group/lan-orangutan:latest
+    image: ghcr.io/spoutin/lan-orangutan:latest
     container_name: lan-orangutan
     restart: unless-stopped
 
@@ -51,6 +51,8 @@ services:
       # Your device list, labels and password live here. Without this, they are
       # lost every time the container is recreated.
       - ./data:/var/lib/lan-orangutan
+      # Optional: Mount your custom config.ini for router / switch / edge integrations
+      # - ./config.ini:/etc/lan-orangutan/config.ini:ro
 
     healthcheck:
       # A static asset over 127.0.0.1: public, always 200, and IPv4 (the server
