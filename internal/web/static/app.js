@@ -1452,7 +1452,7 @@ function syncDeviceSidebarTelemetry(data) {
     const txRate = Number(data.txRateBps) || 0;
     const rxBytes = Number(data.rxBytes) || 0;
     const txBytes = Number(data.txBytes) || 0;
-    const linkSource = (data.trafficSource && data.trafficSource !== 'opnsense') ? data.trafficSource : (data.ssid ? 'unifi' : (data.switchPort ? 'switch' : ''));
+    const linkSource = (data.trafficSource && data.trafficSource !== 'opnsense' && data.trafficSource !== 'openwrt') ? data.trafficSource : (data.ssid ? 'unifi' : (data.switchPort ? 'switch' : ''));
 
     const hasLinkTraffic = rxRate > 0 || txRate > 0 || rxBytes > 0 || txBytes > 0 || linkSource !== '';
     if (trafficCard) {
@@ -1496,7 +1496,7 @@ function syncDeviceSidebarTelemetry(data) {
         const wanTxRate = Number(data.wanTxRateBps) || 0;
         const wanRxBytes = Number(data.wanRxBytes) || 0;
         const wanTxBytes = Number(data.wanTxBytes) || 0;
-        const hasWanTraffic = wanRxRate > 0 || wanTxRate > 0 || wanRxBytes > 0 || wanTxBytes > 0 || data.trafficSource === 'opnsense';
+        const hasWanTraffic = wanRxRate > 0 || wanTxRate > 0 || wanRxBytes > 0 || wanTxBytes > 0 || data.trafficSource === 'opnsense' || data.trafficSource === 'openwrt';
 
         if (hasWanTraffic) {
             netflowCard.style.display = '';

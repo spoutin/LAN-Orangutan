@@ -982,3 +982,70 @@ func TestIndexPageWANAttributionFiltering(t *testing.T) {
 		t.Errorf("outside device should NOT have data-wan-rx-rate-bps=2500")
 	}
 }
+
+func TestIndexPageOpenWrtWANAttribution(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	h.cfg.OPNsense.Enable = false
+	h.cfg.OpenWrt.Enable = true
+	h.cfg.OpenWrt.Nlbwmon = true
+	h.cfg.OpenWrt.Networks = []string{"10.5.5.0/24"}
+
+	devInside := types.Device{
+		IP:            "10.5.5.25",
+		MAC:           "aa:bb:cc:55:66:77",
+		Hostname:      "wrt-inside",
+		WanRxRateBps:  3500,
+		WanTxRateBps:  1200,
+		WanRxBytes:    80000,
+		TrafficSource: "openwrt",
+		FirstSeen:     time.Now().Add(-1 * time.Hour),
+		LastSeen:      time.Now(),
+	}
+	devOutside := types.Device{
+		IP:            "192.168.1.50",
+		MAC:           "aa:bb:cc:88:99:00",
+		Hostname:      "wrt-outside",
+		WanRxRateBps:  4500,
+		WanTxRateBps:  1500,
+		WanRxBytes:    120000,
+		TrafficSource: "openwrt",
+		FirstSeen:     time.Now().Add(-1 * time.Hour),
+		LastSeen:      time.Now(),
+	}
+
+	if err := h.store.UpdateDevice(&devInside); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.UpdateDevice(&devOutside); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	h.handleIndex(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// Inside device should retain its WAN rate and render the [openwrt] WAN badge
+	if !strings.Contains(body, `data-wan-rx-rate-bps="3500"`) {
+		t.Errorf("expected inside device to have data-wan-rx-rate-bps=3500")
+	}
+	if !strings.Contains(body, "[openwrt]") {
+		t.Errorf("expected [openwrt] badge to be rendered for inside device")
+	}
+	if !strings.Contains(body, "traffic-badge-wan") {
+		t.Errorf("expected traffic-badge-wan to be rendered for inside device")
+	}
+
+	// Outside device should have its WAN stats zeroed out
+	if !strings.Contains(body, `data-mac="aa:bb:cc:88:99:00"`) {
+		t.Fatalf("expected outside device row to exist")
+	}
+	if strings.Contains(body, `data-wan-rx-rate-bps="4500"`) {
+		t.Errorf("outside device should NOT have data-wan-rx-rate-bps=4500")
+	}
+}

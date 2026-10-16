@@ -925,13 +925,27 @@ func (h *Handler) handleDeviceTraffic(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 
-	if series != nil && (len(h.cfg.OPNsense.Networks) == 0 || !network.ContainsIP(h.cfg.OPNsense.Networks, series.IP)) {
-		series.Current.WanRxRateBytesSec = 0
-		series.Current.WanTxRateBytesSec = 0
-		series.Current.WanRxBytesTotal = 0
-		series.Current.WanTxBytesTotal = 0
-		if series.Source == "opnsense" {
-			series.Source = ""
+	if series != nil {
+		onFirewallNetwork := false
+		if len(h.cfg.OPNsense.Networks) > 0 && network.ContainsIP(h.cfg.OPNsense.Networks, series.IP) {
+			onFirewallNetwork = true
+		}
+		if !onFirewallNetwork {
+			for _, wrt := range h.cfg.AllOpenWrts() {
+				if wrt.Enable && wrt.Nlbwmon && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, series.IP) {
+					onFirewallNetwork = true
+					break
+				}
+			}
+		}
+		if !onFirewallNetwork {
+			series.Current.WanRxRateBytesSec = 0
+			series.Current.WanTxRateBytesSec = 0
+			series.Current.WanRxBytesTotal = 0
+			series.Current.WanTxBytesTotal = 0
+			if series.Source == "opnsense" || series.Source == "openwrt" {
+				series.Source = ""
+			}
 		}
 	}
 

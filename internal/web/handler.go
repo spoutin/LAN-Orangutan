@@ -428,12 +428,25 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// WAN throughput attribution is strictly scoped to the firewall's configured networks
-		if len(h.cfg.OPNsense.Networks) == 0 || !network.ContainsIP(h.cfg.OPNsense.Networks, d.IP) {
+		onFirewallNetwork := false
+		if len(h.cfg.OPNsense.Networks) > 0 && network.ContainsIP(h.cfg.OPNsense.Networks, d.IP) {
+			onFirewallNetwork = true
+		}
+		if !onFirewallNetwork {
+			for _, wrt := range h.cfg.AllOpenWrts() {
+				if wrt.Enable && wrt.Nlbwmon && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, d.IP) {
+					onFirewallNetwork = true
+					break
+				}
+			}
+		}
+
+		if !onFirewallNetwork {
 			dv.WanRxRateBps = 0
 			dv.WanTxRateBps = 0
 			dv.WanRxBytes = 0
 			dv.WanTxBytes = 0
-			if dv.TrafficSource == "opnsense" {
+			if dv.TrafficSource == "opnsense" || dv.TrafficSource == "openwrt" {
 				dv.TrafficSource = ""
 			}
 		}
