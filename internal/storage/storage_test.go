@@ -1790,4 +1790,3 @@ func TestRecordTrafficSamples_OpenWrtWAN(t *testing.T) {
 		t.Errorf("expected 1 traffic_sample with source='opnsense' for %s, got %d", dev3.MAC, opnSampleCount)
 	}
 }
-
