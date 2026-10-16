@@ -101,21 +101,21 @@ type Config struct {
 
 // OpenWrtConfig holds OpenWrt connection and remote scanning settings
 type OpenWrtConfig struct {
-	ID          string   `json:"id,omitempty"`
-	Enable      bool     `json:"enable"`
-	URL         string   `json:"url"`
-	APIToken    string   `json:"-"`
-	VerifySSL   bool     `json:"verify_ssl"`
-	RemoteScan  bool     `json:"remote_scan"`
-	Nlbwmon     bool     `json:"nlbwmon"`
-	SSHHost     string   `json:"ssh_host,omitempty"`
-	SSHPort     int      `json:"ssh_port,omitempty"`
-	SSHUser     string   `json:"ssh_user,omitempty"`
-	SSHSudo     bool     `json:"ssh_sudo,omitempty"`
-	SSHKey      string   `json:"-"`
-	SSHKeyFile  string   `json:"ssh_key_file,omitempty"`
-	SSHPassword string   `json:"-"`
-	Networks    []string `json:"networks,omitempty"`
+	ID                string   `json:"id,omitempty"`
+	Enable            bool     `json:"enable"`
+	URL               string   `json:"url"`
+	APIToken          string   `json:"-"`
+	VerifySSL         bool     `json:"verify_ssl"`
+	RemoteScan        bool     `json:"remote_scan"`
+	TrafficMonitoring bool     `json:"traffic_monitoring"`
+	SSHHost           string   `json:"ssh_host,omitempty"`
+	SSHPort           int      `json:"ssh_port,omitempty"`
+	SSHUser           string   `json:"ssh_user,omitempty"`
+	SSHSudo           bool     `json:"ssh_sudo,omitempty"`
+	SSHKey            string   `json:"-"`
+	SSHKeyFile        string   `json:"ssh_key_file,omitempty"`
+	SSHPassword       string   `json:"-"`
+	Networks          []string `json:"networks,omitempty"`
 }
 
 // OpenWrtsConfig holds multiple configured OpenWrt routers
@@ -570,8 +570,8 @@ func (c *Config) setValue(section, key, value string) {
 			c.OpenWrt.VerifySSL = parseBool(value)
 		case "remote_scan":
 			c.OpenWrt.RemoteScan = parseBool(value)
-		case "nlbwmon":
-			c.OpenWrt.Nlbwmon = parseBool(value)
+		case "traffic_monitoring", "traffic_monitor", "traffic", "nlbwmon":
+			c.OpenWrt.TrafficMonitoring = parseBool(value)
 		case "ssh_host", "host":
 			c.OpenWrt.SSHHost = value
 		case "ssh_port", "port":
@@ -787,8 +787,8 @@ func (c *Config) setOpenWrtValue(id, key, value string) {
 		cfg.VerifySSL = parseBool(value)
 	case "remote_scan":
 		cfg.RemoteScan = parseBool(value)
-	case "nlbwmon":
-		cfg.Nlbwmon = parseBool(value)
+	case "traffic_monitoring", "traffic_monitor", "traffic", "nlbwmon":
+		cfg.TrafficMonitoring = parseBool(value)
 	case "ssh_host", "host":
 		cfg.SSHHost = value
 	case "ssh_port", "port":
@@ -1006,10 +1006,14 @@ func (c *Config) ApplyEnv() error {
 	if v := os.Getenv("ORANGUTAN_OPENWRT_REMOTE_SCAN"); v != "" {
 		c.OpenWrt.RemoteScan = parseBool(v)
 	}
-	if v := os.Getenv("ORANGUTAN_OPENWRT_NLBWMON"); v != "" {
-		c.OpenWrt.Nlbwmon = parseBool(v)
+	if v := os.Getenv("ORANGUTAN_OPENWRT_TRAFFIC_MONITORING"); v != "" {
+		c.OpenWrt.TrafficMonitoring = parseBool(v)
+	} else if v := os.Getenv("OPENWRT_TRAFFIC_MONITORING"); v != "" {
+		c.OpenWrt.TrafficMonitoring = parseBool(v)
+	} else if v := os.Getenv("ORANGUTAN_OPENWRT_NLBWMON"); v != "" {
+		c.OpenWrt.TrafficMonitoring = parseBool(v)
 	} else if v := os.Getenv("OPENWRT_NLBWMON"); v != "" {
-		c.OpenWrt.Nlbwmon = parseBool(v)
+		c.OpenWrt.TrafficMonitoring = parseBool(v)
 	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_HOST"); v != "" {
 		c.OpenWrt.SSHHost = v
@@ -1067,6 +1071,7 @@ func (c *Config) ApplyEnv() error {
 			{"api_token", "API_TOKEN"},
 			{"verify_ssl", "VERIFY_SSL"},
 			{"remote_scan", "REMOTE_SCAN"},
+			{"traffic_monitoring", "TRAFFIC_MONITORING"},
 			{"nlbwmon", "NLBWMON"},
 			{"ssh_host", "SSH_HOST"},
 			{"host", "HOST"},

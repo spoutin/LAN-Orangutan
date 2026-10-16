@@ -434,7 +434,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 		if !onFirewallNetwork {
 			for _, wrt := range h.cfg.AllOpenWrts() {
-				if wrt.Enable && wrt.Nlbwmon && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, d.IP) {
+				if wrt.Enable && wrt.TrafficMonitoring && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, d.IP) {
 					onFirewallNetwork = true
 					break
 				}

@@ -467,10 +467,10 @@ func TestTrafficCollector_OpenWrtNlbwmon(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.OpenWrt = config.OpenWrtConfig{
-		ID:       "wrt-main",
-		Enable:   true,
-		Nlbwmon:  true,
-		Networks: []string{"10.5.5.0/24"},
+		ID:                "wrt-main",
+		Enable:            true,
+		TrafficMonitoring: true,
+		Networks:          []string{"10.5.5.0/24"},
 	}
 	tc := NewTrafficCollector(store, cfg)
 	t0 := time.Now()
@@ -559,13 +559,13 @@ func TestTrafficCollector_OpenWrtNlbwmon(t *testing.T) {
 		t.Errorf("outside device should have 0 WAN stats, got RxBytes=%d TxBytes=%d", storedOutside.WanRxBytes, storedOutside.WanTxBytes)
 	}
 
-	// 3. When Nlbwmon: false, no collection occurs
-	cfg.OpenWrt.Nlbwmon = false
+	// 3. When TrafficMonitoring: false, no collection occurs
+	cfg.OpenWrt.TrafficMonitoring = false
 	samples3, err := tc.CollectCycle(context.Background(), t1.Add(60*time.Second), nil, nil, nil, fetchNlbwmon2)
 	if err != nil {
-		t.Fatalf("CollectCycle with Nlbwmon: false failed: %v", err)
+		t.Fatalf("CollectCycle with TrafficMonitoring: false failed: %v", err)
 	}
 	if len(samples3) != 0 {
-		t.Errorf("expected 0 samples when Nlbwmon is false, got %d", len(samples3))
+		t.Errorf("expected 0 samples when TrafficMonitoring is false, got %d", len(samples3))
 	}
 }

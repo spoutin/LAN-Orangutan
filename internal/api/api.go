@@ -932,7 +932,7 @@ func (h *Handler) handleDeviceTraffic(w http.ResponseWriter, r *http.Request, id
 		}
 		if !onFirewallNetwork {
 			for _, wrt := range h.cfg.AllOpenWrts() {
-				if wrt.Enable && wrt.Nlbwmon && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, series.IP) {
+				if wrt.Enable && wrt.TrafficMonitoring && len(wrt.Networks) > 0 && network.ContainsIP(wrt.Networks, series.IP) {
 					onFirewallNetwork = true
 					break
 				}

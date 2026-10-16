@@ -204,7 +204,7 @@ func (tc *TrafficCollector) CollectCycle(
 	// 4. OpenWrt Firewall (nlbwmon Bandwidth Monitor)
 	if fetchNlbwmon != nil && ctx.Err() == nil {
 		for _, wrt := range tc.cfg.AllOpenWrts() {
-			if !wrt.Enable || !wrt.Nlbwmon || len(wrt.Networks) == 0 {
+			if !wrt.Enable || !wrt.TrafficMonitoring || len(wrt.Networks) == 0 {
 				continue
 			}
 			flowStats, err := fetchNlbwmon(ctx, wrt)

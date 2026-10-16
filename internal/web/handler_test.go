@@ -987,7 +987,7 @@ func TestIndexPageOpenWrtWANAttribution(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 	h.cfg.OPNsense.Enable = false
 	h.cfg.OpenWrt.Enable = true
-	h.cfg.OpenWrt.Nlbwmon = true
+	h.cfg.OpenWrt.TrafficMonitoring = true
 	h.cfg.OpenWrt.Networks = []string{"10.5.5.0/24"}
 
 	devInside := types.Device{
