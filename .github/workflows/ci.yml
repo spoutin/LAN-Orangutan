@@ -71,6 +71,9 @@ jobs:
         run: |
           chmod +x scripts/openwrt/build-ipk.sh
           ./scripts/openwrt/build-ipk.sh 1.0.0 dist
+          test -f dist/uapi-traffic-hosts-1.0.0-r1.apk
+          test -f dist/uapi-traffic-hosts_1.0.0-1_all.ipk
+          ls -la dist/
 
       - name: Upload OpenWrt package artifacts
         uses: actions/upload-artifact@v4

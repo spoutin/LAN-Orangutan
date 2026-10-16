@@ -633,6 +633,9 @@ jobs:
           echo ""
           echo "=== ipk files ==="
           ls -la dist/*.ipk 2>/dev/null || echo "No ipk files"
+          echo ""
+          echo "=== apk files ==="
+          ls -la dist/*.apk 2>/dev/null || echo "No apk files"
 
       - name: Generate checksums
         run: |

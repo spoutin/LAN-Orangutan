@@ -52,7 +52,7 @@ curl -sSL https://raw.githubusercontent.com/spoutin/LAN-Orangutan/main/scripts/o
      "https://github.com/spoutin/LAN-Orangutan/releases/download/<version>/orangutan.rsa.pub"
    ```
 2. Download the package matching your OpenWrt package manager from [GitHub Releases](https://github.com/spoutin/LAN-Orangutan/releases):
-   - **For modern OpenWrt (`apk`-based, 24.10+ / 25.x):** download `uapi-traffic-hosts-<version>-r1.apk` (or `uapi-traffic-hosts_<version>_all.apk`).
+   - **For modern OpenWrt (`apk`-based, 24.10+ / 25.x):** download `uapi-traffic-hosts-<version>-r1.apk` (or `uapi-traffic-hosts_<version>_noarch.apk` / `_all.apk`).
    - **For legacy OpenWrt (`opkg`-based, 23.x / 22.x):** download `uapi-traffic-hosts_<version>-1_all.ipk`.
 3. In your OpenWrt LuCI web interface, navigate to **System → Software**.
 4. Click the **Upload Package...** button.
