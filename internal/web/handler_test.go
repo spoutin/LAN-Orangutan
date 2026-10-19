@@ -682,16 +682,19 @@ func TestIndexPageRendersDirtySidebarSaveBar(t *testing.T) {
 	}
 }
 
-func TestIndexPageRendersCompactStateColumnAndSortReset(t *testing.T) {
+func TestIndexPageRendersDeviceTableAndSortReset(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 
 	rec := httptest.NewRecorder()
 	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := rec.Body.String()
-	for _, expected := range []string{`data-sort="status"`, "State", `id="reset-device-sort"`, "Reset sort"} {
+	for _, expected := range []string{`id="devices-table"`, `data-sort="ip"`, `id="reset-device-sort"`, "Reset sort"} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("expected device table to contain %q", expected)
 		}
+	}
+	if strings.Contains(body, `<th class="col-status"`) {
+		t.Errorf("expected state column header to be removed from table")
 	}
 }
 

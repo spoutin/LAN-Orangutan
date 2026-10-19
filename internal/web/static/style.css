@@ -1122,9 +1122,8 @@ td[data-copy]:not([data-copy=""]) {
 /* Column widths for the fixed layout (they sum to 100%). When the responsive
    rules further down hide a column, its share is redistributed across the
    rest, so the table always fills its panel exactly. */
-.col-status     { width: 5%; min-width: 0; }
-.col-ip         { width: 14%; }
-.col-hostname   { width: 19%; }
+.col-ip         { width: 16%; }
+.col-hostname   { width: 22%; }
 .col-network    { width: 11%; }
 .col-mac        { width: 16%; }
 .col-vendor     { width: 15%; }
@@ -1380,11 +1379,6 @@ td[data-copy]:not([data-copy=""]) {
     background-color: var(--selected-bg);
 }
 
-.device-row.selected-row td:first-child,
-.device-subrow.selected-row td:first-child {
-    box-shadow: inset 4px 0 0 var(--accent-primary) !important;
-}
-
 .device-row.status-online td:first-child,
 .device-subrow.status-online td:first-child {
     box-shadow: inset 3px 0 0 var(--success);
@@ -1397,7 +1391,7 @@ td[data-copy]:not([data-copy=""]) {
 
 .device-row.status-offline td:first-child,
 .device-subrow.status-offline td:first-child {
-    box-shadow: none;
+    box-shadow: inset 3px 0 0 var(--text-muted);
 }
 
 .mac-vendor-stack {
@@ -2034,6 +2028,9 @@ textarea.input {
         background: var(--bg-secondary);
         overflow: hidden;
     }
+    .table .device-row.status-online { border-left: 3px solid var(--success); }
+    .table .device-row.status-seen { border-left: 3px solid var(--warning); }
+    .table .device-row.status-offline { border-left: 3px solid var(--text-muted); }
     .table .device-row td {
         display: flex;
         align-items: center;

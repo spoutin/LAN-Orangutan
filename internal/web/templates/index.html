@@ -299,7 +299,6 @@ orangutan export out.csv</code></pre>
                         <table class="table" id="devices-table">
                             <thead>
                                 <tr>
-                                    <th class="col-status" data-sort="status" onclick="sortTable('status')">State <span class="sort-icon">↕</span></th>
                                     <th class="col-ip" data-sort="ip" onclick="sortTable('ip')">IP Address <span class="sort-icon">↕</span></th>
                                     <th class="col-hostname" data-sort="hostname" onclick="sortTable('hostname')">Hostname <span class="sort-icon">↕</span></th>
                                     <th class="col-network" data-sort="network" onclick="sortTable('network')">Network <span class="sort-icon">↕</span></th>
@@ -385,10 +384,7 @@ orangutan export out.csv</code></pre>
                                        data-wan-tx-rate-bps="{{.WanTxRateBps}}"
                                        data-wan-rx-bytes="{{.WanRxBytes}}"
                                        data-wan-tx-bytes="{{.WanTxBytes}}">
-                                      <td class="col-status" data-label="Status">
-                                          <span class="status-indicator {{.StatusClass}}" data-tip="{{.StatusTip}}"></span>
-                                      </td>
-                                      <td class="col-ip ip-cell" data-label="IP Address" data-copy="{{.IP}}">
+                                      <td class="col-ip ip-cell" data-label="IP Address" data-copy="{{.IP}}" data-tip="{{.StatusTip}}">
                                           {{.IP}}{{if .AddressHistory}}<span class="moved-indicator" data-tip="Changed address{{range .AddressHistory}}, was {{.IP}}{{end}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></span>{{end}}
                                       </td>
                                       <td class="col-hostname hostname-cell" data-label="Hostname" data-copy="{{if .CustomHostname}}{{.CustomHostname}}{{else}}{{.Hostname}}{{end}}">
@@ -468,9 +464,9 @@ orangutan export out.csv</code></pre>
                                          <button class="btn-icon danger" onclick="event.stopPropagation(); deleteDevice('{{.IP}}')" data-tip="Delete" aria-label="Delete"><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg></button>
                                      </td>
                                  </tr>
-                                 <tr class="device-subrow {{.StatusClass}}" data-ip="{{.IP}}">
-                                      <td colspan="8" class="col-subrow">
-                                          <div class="device-connection-strip">
+                                  <tr class="device-subrow {{.StatusClass}}" data-ip="{{.IP}}">
+                                       <td colspan="7" class="col-subrow">
+                                           <div class="device-connection-strip">
                                               <div class="connection-strip-left">
                                                   {{if hasSSH .Device}}
                                                   <span class="ssh-indicator" data-tip="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}" aria-label="SSH available{{if ne (sshPort .Device) 22}} on port {{sshPort .Device}}{{end}}" style="display: inline-flex; align-items: center; gap: 3px; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: rgba(59, 130, 246, 0.12); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.25);">

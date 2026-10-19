@@ -3215,8 +3215,8 @@ async function disconnectTailscale() {
             const saved = localStorage.getItem(storageKey);
             if (!saved) return;
             const widths = JSON.parse(saved);
-            // If table schema changed (e.g. col-ssid moved to subrow, col-mac added), clear stale widths
-            if (widths['col-ssid'] || !widths['col-mac']) {
+            // If table schema changed (e.g. col-ssid moved to subrow, col-mac added, col-status removed), clear stale widths
+            if (widths['col-ssid'] || !widths['col-mac'] || widths['col-status']) {
                 localStorage.removeItem(storageKey);
                 return;
             }
@@ -3235,8 +3235,8 @@ async function disconnectTailscale() {
     function initHandles() {
         const headers = table.querySelectorAll('thead th');
         headers.forEach((th, i) => {
-            // No resize handle on the status and action columns
-            if (th.classList.contains('col-status') || th.classList.contains('col-actions')) return;
+            // No resize handle on the action column
+            if (th.classList.contains('col-actions')) return;
 
             // Remove existing handle if any
             const existing = th.querySelector('.col-resize-handle');
