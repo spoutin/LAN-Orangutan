@@ -76,6 +76,7 @@ type nmapService struct {
 	Product   string `xml:"product,attr"`
 	Version   string `xml:"version,attr"`
 	ExtraInfo string `xml:"extrainfo,attr"`
+	OSType    string `xml:"ostype,attr"`
 }
 
 type nmapPortState struct {
@@ -89,6 +90,7 @@ type nmapHost struct {
 	Hostnames nmapHostnames `xml:"hostnames"`
 	Times     nmapTimes     `xml:"times"`
 	Ports     nmapPorts     `xml:"ports"`
+	OS        nmapOS        `xml:"os"`
 }
 
 // nmapStatus represents the host status
