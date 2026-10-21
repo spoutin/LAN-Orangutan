@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -20,6 +21,7 @@ type RemoteRunner interface {
 	HasRemoteScannerForTarget(target string) bool
 	GetGatewayForTarget(target string) string
 	RunScan(ctx context.Context, target string, args []string) ([]byte, error)
+	CanRunPrivileged(target string) bool
 }
 
 // Scanner performs network scans
@@ -31,6 +33,7 @@ type Scanner struct {
 	enablePortScan   bool
 	portScanRange    string
 	remoteRunner     RemoteRunner
+	localPrivileged  *bool
 }
 
 // New creates a new Scanner. serviceDetection enables the opt-in port probe
@@ -550,42 +553,76 @@ func getInterfaceForCIDR(ctx context.Context, cidr string) string {
 	return ""
 }
 
+// isLocalPrivileged checks if the current process has root privileges to run nmap -O.
+func (s *Scanner) isLocalPrivileged() bool {
+	if s.localPrivileged != nil {
+		return *s.localPrivileged
+	}
+	isPriv := os.Geteuid() == 0
+	s.localPrivileged = &isPriv
+	return isPriv
+}
+
+func (s *Scanner) setLocalPrivileged(val bool) {
+	s.localPrivileged = &val
+}
+
 // ScanHostPorts performs a high-speed targeted port scan on a single IP address.
-func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string) ([]int, []int, []types.OpenService, error) {
+func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string) ([]int, []int, []types.OpenService, string, string, string, error) {
 	return s.ScanHostPortsWithTiming(ctx, ip, portRange, false)
 }
 
 // ScanHostPortsWithTiming runs a targeted service scan. Nightly scans use the
 // conservative timing profile to keep connection state pressure low.
-func (s *Scanner) ScanHostPortsWithTiming(ctx context.Context, ip string, portRange string, conservative bool) ([]int, []int, []types.OpenService, error) {
-	args := portScanArgumentsWithTiming(portRange, ip, conservative)
+func (s *Scanner) ScanHostPortsWithTiming(ctx context.Context, ip string, portRange string, conservative bool) ([]int, []int, []types.OpenService, string, string, string, error) {
+	privileged := false
+	isRemote := s.remoteRunner != nil && s.remoteRunner.HasRemoteScannerForTarget(ip)
+	if isRemote {
+		privileged = s.remoteRunner.CanRunPrivileged(ip)
+	} else {
+		privileged = s.isLocalPrivileged()
+	}
+
+	args := portScanArgumentsWithTiming(portRange, ip, conservative, privileged)
 	var output []byte
 	var err error
 
-	if s.remoteRunner != nil && s.remoteRunner.HasRemoteScannerForTarget(ip) {
+	if isRemote {
 		output, err = s.remoteRunner.RunScan(ctx, ip, args)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, "", "", "", err
 		}
 	} else {
 		if _, lookErr := exec.LookPath("nmap"); lookErr != nil {
-			return nil, nil, nil, fmt.Errorf("nmap not found")
+			return nil, nil, nil, "", "", "", fmt.Errorf("nmap not found")
 		}
 
 		cmd := exec.CommandContext(ctx, "nmap", args...)
 		output, err = cmd.Output()
+		if err != nil && privileged {
+			errMsg := err.Error()
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				errMsg += " " + string(exitErr.Stderr)
+			}
+			if strings.Contains(strings.ToLower(errMsg), "requires root") || strings.Contains(strings.ToLower(errMsg), "root privileges") {
+				s.setLocalPrivileged(false)
+				fallbackArgs := portScanArgumentsWithTiming(portRange, ip, conservative, false)
+				cmd = exec.CommandContext(ctx, "nmap", fallbackArgs...)
+				output, err = cmd.Output()
+			}
+		}
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("nmap port scan failed: %w", err)
+			return nil, nil, nil, "", "", "", fmt.Errorf("nmap port scan failed: %w", err)
 		}
 	}
 	return parsePortScanResult(output)
 }
 
 func portScanArguments(portRange string, ip string) []string {
-	return portScanArgumentsWithTiming(portRange, ip, false)
+	return portScanArgumentsWithTiming(portRange, ip, false, false)
 }
 
-func portScanArgumentsWithTiming(portRange string, ip string, conservative bool) []string {
+func portScanArgumentsWithTiming(portRange string, ip string, conservative, privileged bool) []string {
 	// Stage 1 already established that this host is reachable. Skipping host
 	// discovery avoids false negatives from a separate probe, while retries make
 	// service detection reliable on busy or rate-limited devices.
@@ -593,20 +630,27 @@ func portScanArgumentsWithTiming(portRange string, ip string, conservative bool)
 	if conservative {
 		timing = "-T2"
 	}
-	return []string{"-sV", "-Pn", "-p", portRange, timing, "-n", "--max-retries", "2", "--host-timeout", "180s", "-oX", "-", ip}
+	args := []string{"-sV", "-Pn", "-p", portRange, timing, "-n", "--max-retries", "2", "--host-timeout", "180s"}
+	if privileged {
+		args = append(args, "-O", "--osscan-limit", "--osscan-guess")
+	}
+	args = append(args, "-oX", "-", ip)
+	return args
 }
 
-func parsePortScanResult(output []byte) ([]int, []int, []types.OpenService, error) {
+func parsePortScanResult(output []byte) ([]int, []int, []types.OpenService, string, string, string, error) {
 	var result nmapRun
 	if err := xml.Unmarshal(output, &result); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to parse nmap output: %w", err)
+		return nil, nil, nil, "", "", "", fmt.Errorf("failed to parse nmap output: %w", err)
 	}
 
 	var openPorts []int
 	var sshPorts []int
 	var services []types.OpenService
+	var osName, osVersion, osFamily string
 	if len(result.Hosts) > 0 {
-		for _, port := range result.Hosts[0].Ports.Ports {
+		host := result.Hosts[0]
+		for _, port := range host.Ports.Ports {
 			if port.State.State == "open" {
 				openPorts = append(openPorts, port.PortID)
 				version := strings.TrimSpace(strings.Join([]string{port.Service.Product, port.Service.Version, port.Service.ExtraInfo}, " "))
@@ -616,7 +660,8 @@ func parsePortScanResult(output []byte) ([]int, []int, []types.OpenService, erro
 				}
 			}
 		}
+		osName, osVersion, osFamily = InferOS(host.OS.Matches, services)
 	}
 
-	return openPorts, sshPorts, services, nil
+	return openPorts, sshPorts, services, osName, osVersion, osFamily, nil
 }

@@ -19,6 +19,7 @@ type Runner interface {
 	HasRemoteScannerForTarget(target string) bool
 	GetGatewayForTarget(target string) string
 	RunScan(ctx context.Context, target string, args []string) ([]byte, error)
+	CanRunPrivileged(target string) bool
 	Close() error
 }
 
@@ -258,6 +259,15 @@ func (r *SSHRunner) removeClient(addr string) {
 		delete(r.clientKeyFiles, addr)
 		delete(r.clientModTimes, addr)
 	}
+}
+
+// CanRunPrivileged returns true if the remote gateway configured for the target has sudo enabled
+func (r *SSHRunner) CanRunPrivileged(target string) bool {
+	sc, ok := r.findScannerConfig(target)
+	if !ok {
+		return false
+	}
+	return sc.Sudo
 }
 
 // RunScan runs nmap on the remote gateway over SSH

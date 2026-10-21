@@ -598,3 +598,34 @@ func TestSSHRunner_AuthFailureIncludesUserAndFingerprint(t *testing.T) {
 		t.Fatalf("expected error to include key fingerprint 'SHA256:', got: %v", errMsg)
 	}
 }
+
+func TestSSHRunner_CanRunPrivileged(t *testing.T) {
+	cfg := config.RemoteScannersConfig{
+		Enable: true,
+		Names:  []string{"sudo-gw", "nonsudo-gw"},
+		Configs: map[string]config.RemoteScannerConfig{
+			"sudo-gw": {
+				ID:       "sudo-gw",
+				Networks: []string{"10.1.0.0/24"},
+				Sudo:     true,
+			},
+			"nonsudo-gw": {
+				ID:       "nonsudo-gw",
+				Networks: []string{"10.2.0.0/24"},
+				Sudo:     false,
+			},
+		},
+	}
+	runner := NewRunner(cfg)
+	defer runner.Close()
+
+	if !runner.CanRunPrivileged("10.1.0.0/24") {
+		t.Error("expected 10.1.0.0/24 to be privileged (sudo=true)")
+	}
+	if runner.CanRunPrivileged("10.2.0.0/24") {
+		t.Error("expected 10.2.0.0/24 to be unprivileged (sudo=false)")
+	}
+	if runner.CanRunPrivileged("192.168.1.0/24") {
+		t.Error("expected unconfigured target to be unprivileged")
+	}
+}

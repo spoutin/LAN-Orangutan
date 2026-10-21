@@ -511,6 +511,9 @@ func (r *testRemoteRunnerFailure) HasRemoteScannerForTarget(target string) bool 
 func (r *testRemoteRunnerFailure) GetGatewayForTarget(target string) string {
 	return r.gateway
 }
+func (r *testRemoteRunnerFailure) CanRunPrivileged(target string) bool {
+	return false
+}
 func (r *testRemoteRunnerFailure) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
 	return nil, &remotescan.RemoteScannerError{
 		Gateway:       r.gateway,
@@ -580,6 +583,9 @@ func (r *testSwitchableRemoteRunner) HasRemoteScannerForTarget(target string) bo
 }
 func (r *testSwitchableRemoteRunner) GetGatewayForTarget(target string) string {
 	return r.gateway
+}
+func (r *testSwitchableRemoteRunner) CanRunPrivileged(target string) bool {
+	return false
 }
 func (r *testSwitchableRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
 	if r.fail {
@@ -722,6 +728,9 @@ func (r *testMultiSubnetRunner) HasRemoteScannerForTarget(target string) bool {
 }
 func (r *testMultiSubnetRunner) GetGatewayForTarget(target string) string {
 	return "gw (" + target + ")"
+}
+func (r *testMultiSubnetRunner) CanRunPrivileged(target string) bool {
+	return false
 }
 func (r *testMultiSubnetRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
 	if err, fail := r.failMap[target]; fail {
@@ -906,6 +915,10 @@ func (r *testConcurrencyTrackingRemoteRunner) GetGatewayForTarget(target string)
 	return "local"
 }
 
+func (r *testConcurrencyTrackingRemoteRunner) CanRunPrivileged(target string) bool {
+	return false
+}
+
 func (r *testConcurrencyTrackingRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
 	gw := r.GetGatewayForTarget(target)
 	r.mu.Lock()
@@ -992,6 +1005,10 @@ func (r *testDeepScanConcurrencyRemoteRunner) GetGatewayForTarget(target string)
 		return "openwrt"
 	}
 	return "local"
+}
+
+func (r *testDeepScanConcurrencyRemoteRunner) CanRunPrivileged(target string) bool {
+	return false
 }
 
 func (r *testDeepScanConcurrencyRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
@@ -1126,6 +1143,10 @@ func (r *testControlledRemoteRunner) GetGatewayForTarget(target string) string {
 	return "local"
 }
 
+func (r *testControlledRemoteRunner) CanRunPrivileged(target string) bool {
+	return false
+}
+
 func (r *testControlledRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {
 	if r.fn != nil {
 		return r.fn(ctx, target, args)
@@ -1220,6 +1241,10 @@ func (r *testBlockingRemoteRunner) GetGatewayForTarget(target string) string {
 		return "opnsense"
 	}
 	return "openwrt"
+}
+
+func (r *testBlockingRemoteRunner) CanRunPrivileged(target string) bool {
+	return false
 }
 
 func (r *testBlockingRemoteRunner) RunScan(ctx context.Context, target string, args []string) ([]byte, error) {

@@ -21,7 +21,7 @@ func TestPortScanArgumentsSkipDiscoveryAndAllowRetries(t *testing.T) {
 }
 
 func TestNightlyPortScanArgumentsUseConservativeTiming(t *testing.T) {
-	got := portScanArgumentsWithTiming("1-1024", "10.0.0.15", true)
+	got := portScanArgumentsWithTiming("1-1024", "10.0.0.15", true, false)
 	for i, arg := range got {
 		if arg == "-T2" {
 			return
@@ -33,6 +33,22 @@ func TestNightlyPortScanArgumentsUseConservativeTiming(t *testing.T) {
 	t.Fatalf("arguments = %v, want -T2", got)
 }
 
+func TestPortScanArguments_PrivilegedIncludesOSFlags(t *testing.T) {
+	args := portScanArgumentsWithTiming("22-80", "192.168.1.10", false, true)
+	argsStr := strings.Join(args, " ")
+	if !strings.Contains(argsStr, "-O") || !strings.Contains(argsStr, "--osscan-limit") || !strings.Contains(argsStr, "--osscan-guess") {
+		t.Errorf("args = %v, expected -O, --osscan-limit, and --osscan-guess", args)
+	}
+}
+
+func TestPortScanArguments_UnprivilegedOmitsOSFlags(t *testing.T) {
+	args := portScanArgumentsWithTiming("22-80", "192.168.1.10", false, false)
+	argsStr := strings.Join(args, " ")
+	if strings.Contains(argsStr, "-O") {
+		t.Errorf("args = %v, should NOT contain -O when unprivileged", args)
+	}
+}
+
 func TestParsePortScanResultRecordsDetectedSSHPort(t *testing.T) {
 	xmlOutput := []byte(`<?xml version="1.0"?>
 <nmaprun><host><ports>
@@ -41,7 +57,7 @@ func TestParsePortScanResultRecordsDetectedSSHPort(t *testing.T) {
   <port protocol="tcp" portid="23"><state state="closed"/></port>
 </ports></host></nmaprun>`)
 
-	ports, sshPorts, services, err := parsePortScanResult(xmlOutput)
+	ports, sshPorts, services, _, _, _, err := parsePortScanResult(xmlOutput)
 	if err != nil {
 		t.Fatalf("parsePortScanResult() error = %v", err)
 	}
@@ -62,6 +78,10 @@ type mockRemoteRunner struct {
 	runErr    error
 	called    bool
 	lastArgs  []string
+}
+
+func (m *mockRemoteRunner) CanRunPrivileged(target string) bool {
+	return false
 }
 
 func (m *mockRemoteRunner) HasRemoteScannerForTarget(target string) bool {
@@ -132,7 +152,7 @@ func TestScanHostPortsWithTimingUsesRemoteRunner(t *testing.T) {
 	s := New(30, false, false, "")
 	s.SetRemoteRunner(mock)
 
-	ports, _, services, err := s.ScanHostPortsWithTiming(context.Background(), "10.0.0.15", "443", false)
+	ports, _, services, _, _, _, err := s.ScanHostPortsWithTiming(context.Background(), "10.0.0.15", "443", false)
 	if err != nil {
 		t.Fatalf("ScanHostPortsWithTiming error: %v", err)
 	}
