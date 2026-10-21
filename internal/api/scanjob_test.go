@@ -316,6 +316,67 @@ func TestScanPortHostUpdatesPresence(t *testing.T) {
 	}
 }
 
+func TestScanPortHost_SavesDetectedOS(t *testing.T) {
+	store := newScanJobTestStore(t)
+	device := types.Device{
+		IP:       "192.168.1.55",
+		Hostname: "my-ubuntu",
+		CustomOS: "Custom Admin Override",
+	}
+	if err := store.UpdateDevice(&device); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Scanning.PortScanRange = "22"
+	h := NewHandler(store, cfg)
+	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			return []byte(`<?xml version="1.0"?>
+<nmaprun><host>
+  <ports>
+    <port protocol="tcp" portid="22">
+      <state state="open"/>
+      <service name="ssh" product="OpenSSH" version="8.9p1 Ubuntu 3ubuntu0.10" extrainfo="Ubuntu Linux; protocol 2.0"/>
+    </port>
+  </ports>
+  <os>
+    <osmatch name="Linux 5.4 - 5.15" accuracy="95">
+      <osclass vendor="Linux" osfamily="Linux" osgen="5.X" accuracy="95"/>
+    </osmatch>
+  </os>
+</host></nmaprun>`), nil
+		},
+	})
+
+	job := &scanJob{
+		deepNetworkProgress: []deepNetworkProgress{
+			{Network: "192.168.1.0/24", Total: 1},
+		},
+	}
+	_, err := job.scanPortHost(context.Background(), h, "192.168.1.0/24", device)
+	if err != nil {
+		t.Fatalf("scanPortHost: %v", err)
+	}
+
+	stored := store.GetDevice("192.168.1.55")
+	if stored == nil {
+		t.Fatal("device not found in store")
+	}
+	if stored.OS != "Ubuntu Linux" {
+		t.Errorf("stored OS = %q, want Ubuntu Linux", stored.OS)
+	}
+	if stored.OSVersion != "22.04" {
+		t.Errorf("stored OSVersion = %q, want 22.04", stored.OSVersion)
+	}
+	if stored.OSFamily != "Linux" {
+		t.Errorf("stored OSFamily = %q, want Linux", stored.OSFamily)
+	}
+	if stored.CustomOS != "Custom Admin Override" {
+		t.Errorf("stored CustomOS = %q, want preserved Custom Admin Override", stored.CustomOS)
+	}
+}
+
 func TestSingleDeviceScan_DoesNotAlertSlackOrTriggerFalseRecovery(t *testing.T) {
 	store := newScanJobTestStore(t)
 	_ = store.SaveNetworkNotification("10.5.5.0/24", "https://example.test/slack-openwrt", true)

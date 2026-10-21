@@ -1378,7 +1378,7 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 	}
 	log.Printf("[scan] starting service scan on %s (%s) via gateway %s", device.IP, name, gwName)
 
-	ports, sshPorts, services, err := h.scanner.ScanHostPortsWithTiming(ctx, device.IP, h.cfg.Scanning.PortScanRange, j.nightlyDeep)
+	ports, sshPorts, services, osName, osVersion, osFamily, err := h.scanner.ScanHostPortsWithTiming(ctx, device.IP, h.cfg.Scanning.PortScanRange, j.nightlyDeep)
 	dur := time.Since(start).Seconds()
 	if err != nil {
 		log.Printf("[scan] service scan failed for %s via gateway %s: %v (%.2fs)", device.IP, gwName, err, dur)
@@ -1394,6 +1394,15 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 		current.DetectedSSHPort = 0
 		if len(sshPorts) > 0 {
 			current.DetectedSSHPort = sshPorts[0]
+		}
+		if osName != "" {
+			current.OS = osName
+		}
+		if osVersion != "" {
+			current.OSVersion = osVersion
+		}
+		if osFamily != "" {
+			current.OSFamily = osFamily
 		}
 		current.LastSeen = time.Now()
 

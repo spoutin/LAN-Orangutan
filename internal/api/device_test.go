@@ -46,6 +46,41 @@ func TestDeviceDeepScanStartsOnlyRequestedDevice(t *testing.T) {
 	<-job.done
 }
 
+func TestUpdateDevice_CustomOS(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+
+	dev := types.Device{
+		IP:  "192.168.1.150",
+		MAC: "aa:bb:cc:dd:ee:55",
+	}
+	if err := store.UpdateDevice(&dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	h := NewHandler(store, config.Default())
+	customOS := "OpenWrt 23.05"
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"custom_os": customOS,
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/devices/192.168.1.150", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	updated := store.GetDevice("192.168.1.150")
+	if updated == nil || updated.CustomOS != "OpenWrt 23.05" {
+		t.Fatalf("updated device CustomOS = %q, want OpenWrt 23.05", updated.CustomOS)
+	}
+}
+
 func TestDevice_PUT_UpdateEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
