@@ -1122,18 +1122,34 @@ td[data-copy]:not([data-copy=""]) {
 /* Column widths for the fixed layout (they sum to 100%). When the responsive
    rules further down hide a column, its share is redistributed across the
    rest, so the table always fills its panel exactly. */
-.col-ip         { width: 16%; }
-.col-hostname   { width: 22%; }
-.col-network    { width: 11%; }
-.col-mac        { width: 16%; }
-.col-vendor     { width: 15%; }
-.col-lastseen   { width: 11%; }
-.col-actions    { width: 9%; min-width: 85px; }
+.col-ip         { width: 15%; }
+.col-hostname   { width: 20%; }
+.col-network    { width: 10%; }
+.col-mac        { width: 14%; }
+.col-vendor     { width: 13%; }
+.col-os         { width: 12%; }
+.col-lastseen   { width: 9%; }
+.col-actions    { width: 7%; min-width: 85px; }
 .col-subrow     { width: 100%; }
 .col-assignment { display: none; }
 .col-type       { display: none; }
 .col-label      { display: none; }
 .col-group      { display: none; }
+
+.os-icon {
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 4px;
+    width: 13px;
+    height: 13px;
+    color: var(--text-muted);
+}
+.os-cell {
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 .ssid-cell { overflow: hidden; }
 

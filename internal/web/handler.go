@@ -131,6 +131,8 @@ func NewHandler(store *storage.Storage, cfg *config.Config, authn *auth.Authenti
 		"timeAgo":  timeAgo,
 		"lower":    strings.ToLower,
 		"typeIcon": typeIcon,
+		"osIcon":   osIcon,
+		"formatOS": formatDeviceOS,
 		"hasSSH": func(device *types.Device) bool {
 			_, available := device.EffectiveSSH()
 			return available

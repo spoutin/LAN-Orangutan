@@ -677,7 +677,7 @@ function filterDevices() {
 
     let visible = 0;
     document.querySelectorAll('.device-row').forEach(row => {
-        const text = [row.dataset.ip, row.dataset.hostname, row.dataset.customHostname || '', row.dataset.customWebUrl || '', row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type, row.dataset.network || '', row.dataset.assignment || '', row.dataset.ssid || ''].join(' ').toLowerCase();
+        const text = [row.dataset.ip, row.dataset.hostname, row.dataset.customHostname || '', row.dataset.customWebUrl || '', row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type, row.dataset.network || '', row.dataset.assignment || '', row.dataset.ssid || '', row.dataset.os || '', row.dataset.osVersion || '', row.dataset.customOs || ''].join(' ').toLowerCase();
         const status = row.dataset.status;
         const group = row.dataset.group || '';
         const network = (row.dataset.network || '').toLowerCase();
@@ -724,6 +724,10 @@ async function editDevice(ip) {
             customHostname: row.dataset.customHostnameOriginal || '',
             customWebURL: row.dataset.customWebUrlOriginal || '',
             customType: row.dataset.customTypeOriginal || '',
+            customOS: row.dataset.customOsOriginal || row.dataset.customOs || '',
+            os: row.dataset.osDisplay || row.dataset.os || '',
+            osVersion: row.dataset.osVersion || '',
+            osFamily: row.dataset.osFamily || '',
             notes: row.dataset.notes || '',
             linkedMAC: row.dataset.linkedMac || '',
             notifyOnSeen: row.dataset.notifyOnSeen === '1',
@@ -772,6 +776,10 @@ async function editDevice(ip) {
                             customHostname: dev.custom_hostname || '',
                             customWebURL: dev.custom_web_url || '',
                             customType: dev.custom_type || '',
+                            customOS: dev.custom_os || '',
+                            os: dev.os || '',
+                            osVersion: dev.os_version || '',
+                            osFamily: dev.os_family || '',
                             notes: dev.notes || '',
                             linkedMAC: dev.linked_mac || '',
                             notifyOnSeen: !!dev.notify_on_seen,
@@ -818,6 +826,15 @@ async function editDevice(ip) {
     const responseTimeDisplay = document.getElementById('detail-responsetime');
     if (responseTimeDisplay) responseTimeDisplay.textContent = deviceData.responseTime;
 
+    const osDisplay = document.getElementById('detail-os');
+    if (osDisplay) {
+        if (typeof formatOSDisplay === 'function') {
+            osDisplay.innerHTML = formatOSDisplay(deviceData).html;
+        } else {
+            osDisplay.textContent = deviceData.customOS || deviceData.os || '—';
+        }
+    }
+
     // 2. Populate Edit Form Fields (Right Panel)
     document.getElementById('edit-ip').value = deviceData.ip;
     const ipDispInput = document.getElementById('edit-ip-display');
@@ -826,6 +843,8 @@ async function editDevice(ip) {
     document.getElementById('edit-custom-hostname').value = deviceData.customHostname;
     document.getElementById('edit-custom-web-url').value = deviceData.customWebURL;
     document.getElementById('edit-custom-type').value = deviceData.customType;
+    const editCustomOS = document.getElementById('edit-custom-os');
+    if (editCustomOS) editCustomOS.value = deviceData.customOS || '';
     document.getElementById('edit-notes').value = deviceData.notes;
     const notifyOnSeenBox = document.getElementById('edit-notify-on-seen');
     if (notifyOnSeenBox) {
@@ -1067,13 +1086,14 @@ async function saveDevice() {
     const custom_hostname = document.getElementById('edit-custom-hostname').value;
     const custom_web_url = document.getElementById('edit-custom-web-url').value;
     const custom_type = document.getElementById('edit-custom-type').value;
+    const custom_os = document.getElementById('edit-custom-os')?.value ?? '';
     const group = document.getElementById('edit-group').value;
     const notes = document.getElementById('edit-notes').value;
     const linked_mac = document.getElementById('edit-linked-mac')?.value || '';
     const notify_on_seen = document.getElementById('edit-notify-on-seen')?.checked || false;
     const ansible_managed = document.getElementById('edit-ansible-managed')?.checked || false;
     try {
-        const result = await api('device', { ip, label, custom_hostname, custom_web_url, custom_type, group, notes, linked_mac, notify_on_seen, ansible_managed }, 'POST');
+        const result = await api('device', { ip, label, custom_hostname, custom_web_url, custom_type, custom_os, group, notes, linked_mac, notify_on_seen, ansible_managed }, 'POST');
         if (result.success) {
             showToast('Device updated', 'success');
             closeModal();
@@ -1634,6 +1654,17 @@ function syncDeviceSidebarTelemetry(data) {
 		const macEl = document.getElementById('sb-mac-address');
 		if (macEl) macEl.textContent = data.mac || '—';
 
+		const osEl = document.getElementById('sb-os');
+		if (osEl) {
+			const osDisp = typeof formatOSDisplay === 'function' ? formatOSDisplay({
+				os: data.osDisplay || data.os || '',
+				os_version: data.osVersion || '',
+				os_family: data.osFamily || '',
+				custom_os: data.customOsOriginal || data.customOs || ''
+			}) : { html: data.customOsOriginal || data.os || '—' };
+			osEl.innerHTML = osDisp.html;
+		}
+
         const unifiModelEl = document.getElementById('sb-unifi-model');
         if (unifiModelEl) unifiModelEl.textContent = data.unifiModel || '—';
 
@@ -1695,6 +1726,9 @@ function populateSidebarEditForm(data) {
 
     const editCustomType = document.getElementById('sb-edit-custom-type');
     if (editCustomType) editCustomType.value = data.customTypeOriginal || '';
+
+    const editCustomOS = document.getElementById('sb-edit-custom-os');
+    if (editCustomOS) editCustomOS.value = data.customOsOriginal || data.customOs || '';
 
     const editNotes = document.getElementById('sb-edit-notes');
     if (editNotes) editNotes.value = data.notes || '';
@@ -2008,6 +2042,7 @@ async function saveSidebarDevice() {
     const custom_hostname = document.getElementById('sb-edit-custom-hostname')?.value ?? '';
     const custom_web_url = document.getElementById('sb-edit-custom-web-url')?.value ?? '';
     const custom_type = document.getElementById('sb-edit-custom-type')?.value ?? '';
+    const custom_os = document.getElementById('sb-edit-custom-os')?.value ?? '';
     const notes = document.getElementById('sb-edit-notes')?.value ?? '';
     const ansible_managed = document.getElementById('sb-edit-ansible-managed')?.checked || false;
 	const ssh_override = document.getElementById('sb-edit-ssh-override')?.value ?? '';
@@ -2031,6 +2066,7 @@ async function saveSidebarDevice() {
             custom_hostname,
             custom_web_url,
             custom_type,
+            custom_os,
             notes,
 			ansible_managed,
 			ssh_override,
@@ -2084,10 +2120,32 @@ async function saveSidebarDevice() {
             row.dataset.customWebUrlOriginal = custom_web_url;
             row.dataset.customType = custom_type.toLowerCase();
             row.dataset.customTypeOriginal = custom_type;
+            row.dataset.customOs = custom_os.toLowerCase();
+            row.dataset.customOsOriginal = custom_os;
             row.dataset.notes = notes;
             row.dataset.ansibleManaged = ansible_managed ? 'true' : 'false';
 			row.dataset.sshOverride = ssh_override;
 			row.dataset.sshOverridePort = String(ssh_override_port);
+
+            const osCell = row.querySelector('.os-cell');
+            if (osCell && typeof formatOSDisplay === 'function') {
+                osCell.innerHTML = formatOSDisplay({
+                    custom_os: custom_os,
+                    os: row.dataset.osDisplay || row.dataset.os || '',
+                    os_version: row.dataset.osVersion || '',
+                    os_family: row.dataset.osFamily || ''
+                }).html;
+            }
+
+            const sbOS = document.getElementById('sb-os');
+            if (sbOS && typeof formatOSDisplay === 'function') {
+                sbOS.innerHTML = formatOSDisplay({
+                    custom_os: custom_os,
+                    os: row.dataset.osDisplay || row.dataset.os || '',
+                    os_version: row.dataset.osVersion || '',
+                    os_family: row.dataset.osFamily || ''
+                }).html;
+            }
 
             const sbAnsible = document.getElementById('sb-ansible-btn');
             if (sbAnsible) {
@@ -2450,6 +2508,10 @@ function compareRows(a, b, column) {
         case 'vendor':
             valA = a.dataset.vendor || 'zzz';
             valB = b.dataset.vendor || 'zzz';
+            break;
+        case 'os':
+            valA = (a.dataset.customOs || a.dataset.os || '').toLowerCase() || 'zzz';
+            valB = (b.dataset.customOs || b.dataset.os || '').toLowerCase() || 'zzz';
             break;
         case 'ssid':
             valA = (a.dataset.ssid || '').toLowerCase() || 'zzz';
