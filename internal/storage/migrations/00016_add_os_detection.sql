@@ -1,0 +1,11 @@
+-- +goose Up
+ALTER TABLE devices ADD COLUMN os TEXT NOT NULL DEFAULT '';
+ALTER TABLE devices ADD COLUMN os_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE devices ADD COLUMN os_family TEXT NOT NULL DEFAULT '';
+ALTER TABLE devices ADD COLUMN custom_os TEXT NOT NULL DEFAULT '';
+
+-- +goose Down
+ALTER TABLE devices DROP COLUMN os;
+ALTER TABLE devices DROP COLUMN os_version;
+ALTER TABLE devices DROP COLUMN os_family;
+ALTER TABLE devices DROP COLUMN custom_os;
