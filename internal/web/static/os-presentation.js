@@ -2,6 +2,8 @@
     const presentation = factory();
     if (typeof module === 'object' && module.exports) module.exports = presentation;
     root.formatOSDisplay = presentation.formatOSDisplay;
+    root.formatOSName = presentation.formatOSName;
+    root.formatOSVersion = presentation.formatOSVersion;
     root.getOSFamilyIcon = presentation.getOSFamilyIcon;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     const osIcons = {
@@ -76,5 +78,49 @@
         return { html: escapeHtml(fullText), text: fullText, icon: '' };
     }
 
-    return { formatOSDisplay, getOSFamilyIcon };
+    function formatOSName(dev) {
+        if (!dev) return { html: '—', text: '—', icon: '' };
+        const custom = (dev.custom_os || dev.customOS || '').trim();
+        const os = (dev.os || '').trim();
+        const family = (dev.os_family || dev.osFamily || '').trim();
+
+        if (custom) {
+            const iconSvg = getOSFamilyIcon(family) || getOSFamilyIcon(custom);
+            if (iconSvg) {
+                return {
+                    html: `${iconSvg} <span>${escapeHtml(custom)}</span>`,
+                    text: custom,
+                    icon: iconSvg
+                };
+            }
+            return { html: escapeHtml(custom), text: custom, icon: '' };
+        }
+
+        if (!os) {
+            return { html: '—', text: '—', icon: '' };
+        }
+
+        let nameText = os;
+        if (family === 'Linux') {
+            nameText = nameText.replace(/\s+Linux$/i, '');
+        }
+
+        const iconSvg = getOSFamilyIcon(family) || getOSFamilyIcon(os);
+        if (iconSvg) {
+            return {
+                html: `${iconSvg} <span>${escapeHtml(nameText)}</span>`,
+                text: nameText,
+                icon: iconSvg
+            };
+        }
+        return { html: escapeHtml(nameText), text: nameText, icon: '' };
+    }
+
+    function formatOSVersion(dev) {
+        if (!dev) return '—';
+        const ver = (dev.os_version || dev.osVersion || '').trim();
+        return ver || '—';
+    }
+
+    return { formatOSDisplay, formatOSName, formatOSVersion, getOSFamilyIcon };
 });

@@ -828,10 +828,21 @@ async function editDevice(ip) {
 
     const osDisplay = document.getElementById('detail-os');
     if (osDisplay) {
-        if (typeof formatOSDisplay === 'function') {
+        if (typeof formatOSName === 'function') {
+            osDisplay.innerHTML = formatOSName(deviceData).html;
+        } else if (typeof formatOSDisplay === 'function') {
             osDisplay.innerHTML = formatOSDisplay(deviceData).html;
         } else {
             osDisplay.textContent = deviceData.customOS || deviceData.os || '—';
+        }
+    }
+
+    const osVersionDisplay = document.getElementById('detail-os-version');
+    if (osVersionDisplay) {
+        if (typeof formatOSVersion === 'function') {
+            osVersionDisplay.textContent = formatOSVersion(deviceData);
+        } else {
+            osVersionDisplay.textContent = deviceData.osVersion || deviceData.os_version || '—';
         }
     }
 
@@ -1656,13 +1667,26 @@ function syncDeviceSidebarTelemetry(data) {
 
 		const osEl = document.getElementById('sb-os');
 		if (osEl) {
-			const osDisp = typeof formatOSDisplay === 'function' ? formatOSDisplay({
+			const osDisp = typeof formatOSName === 'function' ? formatOSName({
 				os: data.osDisplay || data.os || '',
 				os_version: data.osVersion || '',
 				os_family: data.osFamily || '',
 				custom_os: data.customOsOriginal || data.customOs || ''
-			}) : { html: data.customOsOriginal || data.os || '—' };
+			}) : (typeof formatOSDisplay === 'function' ? formatOSDisplay({
+				os: data.osDisplay || data.os || '',
+				os_version: data.osVersion || '',
+				os_family: data.osFamily || '',
+				custom_os: data.customOsOriginal || data.customOs || ''
+			}) : { html: data.customOsOriginal || data.os || '—' });
 			osEl.innerHTML = osDisp.html;
+		}
+
+		const osVerEl = document.getElementById('sb-os-version');
+		if (osVerEl) {
+			const verDisp = typeof formatOSVersion === 'function' ? formatOSVersion({
+				os_version: data.osVersion || ''
+			}) : (data.osVersion || '—');
+			osVerEl.textContent = verDisp;
 		}
 
         const unifiModelEl = document.getElementById('sb-unifi-model');
@@ -2138,13 +2162,27 @@ async function saveSidebarDevice() {
             }
 
             const sbOS = document.getElementById('sb-os');
-            if (sbOS && typeof formatOSDisplay === 'function') {
+            if (sbOS && typeof formatOSName === 'function') {
+                sbOS.innerHTML = formatOSName({
+                    custom_os: custom_os,
+                    os: row.dataset.osDisplay || row.dataset.os || '',
+                    os_version: row.dataset.osVersion || '',
+                    os_family: row.dataset.osFamily || ''
+                }).html;
+            } else if (sbOS && typeof formatOSDisplay === 'function') {
                 sbOS.innerHTML = formatOSDisplay({
                     custom_os: custom_os,
                     os: row.dataset.osDisplay || row.dataset.os || '',
                     os_version: row.dataset.osVersion || '',
                     os_family: row.dataset.osFamily || ''
                 }).html;
+            }
+
+            const sbOSVersion = document.getElementById('sb-os-version');
+            if (sbOSVersion && typeof formatOSVersion === 'function') {
+                sbOSVersion.textContent = formatOSVersion({
+                    os_version: row.dataset.osVersion || ''
+                });
             }
 
             const sbAnsible = document.getElementById('sb-ansible-btn');
