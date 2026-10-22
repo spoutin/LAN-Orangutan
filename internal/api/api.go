@@ -307,6 +307,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			AnsibleManaged  *bool   `json:"ansible_managed"`
 			SSHOverride     *string `json:"ssh_override"`
 			SSHOverridePort *int    `json:"ssh_override_port"`
+			CustomOS        *string `json:"custom_os"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			h.error(w, http.StatusBadRequest, "invalid JSON")
@@ -334,7 +335,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC, req.SSHOverride, req.NotifyOnSeen, req.AnsibleManaged, req.SSHOverridePort); err != nil {
+		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC, req.SSHOverride, req.NotifyOnSeen, req.AnsibleManaged, req.SSHOverridePort, req.CustomOS); err != nil {
 			h.error(w, http.StatusNotFound, err.Error())
 			return
 		}

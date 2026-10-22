@@ -46,6 +46,10 @@ type Device struct {
 	DetectedSSHPort int           `json:"detected_ssh_port,omitempty"`
 	SSHOverride     string        `json:"ssh_override,omitempty"`
 	SSHOverridePort int           `json:"ssh_override_port,omitempty"`
+	OS              string        `json:"os,omitempty"`
+	OSVersion       string        `json:"os_version,omitempty"`
+	OSFamily        string        `json:"os_family,omitempty"`
+	CustomOS        string        `json:"custom_os,omitempty"`
 	NetworkName     string        `json:"network_name,omitempty"`
 	FirstSeen       time.Time     `json:"first_seen"`
 	LastSeen        time.Time     `json:"last_seen"`

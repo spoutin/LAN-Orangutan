@@ -304,6 +304,7 @@ orangutan export out.csv</code></pre>
                                     <th class="col-network" data-sort="network" onclick="sortTable('network')">Network <span class="sort-icon">↕</span></th>
                                     <th class="col-mac" data-sort="mac" onclick="sortTable('mac')">MAC Address <span class="sort-icon">↕</span></th>
                                     <th class="col-vendor" data-sort="vendor" onclick="sortTable('vendor')">Vendor <span class="sort-icon">↕</span></th>
+                                    <th class="col-os" data-sort="os" onclick="sortTable('os')">OS <span class="sort-icon">↕</span></th>
                                     <th class="col-lastseen" data-sort="lastseen" onclick="sortTable('lastseen')">Last Seen <span class="sort-icon">↕</span></th>
                                     <th class="col-actions">Actions</th>
                                 </tr>
@@ -318,6 +319,12 @@ orangutan export out.csv</code></pre>
                                     data-mac-original="{{.MAC}}"
                                     data-vendor="{{lower .Vendor}}"
                                     data-vendor-original="{{if .Vendor}}{{.Vendor}}{{else}}Unknown{{end}}"
+                                    data-os="{{lower .OS}}"
+                                    data-os-display="{{.OS}}"
+                                    data-os-version="{{.OSVersion}}"
+                                    data-os-family="{{.OSFamily}}"
+                                    data-custom-os="{{lower .CustomOS}}"
+                                    data-custom-os-original="{{.CustomOS}}"
                                     data-type="{{lower .Type}}"
                                     data-type-display="{{.Type}}"
                                     data-network="{{lower .NetworkName}}"
@@ -437,6 +444,7 @@ orangutan export out.csv</code></pre>
                                      <td class="col-vendor vendor-cell" data-label="Vendor" data-copy="{{.Vendor}}">
                                          {{if .Vendor}}{{.Vendor}}{{else}}<span style="color:var(--text-muted)">Unknown</span>{{end}}
                                      </td>
+                                     <td class="col-os os-cell" data-label="OS">{{formatOS .}}</td>
                                      <td class="col-lastseen time-cell" data-label="Last Seen" data-relative-time="{{.LastSeenUnix}}">{{.TimeAgo}}</td>
                                      <td class="col-actions actions-cell" data-label="Actions">
                                          {{if or .WebUI .CustomWebURL}}
@@ -722,6 +730,10 @@ orangutan export out.csv</code></pre>
 											<span class="spec-label">MAC Address:</span>
 											<span class="spec-val" id="sb-mac-address">—</span>
 										</li>
+										<li>
+											<span class="spec-label">OS:</span>
+											<span class="spec-val" id="sb-os">—</span>
+										</li>
                                         <li>
                                             <span class="spec-label">UniFi Model:</span>
                                             <span class="spec-val" id="sb-unifi-model">—</span>
@@ -814,6 +826,10 @@ orangutan export out.csv</code></pre>
                                             </select>
                                         </div>
                                         <div class="form-group">
+                                            <label for="sb-edit-custom-os">Custom OS (Override)</label>
+                                            <input type="text" id="sb-edit-custom-os" name="custom_os" class="input" placeholder="e.g., Ubuntu 22.04">
+                                        </div>
+                                        <div class="form-group">
                                             <label for="sb-edit-notes">Device Notes</label>
                                             <textarea id="sb-edit-notes" name="notes" class="input" rows="3" placeholder="Add notes about this device..."></textarea>
                                         </div>
@@ -878,6 +894,7 @@ orangutan export out.csv</code></pre>
                         <li><span class="spec-label">IP Address:</span> <span class="spec-val" id="detail-ip"></span></li>
                         <li><span class="spec-label">MAC Address:</span> <span class="spec-val" id="detail-mac"></span></li>
                         <li><span class="spec-label">Manufacturer:</span> <span class="spec-val" id="detail-vendor"></span></li>
+                        <li><span class="spec-label">Operating System:</span> <span class="spec-val" id="detail-os">—</span></li>
                         <li><span class="spec-label">First Seen:</span> <span class="spec-val" id="detail-firstseen"></span></li>
                         <li><span class="spec-label">Last Seen:</span> <span class="spec-val" id="detail-lastseen"></span></li>
                         <li><span class="spec-label">Response Time:</span> <span class="spec-val" id="detail-responsetime"></span></li>
@@ -935,6 +952,10 @@ orangutan export out.csv</code></pre>
                                 <option value="IoT">IoT</option>
                                 <option value="Game Console">Game Console</option>
                             </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Custom OS (Override)</label>
+                            <input type="text" id="edit-custom-os" name="custom_os" class="input" placeholder="e.g., Ubuntu 22.04">
                         </div>
                         <div class="form-group">
                             <label>Device Notes</label>
@@ -1126,6 +1147,7 @@ orangutan export out.csv</code></pre>
     <script src="/static/scan-refresh.js?v={{.Version}}"></script>
     <script src="/static/device-operation-state.js?v={{.Version}}"></script>
     <script src="/static/traffic-chart.js?v={{.Version}}"></script>
+    <script src="/static/os-presentation.js?v={{.Version}}"></script>
     <script src="/static/app.js?v={{.Version}}"></script>
 </body>
 </html>

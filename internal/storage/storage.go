@@ -471,6 +471,7 @@ func (s *Storage) scanDevice(scanner interface {
 		&d.CustomHostname, &d.CustomWebURL, &d.CustomType, &d.WebPort, &d.WebScheme, &probedVal, &d.DetectedSSHPort, &d.SSHOverride, &d.SSHOverridePort, &d.Assignment,
 		&d.NetworkName, &d.FirstSeen, &d.LastSeen, &d.ResponseTime, &addressHistoryStr, &d.LinkedMAC,
 		&notifyOnSeenVal, &ansibleManagedVal,
+		&d.OS, &d.OSVersion, &d.OSFamily, &d.CustomOS,
 		&d.SSID, &d.APName, &d.RadioBand, &d.Channel, &d.WiFiStandard, &d.Signal, &d.SignalQuality,
 		&d.RxRate, &d.TxRate, &d.RxBytes, &d.TxBytes, &d.AssociationUptime, &d.UniFiModel, &d.VLAN,
 		&d.RouterSource, &d.RouterInterface, &leaseExpiresVal, &d.LeaseLifetime, &d.RouterNotes,
@@ -538,6 +539,7 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			d.linked_mac,
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
 			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
+			d.os, d.os_version, d.os_family, COALESCE(NULLIF(p.custom_os, ''), d.custom_os) AS custom_os,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
@@ -670,6 +672,7 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 			d.linked_mac,
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
 			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
+			d.os, d.os_version, d.os_family, COALESCE(NULLIF(p.custom_os, ''), d.custom_os) AS custom_os,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
@@ -738,6 +741,7 @@ func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 			d.linked_mac,
 			COALESCE(p.notify_on_seen, d.notify_on_seen) AS notify_on_seen,
 			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
+			d.os, d.os_version, d.os_family, COALESCE(NULLIF(p.custom_os, ''), d.custom_os) AS custom_os,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
@@ -914,6 +918,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 			assignment, network_name, first_seen, last_seen, response_time, address_history,
 			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen, ansible_managed,
+			os, os_version, os_family, custom_os,
 			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -925,6 +930,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, 0, ?, ?, ?, ?,
+			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -959,6 +965,10 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			linked_mac = excluded.linked_mac,
 			notify_on_seen = excluded.notify_on_seen,
 			ansible_managed = excluded.ansible_managed,
+			os = excluded.os,
+			os_version = excluded.os_version,
+			os_family = excluded.os_family,
+			custom_os = excluded.custom_os,
 			ssid = excluded.ssid,
 			ap_name = excluded.ap_name,
 			radio_band = excluded.radio_band,
@@ -999,6 +1009,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		device.WebPort, device.WebScheme, boolToInt(device.Probed), device.DetectedSSHPort, device.SSHOverride, device.SSHOverridePort, device.Assignment, device.NetworkName,
 		device.FirstSeen, device.LastSeen, device.ResponseTime, string(historyJSON), isOnline, device.LastSeen,
 		device.LinkedMAC, boolToInt(device.NotifyOnSeen), boolToInt(device.AnsibleManaged),
+		device.OS, device.OSVersion, device.OSFamily, device.CustomOS,
 		device.SSID, device.APName, device.RadioBand, device.Channel, device.WiFiStandard, device.Signal, device.SignalQuality,
 		device.RxRate, device.TxRate, device.RxBytes, device.TxBytes, device.AssociationUptime, device.UniFiModel, device.VLAN,
 		device.RouterSource, device.RouterInterface, leaseExpiresVal, device.LeaseLifetime, device.RouterNotes,
@@ -1009,7 +1020,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 }
 
 // UpdateDeviceFields updates specific fields of a device
-func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac, sshOverride *string, notifyOnSeen, ansibleManaged *bool, sshOverridePort *int) error {
+func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac, sshOverride *string, notifyOnSeen, ansibleManaged *bool, sshOverridePort *int, customOS *string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1076,6 +1087,10 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 				parentFields = append(parentFields, `ssh_override_port = ?`)
 				parentArgs = append(parentArgs, *sshOverridePort)
 			}
+			if customOS != nil {
+				parentFields = append(parentFields, `custom_os = ?`)
+				parentArgs = append(parentArgs, *customOS)
+			}
 
 			if len(parentFields) > 0 {
 				parentQuery += joinStrings(parentFields, ", ") + ` WHERE ip = ?`
@@ -1084,7 +1099,7 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 			}
 
 			// Clear customizations on the child so it cleanly inherits them from the parent
-			childQuery := `UPDATE devices SET label = '', notes = '', "group" = '', custom_hostname = '', custom_web_url = '', custom_type = '', notify_on_seen = 0, ansible_managed = 0, ssh_override = '', ssh_override_port = 0`
+			childQuery := `UPDATE devices SET label = '', notes = '', "group" = '', custom_hostname = '', custom_web_url = '', custom_type = '', notify_on_seen = 0, ansible_managed = 0, ssh_override = '', ssh_override_port = 0, custom_os = ''`
 			var childArgs []interface{}
 			if linkedMac != nil {
 				childQuery += `, linked_mac = ?`
@@ -1146,6 +1161,10 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 		fields = append(fields, `ssh_override_port = ?`)
 		args = append(args, *sshOverridePort)
 	}
+	if customOS != nil {
+		fields = append(fields, `custom_os = ?`)
+		args = append(args, *customOS)
+	}
 
 	if len(fields) == 0 {
 		return nil
@@ -1198,6 +1217,7 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
+		       os, os_version, os_family, custom_os,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -1231,6 +1251,7 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
+		       os, os_version, os_family, custom_os,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -1389,6 +1410,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 			assignment, network_name, first_seen, last_seen, response_time, address_history,
 			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen, ansible_managed,
+			os, os_version, os_family, custom_os,
 			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -1400,6 +1422,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, 0, ?, ?, ?, ?,
+			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
@@ -1412,6 +1435,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		d.WebPort, d.WebScheme, boolToInt(d.Probed), d.DetectedSSHPort, d.SSHOverride, d.SSHOverridePort, d.Assignment, d.NetworkName,
 		d.FirstSeen, d.LastSeen, d.ResponseTime, string(historyJSON), isOnline, d.LastSeen,
 		d.LinkedMAC, boolToInt(d.NotifyOnSeen), boolToInt(d.AnsibleManaged),
+		d.OS, d.OSVersion, d.OSFamily, d.CustomOS,
 		d.SSID, d.APName, d.RadioBand, d.Channel, d.WiFiStandard, d.Signal, d.SignalQuality,
 		d.RxRate, d.TxRate, d.RxBytes, d.TxBytes, d.AssociationUptime, d.UniFiModel, d.VLAN,
 		d.RouterSource, d.RouterInterface, leaseExpiresVal, d.LeaseLifetime, d.RouterNotes,
@@ -1455,6 +1479,7 @@ func (s *Storage) pruneEphemeralIPv6() error {
 		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
+		       os, os_version, os_family, custom_os,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -2293,6 +2318,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 				       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
+		       os, os_version, os_family, custom_os,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -2348,6 +2374,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 				       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
+		       os, os_version, os_family, custom_os,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 			       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -2509,6 +2536,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 			custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 					       assignment, network_name, first_seen, last_seen, response_time, address_history,
 					       linked_mac, notify_on_seen, ansible_managed,
+					       os, os_version, os_family, custom_os,
 					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -2528,6 +2556,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 					       assignment, network_name, first_seen, last_seen, response_time, address_history,
 					       linked_mac, notify_on_seen, ansible_managed,
+					       os, os_version, os_family, custom_os,
 					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
@@ -2549,6 +2578,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
 		       assignment, network_name, first_seen, last_seen, response_time, address_history,
 		       linked_mac, notify_on_seen, ansible_managed,
+		       os, os_version, os_family, custom_os,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
 				       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
 			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,

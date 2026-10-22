@@ -469,7 +469,7 @@ func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
 	// Customize parent device settings
 	labelVal := "My Parent S10"
 	notesVal := "Owner: John Doe"
-	if err := s.UpdateDeviceFields(parentIP, &labelVal, &notesVal, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+	if err := s.UpdateDeviceFields(parentIP, &labelVal, &notesVal, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -483,7 +483,7 @@ func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
 	}
 
 	// Link Child Device to Parent Device using parentMAC
-	if err := s.UpdateDeviceFields(childIP, nil, nil, nil, nil, nil, nil, &parentMAC, nil, nil, nil, nil); err != nil {
+	if err := s.UpdateDeviceFields(childIP, nil, nil, nil, nil, nil, nil, &parentMAC, nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -703,7 +703,7 @@ func TestUpdateDevicePersistsAnsibleManaged(t *testing.T) {
 
 	// Now toggle off via UpdateDeviceFields
 	ansibleOff := false
-	if err := s.UpdateDeviceFields("192.168.1.240", nil, nil, nil, nil, nil, nil, nil, nil, nil, &ansibleOff, nil); err != nil {
+	if err := s.UpdateDeviceFields("192.168.1.240", nil, nil, nil, nil, nil, nil, nil, nil, nil, &ansibleOff, nil, nil); err != nil {
 		t.Fatalf("UpdateDeviceFields: %v", err)
 	}
 	stored = s.GetDevice("192.168.1.240")
@@ -746,6 +746,41 @@ func TestUpdateDevicePreservesUniFiVLANWhenOmitted(t *testing.T) {
 		t.Fatalf("stored device = %+v, want preserved VLAN 42", got)
 	}
 }
+
+func TestStorage_OSPersistenceAndCustomOverride(t *testing.T) {
+	s := newTestStorage(t)
+
+	dev := &types.Device{
+		IP:        "192.168.1.50",
+		MAC:       "00:11:22:33:44:55",
+		OS:        "Ubuntu Linux",
+		OSVersion: "22.04",
+		OSFamily:  "Linux",
+		CustomOS:  "My Custom OS",
+	}
+	if err := s.UpdateDevice(dev); err != nil {
+		t.Fatalf("UpdateDevice failed: %v", err)
+	}
+
+	got := s.GetDevice("192.168.1.50")
+	if got == nil {
+		t.Fatal("GetDevice returned nil")
+	}
+	if got.OS != "Ubuntu Linux" || got.OSVersion != "22.04" || got.OSFamily != "Linux" || got.CustomOS != "My Custom OS" {
+		t.Errorf("got OS fields %+v, want Ubuntu Linux / 22.04 / Linux / My Custom OS", got)
+	}
+
+	// Test UpdateDeviceFields for custom_os
+	newCustomOS := "Debian 12"
+	if err := s.UpdateDeviceFields("192.168.1.50", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, &newCustomOS); err != nil {
+		t.Fatalf("UpdateDeviceFields with customOS: %v", err)
+	}
+	updated := s.GetDevice("192.168.1.50")
+	if updated == nil || updated.CustomOS != "Debian 12" {
+		t.Fatalf("updated CustomOS = %q, want Debian 12", updated.CustomOS)
+	}
+}
+
 
 func TestMergeUniFiClients(t *testing.T) {
 	s := newTestStorage(t)

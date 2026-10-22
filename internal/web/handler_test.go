@@ -698,6 +698,39 @@ func TestIndexPageRendersDeviceTableAndSortReset(t *testing.T) {
 	}
 }
 
+func TestIndexPageRendersOSColumnAndModalControls(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	device := &types.Device{
+		IP:        "192.168.1.50",
+		MAC:       "00:11:22:33:44:55",
+		Hostname:  "test-box",
+		OS:        "Ubuntu Linux",
+		OSVersion: "22.04",
+		OSFamily:  "Linux",
+	}
+	if err := h.store.UpdateDevice(device); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rec.Body.String()
+	for _, expected := range []string{
+		`<th class="col-os" data-sort="os"`,
+		`class="col-os os-cell"`,
+		`class="os-icon"`,
+		`id="sb-os"`,
+		`id="detail-os"`,
+		`id="edit-custom-os"`,
+		`id="sb-edit-custom-os"`,
+		`/static/os-presentation.js`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("expected index page to contain %q", expected)
+		}
+	}
+}
+
 func TestIndexPageRendersFloatingSaveAsPageOverlay(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 
