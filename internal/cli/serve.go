@@ -96,6 +96,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to set up authentication: %w", err)
 	}
 	authn.SetSetupRequired(cfg.RequiresSetup())
+	authn.SetTokenValidator(func(token string) bool {
+		valid, _ := store.ValidateAndTouchAPIToken(token)
+		return valid
+	})
 
 	// Create HTTP handler
 	mux := http.NewServeMux()

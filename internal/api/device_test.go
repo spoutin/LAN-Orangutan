@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -151,6 +152,140 @@ func TestDevice_PUT_UpdateEndpoint(t *testing.T) {
 	}
 	if !updated.AnsibleManaged {
 		t.Errorf("AnsibleManaged = false, want true")
+	}
+}
+
+func TestDevice_POST_FactsEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+
+	dev := types.Device{
+		IP:  "192.168.1.100",
+		MAC: "aa:bb:cc:dd:ee:01",
+	}
+	if err := store.UpdateDevice(&dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	h := NewHandler(store, config.Default())
+
+	// 1. Post facts with valid MAC format
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"os":         "Ubuntu",
+		"os_version": "24.04.1 LTS",
+		"os_family":  "Linux",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/devices/aa-bb-cc-dd-ee-01/facts", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/devices/{mac}/facts status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	updated := store.GetDevice("192.168.1.100")
+	if updated == nil {
+		t.Fatal("device not found after update")
+	}
+	if updated.CustomOS != "Ubuntu" || updated.CustomOSVersion != "24.04.1 LTS" || updated.CustomOSFamily != "Linux" {
+		t.Errorf("CustomOS fields = %q / %q / %q, want Ubuntu / 24.04.1 LTS / Linux",
+			updated.CustomOS, updated.CustomOSVersion, updated.CustomOSFamily)
+	}
+
+	// 2. Post facts for non-existent MAC
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/devices/00:00:00:00:00:00/facts", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown MAC, got %d", rec.Code)
+	}
+}
+
+func TestAPITokensEndpoints(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+
+	h := NewHandler(store, config.Default())
+
+	// 1. Create a token
+	createBody, _ := json.Marshal(map[string]string{
+		"name": "Ansible CI",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/tokens", bytes.NewReader(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/tokens status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var createResp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ID          int64  `json:"id"`
+			Name        string `json:"name"`
+			TokenPrefix string `json:"token_prefix"`
+			Token       string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("unmarshal createResp: %v", err)
+	}
+	if !strings.HasPrefix(createResp.Data.Token, "ora_") {
+		t.Errorf("expected token to start with ora_, got %q", createResp.Data.Token)
+	}
+	if createResp.Data.Name != "Ansible CI" {
+		t.Errorf("expected name Ansible CI, got %q", createResp.Data.Name)
+	}
+
+	// 2. List tokens
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/tokens", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/tokens status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var listResp struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			ID          int64  `json:"id"`
+			Name        string `json:"name"`
+			TokenPrefix string `json:"token_prefix"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("unmarshal listResp: %v", err)
+	}
+	if len(listResp.Data) != 1 || listResp.Data[0].ID != createResp.Data.ID {
+		t.Fatalf("expected 1 token with ID %d, got %+v", createResp.Data.ID, listResp.Data)
+	}
+
+	// 3. Delete token
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, "/api/tokens/"+strconv.FormatInt(createResp.Data.ID, 10), nil)
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE /api/tokens status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify list is empty
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/tokens", nil)
+	h.ServeHTTP(rec, req)
+	_ = json.Unmarshal(rec.Body.Bytes(), &listResp)
+	if len(listResp.Data) != 0 {
+		t.Fatalf("expected 0 tokens, got %d", len(listResp.Data))
 	}
 }
 

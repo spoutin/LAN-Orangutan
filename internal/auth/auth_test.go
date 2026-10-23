@@ -399,3 +399,39 @@ func TestSetPasswordRejectsOverlongInput(t *testing.T) {
 		t.Error("a refused password must not become the active one")
 	}
 }
+
+func TestMiddlewareWithTokenValidator(t *testing.T) {
+	a := newTestAuth(t)
+
+	// Set a custom token validator on Authenticator
+	a.SetTokenValidator(func(token string) bool {
+		return token == "ora_valid_secret_token"
+	})
+
+	// 1. Request with valid Bearer token should pass through without session cookie
+	req := httptest.NewRequest(http.MethodGet, "/api/devices", nil)
+	req.Header.Set("Authorization", "Bearer ora_valid_secret_token")
+	rec := httptest.NewRecorder()
+	a.Middleware(okHandler()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("Bearer token: got status %d, want 200", rec.Code)
+	}
+
+	// 2. Request with valid X-API-Key should pass through
+	req = httptest.NewRequest(http.MethodGet, "/api/devices", nil)
+	req.Header.Set("X-API-Key", "ora_valid_secret_token")
+	rec = httptest.NewRecorder()
+	a.Middleware(okHandler()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("X-API-Key: got status %d, want 200", rec.Code)
+	}
+
+	// 3. Request with invalid token should be rejected on /api/
+	req = httptest.NewRequest(http.MethodGet, "/api/devices", nil)
+	req.Header.Set("Authorization", "Bearer ora_invalid_token")
+	rec = httptest.NewRecorder()
+	a.Middleware(okHandler()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("invalid token: got status %d, want 401", rec.Code)
+	}
+}

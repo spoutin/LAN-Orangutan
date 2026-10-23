@@ -776,6 +776,25 @@ func TestIndexPageOmitsConfiguredNetworkInterface(t *testing.T) {
 	}
 }
 
+func TestSettingsPageRendersAPITokensSection(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	rec := httptest.NewRecorder()
+	h.handleSettings(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	body := rec.Body.String()
+
+	for _, expected := range []string{
+		`API Tokens`,
+		`id="tokens-table"`,
+		`id="generate-token-btn"`,
+		`id="token-created-modal"`,
+		`id="token-create-modal"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("expected settings page to contain %q", expected)
+		}
+	}
+}
+
 func TestIndexPageRendersSwitchConnection(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 	poeWatts := 8.2

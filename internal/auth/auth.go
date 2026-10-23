@@ -68,6 +68,9 @@ type Authenticator struct {
 
 	sessions map[string]time.Time // token -> expiry
 	attempts map[string]*attemptRecord
+
+	// tokenValidator validates bearer API tokens or API keys.
+	tokenValidator func(token string) bool
 }
 
 type attemptRecord struct {
@@ -176,6 +179,29 @@ func ValidatePassword(password string) error {
 	return nil
 }
 
+// SetTokenValidator sets an external token validation callback (e.g. for API tokens).
+func (a *Authenticator) SetTokenValidator(validator func(token string) bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.tokenValidator = validator
+}
+
+// extractToken retrieves a token from Authorization Bearer header or X-API-Key header.
+func extractToken(r *http.Request) string {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			return strings.TrimSpace(parts[1])
+		}
+	}
+	apiKey := r.Header.Get("X-API-Key")
+	if apiKey != "" {
+		return strings.TrimSpace(apiKey)
+	}
+	return ""
+}
+
 // Middleware wraps next so that requests without a valid session are turned
 // away.
 //
@@ -184,6 +210,17 @@ func ValidatePassword(password string) error {
 // user completes setup.
 func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := extractToken(r)
+		if token != "" {
+			a.mu.Lock()
+			validator := a.tokenValidator
+			a.mu.Unlock()
+			if validator != nil && validator(token) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
 		switch {
 		case a.NeedsSetup():
 			a.reject(w, r, SetupPath, "setup required")

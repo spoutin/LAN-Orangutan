@@ -51,3 +51,8 @@ test('formatOSVersion returns only version or dash', () => {
     assert.equal(formatOSVersion(null), '—');
 });
 
+test('formatOSVersion prioritizes custom_os_version over detected os_version', () => {
+    assert.equal(formatOSVersion({ os_version: '22.04', custom_os_version: '24.04.1 LTS' }), '24.04.1 LTS');
+    assert.equal(formatOSVersion({ os_version: '22.04', customOSVersion: '24.04.1 LTS' }), '24.04.1 LTS');
+});
+

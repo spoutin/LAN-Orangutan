@@ -50,6 +50,8 @@ type Device struct {
 	OSVersion       string        `json:"os_version,omitempty"`
 	OSFamily        string        `json:"os_family,omitempty"`
 	CustomOS        string        `json:"custom_os,omitempty"`
+	CustomOSVersion string        `json:"custom_os_version,omitempty"`
+	CustomOSFamily  string        `json:"custom_os_family,omitempty"`
 	NetworkName     string        `json:"network_name,omitempty"`
 	FirstSeen       time.Time     `json:"first_seen"`
 	LastSeen        time.Time     `json:"last_seen"`
@@ -208,6 +210,15 @@ type ScanResult struct {
 	Scanner     string    `json:"scanner"`
 	Duration    float64   `json:"duration"`
 	Timestamp   time.Time `json:"timestamp"`
+}
+
+// APIToken represents an authenticated external API token.
+type APIToken struct {
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	TokenPrefix string     `json:"token_prefix"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 }
 
 // TailscaleStatus represents Tailscale connection status

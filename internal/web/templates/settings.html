@@ -217,6 +217,37 @@ orangutan export out.csv</code></pre>
         {{end}}
 
         <section class="section">
+            <h2 class="section-title">API Tokens</h2>
+            <div class="card">
+                <p style="margin-bottom: 1rem; color: var(--text-muted); font-size: 0.9rem;">
+                    Generate authentication tokens for external integrations such as Ansible, scripts, and webhooks.
+                    Authenticate requests by including <code>Authorization: Bearer &lt;token&gt;</code> or <code>X-API-Key: &lt;token&gt;</code>.
+                </p>
+                <div style="display: flex; justify-content: flex-end; margin-bottom: 1rem;">
+                    <button id="generate-token-btn" class="btn btn-primary" onclick="openCreateTokenModal()">+ Generate API Token</button>
+                </div>
+                <div style="overflow-x: auto;">
+                    <table class="table" id="tokens-table" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr>
+                                <th style="text-align: left; padding: 0.5rem;">Name</th>
+                                <th style="text-align: left; padding: 0.5rem;">Token Prefix</th>
+                                <th style="text-align: left; padding: 0.5rem;">Created</th>
+                                <th style="text-align: left; padding: 0.5rem;">Last Used</th>
+                                <th style="text-align: right; padding: 0.5rem;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tokens-table-body">
+                            <tr>
+                                <td colspan="5" style="text-align: center; padding: 1rem; color: var(--text-muted);">Loading tokens...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
             <h2 class="section-title">Data Management</h2>
             <div class="card">
                 <div class="form-group">
@@ -250,6 +281,52 @@ orangutan export out.csv</code></pre>
             </div>
         </section>
     </main>
+
+    <!-- Create API Token Modal -->
+    <div id="token-create-modal" class="modal" style="display:none">
+        <div class="modal-content" style="max-width: 480px; width: 90%;">
+            <div class="modal-header">
+                <h3>Generate API Token</h3>
+                <button class="modal-close" onclick="closeCreateTokenModal()">×</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <div class="form-group">
+                    <label for="new-token-name" style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Token Name / Description</label>
+                    <input type="text" id="new-token-name" class="input" style="width: 100%; box-sizing: border-box;" placeholder="e.g. Ansible Server, Home Assistant" onkeydown="if(event.key==='Enter') submitCreateToken()">
+                    <p class="form-help" style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted);">Identify where this token is used so you can rotate or revoke it later.</p>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+                <button class="btn btn-secondary" onclick="closeCreateTokenModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitCreateToken()">Generate</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Token Created Secret Modal -->
+    <div id="token-created-modal" class="modal" style="display:none">
+        <div class="modal-content" style="max-width: 520px; width: 90%;">
+            <div class="modal-header">
+                <h3 style="color: var(--primary, #2da44e);">Token Generated</h3>
+                <button class="modal-close" onclick="closeTokenCreatedModal()">×</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <div style="background: rgba(227, 98, 9, 0.1); border: 1px solid #e36209; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--text);">
+                    ⚠️ <strong>Copy this token now.</strong> It will never be displayed again.
+                </div>
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">API Secret Token</label>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <input type="text" id="created-token-value" class="input" readonly style="width: 100%; font-family: monospace; font-size: 0.9rem;">
+                        <button class="btn btn-primary" onclick="copyCreatedToken()">Copy</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end;">
+                <button class="btn btn-primary" onclick="closeTokenCreatedModal()">Done</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Dedicated Error Details Modal -->
     <div id="error-details-modal" class="modal" style="display:none">
@@ -382,6 +459,130 @@ orangutan export out.csv</code></pre>
                 showToast('Error: ' + e.message, 'error');
             }
         }
+
+        // --- API Token Management ---
+        async function fetchAndRenderTokens() {
+            const tbody = document.getElementById('tokens-table-body');
+            if (!tbody) return;
+            try {
+                const res = await fetch('/api/tokens');
+                const data = await res.json();
+                if (!data.success || !Array.isArray(data.data)) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">Failed to load tokens</td></tr>';
+                    return;
+                }
+                const tokens = data.data;
+                if (tokens.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 1.5rem; color: var(--text-muted);">No API tokens configured yet. Generate one above to connect Ansible or external scripts.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = tokens.map(t => {
+                    const createdDate = new Date(t.created_at).toLocaleDateString();
+                    const lastUsed = t.last_used_at ? new Date(t.last_used_at).toLocaleString() : 'Never';
+                    return `
+                        <tr style="border-bottom: 1px solid var(--border);">
+                            <td style="padding: 0.75rem 0.5rem; font-weight: 500;">${escapeHtml(t.name)}</td>
+                            <td style="padding: 0.75rem 0.5rem;"><code style="background: var(--bg-main); padding: 0.2rem 0.4rem; border-radius: 4px; font-size: 0.85rem;">${escapeHtml(t.token_prefix)}…</code></td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-muted); font-size: 0.85rem;">${createdDate}</td>
+                            <td style="padding: 0.75rem 0.5rem; color: var(--text-muted); font-size: 0.85rem;">${lastUsed}</td>
+                            <td style="padding: 0.75rem 0.5rem; text-align: right;">
+                                <button class="btn btn-danger btn-sm" onclick="deleteToken(${t.id}, '${escapeHtml(t.name)}')">Revoke</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">Failed to load tokens</td></tr>';
+            }
+        }
+
+        function openCreateTokenModal() {
+            const input = document.getElementById('new-token-name');
+            if (input) input.value = '';
+            const modal = document.getElementById('token-create-modal');
+            if (modal) modal.style.display = 'flex';
+            input?.focus();
+        }
+
+        function closeCreateTokenModal() {
+            const modal = document.getElementById('token-create-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function submitCreateToken() {
+            const input = document.getElementById('new-token-name');
+            const name = input?.value.trim() || 'API Token';
+            try {
+                const res = await fetch('/api/tokens', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                const data = await res.json();
+                if (data.success && data.data && data.data.token) {
+                    closeCreateTokenModal();
+                    openTokenCreatedModal(data.data.token);
+                    fetchAndRenderTokens();
+                } else {
+                    showToast(data.error || 'Failed to generate token', 'error');
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message, 'error');
+            }
+        }
+
+        function openTokenCreatedModal(tokenValue) {
+            const input = document.getElementById('created-token-value');
+            if (input) input.value = tokenValue;
+            const modal = document.getElementById('token-created-modal');
+            if (modal) modal.style.display = 'flex';
+        }
+
+        function closeTokenCreatedModal() {
+            const modal = document.getElementById('token-created-modal');
+            if (modal) modal.style.display = 'none';
+            const input = document.getElementById('created-token-value');
+            if (input) input.value = '';
+        }
+
+        async function copyCreatedToken() {
+            const input = document.getElementById('created-token-value');
+            if (!input || !input.value) return;
+            try {
+                await navigator.clipboard.writeText(input.value);
+                showToast('Token copied to clipboard!', 'success');
+            } catch (_) {
+                input.select();
+                document.execCommand('copy');
+                showToast('Token copied to clipboard!', 'success');
+            }
+        }
+
+        async function deleteToken(id, name) {
+            if (!confirm(`Are you sure you want to revoke API token "${name}"? External requests using this token will fail immediately.`)) {
+                return;
+            }
+            try {
+                const res = await fetch(`/api/tokens/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('API token revoked', 'success');
+                    fetchAndRenderTokens();
+                } else {
+                    showToast(data.error || 'Failed to revoke token', 'error');
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message, 'error');
+            }
+        }
+
+        // Initialize tokens table on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchAndRenderTokens();
+        });
     </script>
 </body>
 </html>

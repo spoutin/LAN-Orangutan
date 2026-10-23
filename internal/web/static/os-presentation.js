@@ -118,6 +118,8 @@
 
     function formatOSVersion(dev) {
         if (!dev) return '—';
+        const customVer = (dev.custom_os_version || dev.customOSVersion || '').trim();
+        if (customVer) return customVer;
         const ver = (dev.os_version || dev.osVersion || '').trim();
         return ver || '—';
     }

@@ -3,7 +3,9 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,6 +139,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.handleDeviceTraffic(w, r, target)
 			return
 		}
+		if strings.HasSuffix(sub, "/facts") {
+			target := strings.TrimSuffix(sub, "/facts")
+			h.handleDeviceFacts(w, r, target)
+			return
+		}
 		if strings.HasSuffix(sub, "/deep-scan") {
 			r.URL.RawPath = ""
 			r.URL.Path = strings.TrimSuffix(sub, "/deep-scan")
@@ -185,6 +192,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleScansEvents(w, r)
 	case path == "logs":
 		h.handleLogs(w, r)
+	case path == "tokens":
+		h.handleTokens(w, r)
+	case strings.HasPrefix(path, "tokens/"):
+		idStr := strings.TrimPrefix(path, "tokens/")
+		h.handleTokenDelete(w, r, idStr)
 	default:
 		h.error(w, http.StatusNotFound, "endpoint not found")
 	}
@@ -220,6 +232,111 @@ func (h *Handler) handleDeviceDeepScan(w http.ResponseWriter, r *http.Request) {
 	}
 	h.job = h.startScanJobWithDeadline([]string{cidr}, false, scanModeDeep, time.Time{}, nil, []types.Device{*device})
 	h.success(w, h.job.snapshot(h.cfg, h.store))
+}
+
+// handleDeviceFacts updates device OS and version facts by MAC address
+func (h *Handler) handleDeviceFacts(w http.ResponseWriter, r *http.Request, mac string) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req struct {
+		OS        string `json:"os"`
+		OSVersion string `json:"os_version"`
+		OSFamily  string `json:"os_family"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.error(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	cleanMAC := storage.NormalizeMAC(mac)
+	dev := h.store.GetDeviceByMAC(cleanMAC)
+	if dev == nil {
+		h.error(w, http.StatusNotFound, fmt.Sprintf("device with MAC %s not found", mac))
+		return
+	}
+
+	if err := h.store.UpdateDeviceCustomOS(cleanMAC, req.OS, req.OSVersion, req.OSFamily); err != nil {
+		h.error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	updated := h.store.GetDeviceByMAC(cleanMAC)
+	h.success(w, updated)
+}
+
+// handleTokens handles GET and POST for /api/tokens
+func (h *Handler) handleTokens(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		tokens, err := h.store.ListAPITokens()
+		if err != nil {
+			h.error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if tokens == nil {
+			tokens = []*types.APIToken{}
+		}
+		h.success(w, tokens)
+
+	case http.MethodPost:
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.error(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			name = "API Token"
+		}
+
+		// Generate random token string
+		secretBytes := make([]byte, 24)
+		if _, err := rand.Read(secretBytes); err != nil {
+			h.error(w, http.StatusInternalServerError, "failed to generate random token")
+			return
+		}
+		rawToken := "ora_" + hex.EncodeToString(secretBytes)
+
+		tokenRec, err := h.store.CreateAPIToken(name, rawToken)
+		if err != nil {
+			h.error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		h.success(w, map[string]interface{}{
+			"id":           tokenRec.ID,
+			"name":         tokenRec.Name,
+			"token_prefix": tokenRec.TokenPrefix,
+			"created_at":   tokenRec.CreatedAt,
+			"token":        rawToken,
+		})
+
+	default:
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleTokenDelete handles DELETE /api/tokens/{id}
+func (h *Handler) handleTokenDelete(w http.ResponseWriter, r *http.Request, idStr string) {
+	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		h.error(w, http.StatusBadRequest, "invalid token ID")
+		return
+	}
+	if err := h.store.DeleteAPIToken(id); err != nil {
+		h.error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.success(w, map[string]string{"message": "token deleted"})
 }
 
 // handleDevices handles GET /api/devices

@@ -725,6 +725,8 @@ async function editDevice(ip) {
             customWebURL: row.dataset.customWebUrlOriginal || '',
             customType: row.dataset.customTypeOriginal || '',
             customOS: row.dataset.customOsOriginal || row.dataset.customOs || '',
+            customOSVersion: row.dataset.customOsVersionOriginal || row.dataset.customOsVersion || '',
+            customOSFamily: row.dataset.customOsFamilyOriginal || row.dataset.customOsFamily || '',
             os: row.dataset.osDisplay || row.dataset.os || '',
             osVersion: row.dataset.osVersion || '',
             osFamily: row.dataset.osFamily || '',
@@ -777,6 +779,8 @@ async function editDevice(ip) {
                             customWebURL: dev.custom_web_url || '',
                             customType: dev.custom_type || '',
                             customOS: dev.custom_os || '',
+                            customOSVersion: dev.custom_os_version || '',
+                            customOSFamily: dev.custom_os_family || '',
                             os: dev.os || '',
                             osVersion: dev.os_version || '',
                             osFamily: dev.os_family || '',
@@ -1684,8 +1688,9 @@ function syncDeviceSidebarTelemetry(data) {
 		const osVerEl = document.getElementById('sb-os-version');
 		if (osVerEl) {
 			const verDisp = typeof formatOSVersion === 'function' ? formatOSVersion({
-				os_version: data.osVersion || ''
-			}) : (data.osVersion || '—');
+				os_version: data.osVersion || '',
+				custom_os_version: data.customOsVersionOriginal || data.customOsVersion || ''
+			}) : (data.customOsVersionOriginal || data.customOsVersion || data.osVersion || '—');
 			osVerEl.textContent = verDisp;
 		}
 
@@ -2181,7 +2186,8 @@ async function saveSidebarDevice() {
             const sbOSVersion = document.getElementById('sb-os-version');
             if (sbOSVersion && typeof formatOSVersion === 'function') {
                 sbOSVersion.textContent = formatOSVersion({
-                    os_version: row.dataset.osVersion || ''
+                    os_version: row.dataset.osVersion || '',
+                    custom_os_version: row.dataset.customOsVersionOriginal || row.dataset.customOsVersion || ''
                 });
             }
 

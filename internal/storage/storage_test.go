@@ -781,6 +781,96 @@ func TestStorage_OSPersistenceAndCustomOverride(t *testing.T) {
 	}
 }
 
+func TestAPITokensAndDeviceFactsStorage(t *testing.T) {
+	s := newTestStorage(t)
+
+	// 1. Create API token
+	rawToken := "ora_test12345678901234567890"
+	created, err := s.CreateAPIToken("Ansible Server", rawToken)
+	if err != nil {
+		t.Fatalf("CreateAPIToken failed: %v", err)
+	}
+	if created.Name != "Ansible Server" {
+		t.Errorf("created.Name = %q, want 'Ansible Server'", created.Name)
+	}
+	if created.TokenPrefix != "ora_test12" {
+		t.Errorf("created.TokenPrefix = %q, want 'ora_test12'", created.TokenPrefix)
+	}
+	if created.LastUsedAt != nil {
+		t.Errorf("created.LastUsedAt should be nil initially")
+	}
+
+	// 2. List API tokens
+	tokens, err := s.ListAPITokens()
+	if err != nil {
+		t.Fatalf("ListAPITokens failed: %v", err)
+	}
+	if len(tokens) != 1 {
+		t.Fatalf("got %d tokens, want 1", len(tokens))
+	}
+	if tokens[0].ID != created.ID {
+		t.Errorf("token ID = %d, want %d", tokens[0].ID, created.ID)
+	}
+
+	// 3. Validate and Touch API token
+	valid, err := s.ValidateAndTouchAPIToken(rawToken)
+	if err != nil || !valid {
+		t.Fatalf("ValidateAndTouchAPIToken with valid token: valid=%v, err=%v", valid, err)
+	}
+	invalid, err := s.ValidateAndTouchAPIToken("ora_wrongtoken")
+	if err != nil || invalid {
+		t.Fatalf("ValidateAndTouchAPIToken with invalid token: invalid=%v, err=%v", invalid, err)
+	}
+
+	// Verify last_used_at was updated
+	tokensAfter, err := s.ListAPITokens()
+	if err != nil {
+		t.Fatalf("ListAPITokens failed: %v", err)
+	}
+	if tokensAfter[0].LastUsedAt == nil {
+		t.Errorf("LastUsedAt should not be nil after validation")
+	}
+
+	// 4. Device lookup and update by MAC
+	dev := &types.Device{
+		IP:  "192.168.1.75",
+		MAC: "AA:BB:CC:11:22:33",
+	}
+	if err := s.UpdateDevice(dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	foundByMAC := s.GetDeviceByMAC("aa:bb:cc:11:22:33")
+	if foundByMAC == nil || foundByMAC.IP != "192.168.1.75" {
+		t.Fatalf("GetDeviceByMAC returned %+v, want device with IP 192.168.1.75", foundByMAC)
+	}
+
+	// Update device OS overrides by MAC
+	if err := s.UpdateDeviceCustomOS("aa-bb-cc-11-22-33", "Ubuntu", "24.04 LTS", "Linux"); err != nil {
+		t.Fatalf("UpdateDeviceCustomOS failed: %v", err)
+	}
+	updatedDev := s.GetDevice("192.168.1.75")
+	if updatedDev == nil {
+		t.Fatal("device not found after update")
+	}
+	if updatedDev.CustomOS != "Ubuntu" || updatedDev.CustomOSVersion != "24.04 LTS" || updatedDev.CustomOSFamily != "Linux" {
+		t.Errorf("device custom OS = %q / %q / %q, want Ubuntu / 24.04 LTS / Linux",
+			updatedDev.CustomOS, updatedDev.CustomOSVersion, updatedDev.CustomOSFamily)
+	}
+
+	// 5. Delete API token
+	if err := s.DeleteAPIToken(created.ID); err != nil {
+		t.Fatalf("DeleteAPIToken failed: %v", err)
+	}
+	tokensFinal, err := s.ListAPITokens()
+	if err != nil {
+		t.Fatalf("ListAPITokens failed: %v", err)
+	}
+	if len(tokensFinal) != 0 {
+		t.Errorf("got %d tokens after delete, want 0", len(tokensFinal))
+	}
+}
+
 
 func TestMergeUniFiClients(t *testing.T) {
 	s := newTestStorage(t)
