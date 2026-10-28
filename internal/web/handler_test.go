@@ -538,6 +538,7 @@ func TestIndexPageRendersWithTelemetry(t *testing.T) {
 		TxBytes:           2097152,
 		AssociationUptime: 3600,
 		UniFiModel:        "U6-Pro",
+		UniFiName:         "Living Room Device",
 		RouterSource:      "OPNsense",
 		RouterInterface:   "lan",
 		LeaseExpires:      time.Now().Add(2 * time.Hour),
@@ -578,6 +579,8 @@ func TestIndexPageRendersWithTelemetry(t *testing.T) {
 		`data-channel="36"`,
 		`data-signal="-65"`,
 		`data-unifi-model="U6-Pro"`,
+		`data-unifi-name="Living Room Device"`,
+		"sb-unifi-name",
 		`data-router-source="OPNsense"`,
 		`data-router-interface="lan"`,
 		`data-router-notes="Static Mapping"`,
@@ -603,6 +606,66 @@ func TestIndexPageRendersWithTelemetry(t *testing.T) {
 		if strings.Contains(body, removed) {
 			t.Errorf("expected header %q to be removed from table", removed)
 		}
+	}
+}
+
+func TestIndexPageDeviceNameFallback(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+
+	// Dev 1: CustomHostname overrides both normal Hostname and UniFiName
+	d1 := types.Device{
+		IP:             "192.168.1.10",
+		MAC:            "00:11:22:33:44:01",
+		Hostname:       "dns-host-1",
+		CustomHostname: "Custom Override 1",
+		UniFiName:      "unifi-name-1",
+		FirstSeen:      time.Now(),
+		LastSeen:       time.Now(),
+	}
+	// Dev 2: Normal Hostname takes priority over UniFiName when CustomHostname is empty
+	d2 := types.Device{
+		IP:        "192.168.1.11",
+		MAC:       "00:11:22:33:44:02",
+		Hostname:  "dns-host-2",
+		UniFiName: "unifi-name-2",
+		FirstSeen: time.Now(),
+		LastSeen:  time.Now(),
+	}
+	// Dev 3: UniFiName used as fallback when CustomHostname and Hostname are empty
+	d3 := types.Device{
+		IP:        "192.168.1.12",
+		MAC:       "00:11:22:33:44:03",
+		UniFiName: "UniFi Fallback 3",
+		FirstSeen: time.Now(),
+		LastSeen:  time.Now(),
+	}
+
+	for _, d := range []*types.Device{&d1, &d2, &d3} {
+		if err := h.store.UpdateDevice(d); err != nil {
+			t.Fatalf("UpdateDevice: %v", err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	h.handleIndex(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HandleIndex status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `data-unifi-name="unifi-name-1"`) {
+		t.Errorf("expected data-unifi-name attribute on device 1")
+	}
+	if !strings.Contains(body, "Custom Override 1") {
+		t.Errorf("expected Custom Override 1 to be rendered for device 1")
+	}
+	if !strings.Contains(body, "dns-host-2") {
+		t.Errorf("expected dns-host-2 to be rendered for device 2")
+	}
+	if !strings.Contains(body, "UniFi Fallback 3") {
+		t.Errorf("expected UniFi Fallback 3 to be rendered for device 3")
 	}
 }
 

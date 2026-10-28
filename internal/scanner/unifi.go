@@ -21,6 +21,7 @@ type unifiDeviceResponse struct {
 
 type unifiAPDevice struct {
 	MAC   string `json:"mac"`
+	IP    string `json:"ip"`
 	Name  string `json:"name"`
 	Model string `json:"model"`
 }
@@ -160,7 +161,29 @@ func FetchUniFiClients(ctx context.Context, cfg config.UniFiConfig) ([]types.Dev
 			TxBytes:           s.TxBytes,
 			AssociationUptime: s.Uptime,
 			UniFiModel:        model,
+			UniFiName:         s.Name,
 			VLAN:              s.VLAN,
+		})
+	}
+
+	// 3. Include UniFi infrastructure devices (APs, switches, gateways)
+	for _, d := range devResp.Data {
+		if d.MAC == "" && d.IP == "" {
+			continue
+		}
+		vendor := GetMACVendor(d.MAC)
+		hostname := d.Name
+		if hostname == "" {
+			hostname = d.Model
+		}
+		devices = append(devices, types.Device{
+			IP:         d.IP,
+			MAC:        d.MAC,
+			Hostname:   hostname,
+			Vendor:     vendor,
+			Type:       Classify(vendor, hostname, nil),
+			UniFiName:  d.Name,
+			UniFiModel: d.Model,
 		})
 	}
 

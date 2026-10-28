@@ -1174,6 +1174,98 @@ func TestMergeUniFiClients(t *testing.T) {
 	}
 }
 
+func TestMergeUniFiClients_UniFiNameAndFallback(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Case 1: Device already has a normal-method hostname. UniFiName is stored,
+	// but normal-method hostname is preserved.
+	devWithHostname := &types.Device{
+		IP:       "192.168.1.50",
+		MAC:      "aa:bb:cc:11:22:33",
+		Hostname: "router.lan",
+	}
+	if err := s.UpdateDevice(devWithHostname); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	_, _, err := s.MergeUniFiClients([]types.Device{
+		{
+			IP:        "192.168.1.50",
+			MAC:       "aa:bb:cc:11:22:33",
+			UniFiName: "Main Router",
+		},
+	})
+	if err != nil {
+		t.Fatalf("MergeUniFiClients: %v", err)
+	}
+
+	d1 := s.GetDevice("192.168.1.50")
+	if d1 == nil {
+		t.Fatalf("device 192.168.1.50 not found")
+	}
+	if d1.UniFiName != "Main Router" {
+		t.Errorf("d1.UniFiName = %q, want %q", d1.UniFiName, "Main Router")
+	}
+	if d1.Hostname != "router.lan" {
+		t.Errorf("d1.Hostname = %q, want %q (normal method should take priority)", d1.Hostname, "router.lan")
+	}
+
+	// Case 2: Device has NO normal-method hostname. UniFiName is stored AND used as fallback hostname.
+	devNoHostname := &types.Device{
+		IP:       "192.168.1.51",
+		MAC:      "aa:bb:cc:44:55:66",
+		Hostname: "",
+	}
+	if err := s.UpdateDevice(devNoHostname); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	_, _, err = s.MergeUniFiClients([]types.Device{
+		{
+			IP:        "192.168.1.51",
+			MAC:       "aa:bb:cc:44:55:66",
+			UniFiName: "Living Room Lightstrip",
+		},
+	})
+	if err != nil {
+		t.Fatalf("MergeUniFiClients: %v", err)
+	}
+
+	d2 := s.GetDevice("192.168.1.51")
+	if d2 == nil {
+		t.Fatalf("device 192.168.1.51 not found")
+	}
+	if d2.UniFiName != "Living Room Lightstrip" {
+		t.Errorf("d2.UniFiName = %q, want %q", d2.UniFiName, "Living Room Lightstrip")
+	}
+	if d2.Hostname != "Living Room Lightstrip" {
+		t.Errorf("d2.Hostname = %q, want %q (fallback to UniFi name)", d2.Hostname, "Living Room Lightstrip")
+	}
+
+	// Case 3: Brand new device discovered via UniFi with UniFiName
+	_, _, err = s.MergeUniFiClients([]types.Device{
+		{
+			IP:        "192.168.1.52",
+			MAC:       "aa:bb:cc:77:88:99",
+			UniFiName: "Office AP",
+		},
+	})
+	if err != nil {
+		t.Fatalf("MergeUniFiClients: %v", err)
+	}
+
+	d3 := s.GetDevice("192.168.1.52")
+	if d3 == nil {
+		t.Fatalf("device 192.168.1.52 not found")
+	}
+	if d3.UniFiName != "Office AP" {
+		t.Errorf("d3.UniFiName = %q, want %q", d3.UniFiName, "Office AP")
+	}
+	if d3.Hostname != "Office AP" {
+		t.Errorf("d3.Hostname = %q, want %q (fallback to UniFi name)", d3.Hostname, "Office AP")
+	}
+}
+
 func TestMergeRouterDHCP_Telemetry(t *testing.T) {
 	s := newTestStorage(t)
 	s.SetNetworkNames(map[string]string{"192.168.1.0/24": "Home LAN"})

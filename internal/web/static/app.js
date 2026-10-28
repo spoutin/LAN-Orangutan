@@ -677,7 +677,7 @@ function filterDevices() {
 
     let visible = 0;
     document.querySelectorAll('.device-row').forEach(row => {
-        const text = [row.dataset.ip, row.dataset.hostname, row.dataset.customHostname || '', row.dataset.customWebUrl || '', row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type, row.dataset.network || '', row.dataset.assignment || '', row.dataset.ssid || '', row.dataset.os || '', row.dataset.osVersion || '', row.dataset.customOs || ''].join(' ').toLowerCase();
+        const text = [row.dataset.ip, row.dataset.hostname, row.dataset.customHostname || '', row.dataset.customWebUrl || '', row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type, row.dataset.network || '', row.dataset.assignment || '', row.dataset.ssid || '', row.dataset.unifiName || '', row.dataset.os || '', row.dataset.osVersion || '', row.dataset.customOs || ''].join(' ').toLowerCase();
         const status = row.dataset.status;
         const group = row.dataset.group || '';
         const network = (row.dataset.network || '').toLowerCase();
@@ -1318,7 +1318,7 @@ function syncDeviceSidebarTelemetry(data) {
 
     const titleEl = document.getElementById('sb-title');
     if (titleEl) {
-        titleEl.textContent = data.labelOriginal || data.customHostnameOriginal || data.hostnameDisplay || data.hostname || data.ip || 'Device Details';
+        titleEl.textContent = data.labelOriginal || data.customHostnameOriginal || data.hostnameDisplay || data.hostname || data.unifiName || data.ip || 'Device Details';
     }
 
     const macEl = document.getElementById('sb-mac');
@@ -1381,13 +1381,23 @@ function syncDeviceSidebarTelemetry(data) {
     // 3. UniFi Wireless Card
     const wirelessCard = document.getElementById('sb-wireless-card');
     if (wirelessCard) {
-        const ssid = (data.ssid || '').trim();
-        if (ssid) {
+        const hasUniFi = typeof shouldDisplayUniFiCard === 'function'
+            ? shouldDisplayUniFiCard(data)
+            : !!((data.ssid || '').trim() || (data.unifiName || '').trim() || (data.apName || '').trim());
+        if (hasUniFi) {
             wirelessCard.style.display = '';
             wirelessCard.classList.remove('hidden');
 
+            const unifiNameEl = document.getElementById('sb-unifi-name');
+            if (unifiNameEl) {
+                unifiNameEl.textContent = typeof formatUniFiName === 'function'
+                    ? formatUniFiName(data)
+                    : ((data.unifiName || '').trim() || '—');
+            }
+
+            const ssid = (data.ssid || '').trim();
             const ssidEl = document.getElementById('sb-ssid');
-            if (ssidEl) ssidEl.textContent = ssid;
+            if (ssidEl) ssidEl.textContent = ssid || '—';
 
             const apEl = document.getElementById('sb-ap-name');
             if (apEl) apEl.textContent = data.apName || '—';
@@ -2202,16 +2212,17 @@ async function saveSidebarDevice() {
             const hostnameCell = row.querySelector('.hostname-cell');
             if (hostnameCell) {
                 const originalHostname = row.dataset.hostnameDisplay || row.dataset.hostname || '';
+                const fallbackName = originalHostname || row.dataset.unifiName || '';
                 let cellHtml = '';
                 if (custom_hostname) {
                     cellHtml = `
-                        <span class="custom-hostname-wrapper" data-tip="Hostname overridden (originally: ${escapeHtml(originalHostname || 'none')})">
+                        <span class="custom-hostname-wrapper" data-tip="Hostname overridden (originally: ${escapeHtml(fallbackName || 'none')})">
                             ${escapeHtml(custom_hostname)}
                             <span class="override-indicator"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
                         </span>
                     `;
-                } else if (originalHostname) {
-                    cellHtml = escapeHtml(originalHostname);
+                } else if (fallbackName) {
+                    cellHtml = escapeHtml(fallbackName);
                 } else {
                     cellHtml = '<span style="color:var(--text-muted)">-</span>';
                 }
@@ -2223,7 +2234,7 @@ async function saveSidebarDevice() {
                 }
 
                 hostnameCell.innerHTML = cellHtml;
-                hostnameCell.setAttribute('data-copy', custom_hostname || originalHostname);
+                hostnameCell.setAttribute('data-copy', custom_hostname || fallbackName);
             }
 
             const indicators = row.querySelector('.device-indicators');

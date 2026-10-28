@@ -29,6 +29,7 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 				"data": []map[string]interface{}{
 					{
 						"mac":   "24:5a:4c:11:22:33",
+						"ip":    "192.168.1.20",
 						"name":  "Living Room AP",
 						"model": "U6-Pro",
 					},
@@ -167,8 +168,8 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 		t.Errorf("Accept header = %q, want %q", receivedAcceptHeader, "application/json")
 	}
 
-	if len(clients) != 5 {
-		t.Fatalf("expected 5 clients, got %d", len(clients))
+	if len(clients) != 8 {
+		t.Fatalf("expected 8 clients (5 stations + 3 devices), got %d", len(clients))
 	}
 
 	// Verify Station 1
@@ -254,8 +255,29 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 	if c2.SignalQuality != 100 {
 		t.Errorf("c2.SignalQuality = %d, want 100", c2.SignalQuality)
 	}
-	if c2.RxRate != 54 || c2.TxRate != 54 {
-		t.Errorf("c2 rates = (%d, %d), want (54, 54)", c2.RxRate, c2.TxRate)
+	if c2.UniFiName != "Smart-Plug" {
+		t.Errorf("c2.UniFiName = %q, want %q", c2.UniFiName, "Smart-Plug")
+	}
+
+	// Verify AP device included from stat/device
+	var foundAP bool
+	for _, d := range clients {
+		if d.MAC == "24:5a:4c:11:22:33" {
+			foundAP = true
+			if d.UniFiName != "Living Room AP" {
+				t.Errorf("AP device UniFiName = %q, want %q", d.UniFiName, "Living Room AP")
+			}
+			if d.IP != "192.168.1.20" {
+				t.Errorf("AP device IP = %q, want %q", d.IP, "192.168.1.20")
+			}
+			if d.Hostname != "Living Room AP" {
+				t.Errorf("AP device Hostname = %q, want %q", d.Hostname, "Living Room AP")
+			}
+			break
+		}
+	}
+	if !foundAP {
+		t.Errorf("expected AP device 24:5a:4c:11:22:33 to be included in returned clients")
 	}
 	if c2.UniFiModel != "ESP8266" {
 		t.Errorf("c2.UniFiModel = %q, want %q", c2.UniFiModel, "ESP8266")
@@ -359,8 +381,8 @@ func TestFetchUniFiClients_FallbackToLegacyAPI(t *testing.T) {
 		t.Fatalf("FetchUniFiClients failed with legacy fallback: %v", err)
 	}
 
-	if len(clients) != 1 {
-		t.Fatalf("expected 1 client, got %d", len(clients))
+	if len(clients) != 2 {
+		t.Fatalf("expected 2 clients (1 station + 1 AP), got %d", len(clients))
 	}
 	if clients[0].IP != "10.0.0.99" {
 		t.Errorf("IP = %q, want 10.0.0.99", clients[0].IP)

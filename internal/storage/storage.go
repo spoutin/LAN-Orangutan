@@ -475,7 +475,7 @@ func (s *Storage) scanDevice(scanner interface {
 		&notifyOnSeenVal, &ansibleManagedVal,
 		&d.OS, &d.OSVersion, &d.OSFamily, &d.CustomOS, &d.CustomOSVersion, &d.CustomOSFamily,
 		&d.SSID, &d.APName, &d.RadioBand, &d.Channel, &d.WiFiStandard, &d.Signal, &d.SignalQuality,
-		&d.RxRate, &d.TxRate, &d.RxBytes, &d.TxBytes, &d.AssociationUptime, &d.UniFiModel, &d.VLAN,
+		&d.RxRate, &d.TxRate, &d.RxBytes, &d.TxBytes, &d.AssociationUptime, &d.UniFiModel, &d.VLAN, &d.UniFiName,
 		&d.RouterSource, &d.RouterInterface, &leaseExpiresVal, &d.LeaseLifetime, &d.RouterNotes,
 		&d.SwitchName, &d.SwitchHost, &d.SwitchPort, &d.SwitchVLAN, &d.SwitchLinkState, &d.SwitchLinkSpeed, &d.SwitchDuplex, &switchPoEWattsVal, &switchUpdatedAtVal,
 		&trafficSourceVal, &rxRateBpsVal, &txRateBpsVal,
@@ -543,7 +543,7 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
 			d.os, d.os_version, d.os_family, COALESCE(NULLIF(p.custom_os, ''), d.custom_os) AS custom_os, COALESCE(NULLIF(p.custom_os_version, ''), d.custom_os_version) AS custom_os_version, COALESCE(NULLIF(p.custom_os_family, ''), d.custom_os_family) AS custom_os_family,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
-			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
+			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan, d.unifi_name,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
 			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
@@ -676,7 +676,7 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
 			d.os, d.os_version, d.os_family, COALESCE(NULLIF(p.custom_os, ''), d.custom_os) AS custom_os, COALESCE(NULLIF(p.custom_os_version, ''), d.custom_os_version) AS custom_os_version, COALESCE(NULLIF(p.custom_os_family, ''), d.custom_os_family) AS custom_os_family,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
-			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
+			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan, d.unifi_name,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
 			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
@@ -745,7 +745,7 @@ func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
 			d.os, d.os_version, d.os_family, COALESCE(NULLIF(p.custom_os, ''), d.custom_os) AS custom_os, COALESCE(NULLIF(p.custom_os_version, ''), d.custom_os_version) AS custom_os_version, COALESCE(NULLIF(p.custom_os_family, ''), d.custom_os_family) AS custom_os_family,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
-			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
+			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan, d.unifi_name,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
 			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
@@ -922,7 +922,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen, ansible_managed,
 			os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
 			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
-			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
+			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 			traffic_source, rx_rate_bps, tx_rate_bps,
@@ -934,7 +934,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			?, 0, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
@@ -987,6 +987,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			association_uptime = excluded.association_uptime,
 			unifi_model = excluded.unifi_model,
 			vlan = excluded.vlan,
+			unifi_name = CASE WHEN excluded.unifi_name != '' THEN excluded.unifi_name ELSE devices.unifi_name END,
 			router_source = excluded.router_source,
 			router_interface = excluded.router_interface,
 			lease_expires = excluded.lease_expires,
@@ -1015,7 +1016,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		device.LinkedMAC, boolToInt(device.NotifyOnSeen), boolToInt(device.AnsibleManaged),
 		device.OS, device.OSVersion, device.OSFamily, device.CustomOS, device.CustomOSVersion, device.CustomOSFamily,
 		device.SSID, device.APName, device.RadioBand, device.Channel, device.WiFiStandard, device.Signal, device.SignalQuality,
-		device.RxRate, device.TxRate, device.RxBytes, device.TxBytes, device.AssociationUptime, device.UniFiModel, device.VLAN,
+		device.RxRate, device.TxRate, device.RxBytes, device.TxBytes, device.AssociationUptime, device.UniFiModel, device.VLAN, device.UniFiName,
 		device.RouterSource, device.RouterInterface, leaseExpiresVal, device.LeaseLifetime, device.RouterNotes,
 		device.SwitchName, device.SwitchHost, device.SwitchPort, device.SwitchVLAN, device.SwitchLinkState, device.SwitchLinkSpeed, device.SwitchDuplex, device.SwitchPoEWatts, switchUpdatedAtVal,
 		device.TrafficSource, device.RxRateBps, device.TxRateBps,
@@ -1223,7 +1224,7 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 		       linked_mac, notify_on_seen, ansible_managed,
 		       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
-		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
+		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
@@ -1257,7 +1258,7 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 		       linked_mac, notify_on_seen, ansible_managed,
 		       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
-		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
+		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
@@ -1416,7 +1417,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			is_online, missed_sweeps, last_presence_change, linked_mac, notify_on_seen, ansible_managed,
 			os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
 			ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
-			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
+			rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 			traffic_source, rx_rate_bps, tx_rate_bps,
@@ -1428,7 +1429,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			?, 0, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
@@ -1441,7 +1442,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		d.LinkedMAC, boolToInt(d.NotifyOnSeen), boolToInt(d.AnsibleManaged),
 		d.OS, d.OSVersion, d.OSFamily, d.CustomOS, d.CustomOSVersion, d.CustomOSFamily,
 		d.SSID, d.APName, d.RadioBand, d.Channel, d.WiFiStandard, d.Signal, d.SignalQuality,
-		d.RxRate, d.TxRate, d.RxBytes, d.TxBytes, d.AssociationUptime, d.UniFiModel, d.VLAN,
+		d.RxRate, d.TxRate, d.RxBytes, d.TxBytes, d.AssociationUptime, d.UniFiModel, d.VLAN, d.UniFiName,
 		d.RouterSource, d.RouterInterface, leaseExpiresVal, d.LeaseLifetime, d.RouterNotes,
 		d.SwitchName, d.SwitchHost, d.SwitchPort, d.SwitchVLAN, d.SwitchLinkState, d.SwitchLinkSpeed, d.SwitchDuplex, d.SwitchPoEWatts, switchUpdatedAtVal,
 		d.TrafficSource, d.RxRateBps, d.TxRateBps,
@@ -1485,7 +1486,7 @@ func (s *Storage) pruneEphemeralIPv6() error {
 		       linked_mac, notify_on_seen, ansible_managed,
 		       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
-		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
+		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
@@ -2324,7 +2325,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 		       linked_mac, notify_on_seen, ansible_managed,
 		       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
-		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
+		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
@@ -2380,7 +2381,7 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 		       linked_mac, notify_on_seen, ansible_managed,
 		       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
-			       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
+			       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 			       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
@@ -2542,7 +2543,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					       linked_mac, notify_on_seen, ansible_managed,
 					       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
 					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
-					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
+					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 				       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
@@ -2562,7 +2563,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					       linked_mac, notify_on_seen, ansible_managed,
 					       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
 					       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
-					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
+					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 				       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
@@ -2584,7 +2585,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 		       linked_mac, notify_on_seen, ansible_managed,
 		       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
 		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
-				       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan,
+				       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
@@ -2631,6 +2632,13 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 			hostnameToSet := existing.Hostname
 			if hostnameToSet == "" && c.Hostname != "" {
 				hostnameToSet = c.Hostname
+			}
+			if hostnameToSet == "" && c.UniFiName != "" {
+				hostnameToSet = c.UniFiName
+			}
+			unifiNameToSet := existing.UniFiName
+			if c.UniFiName != "" {
+				unifiNameToSet = c.UniFiName
 			}
 			vendorToSet := existing.Vendor
 			if vendorToSet == "" && c.Vendor != "" {
@@ -2701,6 +2709,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					association_uptime = ?,
 					unifi_model = ?,
 					vlan = ?,
+					unifi_name = ?,
 					last_seen = ?,
 					is_online = 1,
 					missed_sweeps = 0,
@@ -2709,7 +2718,7 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 			`, macToSet, hostnameToSet, vendorToSet, typeToSet,
 				c.SSID, c.APName, c.RadioBand, c.Channel, c.WiFiStandard,
 				c.Signal, c.SignalQuality, c.RxRate, c.TxRate,
-				c.RxBytes, c.TxBytes, c.AssociationUptime, c.UniFiModel, c.VLAN,
+				c.RxBytes, c.TxBytes, c.AssociationUptime, c.UniFiModel, c.VLAN, unifiNameToSet,
 				now, lastPresenceChange, targetIP)
 			if err != nil {
 				return nil, nil, err
@@ -2719,6 +2728,9 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 				continue
 			}
 			dev := c
+			if dev.Hostname == "" && dev.UniFiName != "" {
+				dev.Hostname = dev.UniFiName
+			}
 			dev.Assignment = "Discovered"
 			dev.NetworkName = resolveNetworkName(dev.IP, s.networkNames)
 			dev.FirstSeen = now
@@ -3562,7 +3574,7 @@ func (s *Storage) GetDeviceByMAC(mac string) *types.Device {
 			COALESCE(p.ansible_managed, d.ansible_managed) AS ansible_managed,
 			d.os, d.os_version, d.os_family, COALESCE(NULLIF(p.custom_os, ''), d.custom_os) AS custom_os, COALESCE(NULLIF(p.custom_os_version, ''), d.custom_os_version) AS custom_os_version, COALESCE(NULLIF(p.custom_os_family, ''), d.custom_os_family) AS custom_os_family,
 			d.ssid, d.ap_name, d.radio_band, d.channel, d.wifi_standard, d.signal, d.signal_quality,
-			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan,
+			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan, d.unifi_name,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
 			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
