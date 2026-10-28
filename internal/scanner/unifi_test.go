@@ -168,8 +168,8 @@ func TestFetchUniFiClients_ProxyEndpoints(t *testing.T) {
 		t.Errorf("Accept header = %q, want %q", receivedAcceptHeader, "application/json")
 	}
 
-	if len(clients) != 8 {
-		t.Fatalf("expected 8 clients (5 stations + 3 devices), got %d", len(clients))
+	if len(clients) != 6 {
+		t.Fatalf("expected 6 clients (5 stations + 1 AP with IP), got %d", len(clients))
 	}
 
 	// Verify Station 1
@@ -381,8 +381,8 @@ func TestFetchUniFiClients_FallbackToLegacyAPI(t *testing.T) {
 		t.Fatalf("FetchUniFiClients failed with legacy fallback: %v", err)
 	}
 
-	if len(clients) != 2 {
-		t.Fatalf("expected 2 clients (1 station + 1 AP), got %d", len(clients))
+	if len(clients) != 1 {
+		t.Fatalf("expected 1 client, got %d", len(clients))
 	}
 	if clients[0].IP != "10.0.0.99" {
 		t.Errorf("IP = %q, want 10.0.0.99", clients[0].IP)

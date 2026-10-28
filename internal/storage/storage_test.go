@@ -871,7 +871,6 @@ func TestAPITokensAndDeviceFactsStorage(t *testing.T) {
 	}
 }
 
-
 func TestMergeUniFiClients(t *testing.T) {
 	s := newTestStorage(t)
 	s.SetNetworkNames(map[string]string{

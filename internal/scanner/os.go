@@ -26,16 +26,16 @@ type nmapOSClass struct {
 }
 
 var (
-	reUbuntuVer    = regexp.MustCompile(`(?i)ubuntu[^\d]*(\d{2}\.\d{2})`)
-	reDebianDeb    = regexp.MustCompile(`(?i)deb(\d+)`)
-	reDebianVer    = regexp.MustCompile(`(?i)(?:debian\s+)(\d+)`)
-	reAlpineVer    = regexp.MustCompile(`(?i)alpine[^\d]*(\d+\.\d+)`)
-	reFedoraVer    = regexp.MustCompile(`(?i)(?:fc|fedora\s+)(\d+)`)
-	reRHELVer      = regexp.MustCompile(`(?i)(?:el|rhel\s+|centos\s+)(\d+)`)
-	reWindowsVer   = regexp.MustCompile(`(?i)windows\s+(11|10|8\.1|8|7|server\s+\d{4}|20\d{2})`)
-	reAppleVer     = regexp.MustCompile(`(?i)(?:macos|mac os x|ios)\s+(\d+(?:\.\d+)?)`)
-	reBSDVer       = regexp.MustCompile(`(?i)(?:freebsd|openbsd|netbsd)\s+(\d+(?:\.\d+)?)`)
-	reGenericVer   = regexp.MustCompile(`\b(\d+(?:\.\d+)+)\b`)
+	reUbuntuVer  = regexp.MustCompile(`(?i)ubuntu[^\d]*(\d{2}\.\d{2})`)
+	reDebianDeb  = regexp.MustCompile(`(?i)deb(\d+)`)
+	reDebianVer  = regexp.MustCompile(`(?i)(?:debian\s+)(\d+)`)
+	reAlpineVer  = regexp.MustCompile(`(?i)alpine[^\d]*(\d+\.\d+)`)
+	reFedoraVer  = regexp.MustCompile(`(?i)(?:fc|fedora\s+)(\d+)`)
+	reRHELVer    = regexp.MustCompile(`(?i)(?:el|rhel\s+|centos\s+)(\d+)`)
+	reWindowsVer = regexp.MustCompile(`(?i)windows\s+(11|10|8\.1|8|7|server\s+\d{4}|20\d{2})`)
+	reAppleVer   = regexp.MustCompile(`(?i)(?:macos|mac os x|ios)\s+(\d+(?:\.\d+)?)`)
+	reBSDVer     = regexp.MustCompile(`(?i)(?:freebsd|openbsd|netbsd)\s+(\d+(?:\.\d+)?)`)
+	reGenericVer = regexp.MustCompile(`\b(\d+(?:\.\d+)+)\b`)
 )
 
 // canonicalFamily maps raw family/vendor strings to standard UI categories.

@@ -351,9 +351,8 @@ jobs:
 
             # Create RPM build structure
             mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-            mkdir -p "rpmbuild/BUILDROOT/lan-orangutan-${VERSION}-1.${RPM_ARCH}"
-
-            BUILDROOT="rpmbuild/BUILDROOT/lan-orangutan-${VERSION}-1.${RPM_ARCH}"
+            BUILDROOT="$(pwd)/rpmbuild/BUILDROOT/lan-orangutan-${VERSION}-1.${RPM_ARCH}"
+            mkdir -p "${BUILDROOT}"
             mkdir -p "${BUILDROOT}/usr/local/bin"
             mkdir -p "${BUILDROOT}/etc/lan-orangutan"
             mkdir -p "${BUILDROOT}/var/lib/lan-orangutan"
@@ -422,6 +421,7 @@ jobs:
 
             # Build RPM
             rpmbuild --define "_topdir $(pwd)/rpmbuild" \
+                     --define "buildroot ${BUILDROOT}" \
                      --define "_arch ${RPM_ARCH}" \
                      --target "${RPM_ARCH}" \
                      -bb "rpmbuild/SPECS/lan-orangutan.spec"

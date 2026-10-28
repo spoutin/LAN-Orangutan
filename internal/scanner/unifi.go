@@ -166,9 +166,9 @@ func FetchUniFiClients(ctx context.Context, cfg config.UniFiConfig) ([]types.Dev
 		})
 	}
 
-	// 3. Include UniFi infrastructure devices (APs, switches, gateways)
+	// 3. Include UniFi infrastructure devices (APs, switches, gateways) that have an IP
 	for _, d := range devResp.Data {
-		if d.MAC == "" && d.IP == "" {
+		if d.IP == "" {
 			continue
 		}
 		vendor := GetMACVendor(d.MAC)

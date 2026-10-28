@@ -33,4 +33,3 @@ func TestOSIcon(t *testing.T) {
 		t.Errorf("unknown family should yield empty, got %q", got)
 	}
 }
-
