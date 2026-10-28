@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
@@ -93,7 +93,7 @@ jobs:
           path: orangutan-${{ matrix.suffix }}${{ matrix.ext }}
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -142,7 +142,7 @@ jobs:
 
   release:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -357,6 +357,8 @@ jobs:
             mkdir -p "${BUILDROOT}/etc/lan-orangutan"
             mkdir -p "${BUILDROOT}/var/lib/lan-orangutan"
             mkdir -p "${BUILDROOT}/usr/lib/systemd/system"
+            mkdir -p "rpmbuild/BUILD/lan-orangutan-${VERSION}-build"
+            ln -sfn "${BUILDROOT}" "rpmbuild/BUILD/lan-orangutan-${VERSION}-build/BUILDROOT"
 
             # Copy binary
             cp "dist/orangutan-${BIN_SUFFIX}" "${BUILDROOT}/usr/local/bin/orangutan"
