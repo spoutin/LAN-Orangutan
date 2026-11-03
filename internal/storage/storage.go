@@ -1025,7 +1025,7 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 }
 
 // UpdateDeviceFields updates specific fields of a device
-func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac, sshOverride *string, notifyOnSeen, ansibleManaged *bool, sshOverridePort *int, customOS *string) error {
+func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostname, customWebURL, customType, linkedMac, sshOverride *string, notifyOnSeen, ansibleManaged *bool, sshOverridePort *int, customOS, customOSVersion, customOSFamily, mac, vendor *string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1095,6 +1095,14 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 			if customOS != nil {
 				parentFields = append(parentFields, `custom_os = ?`)
 				parentArgs = append(parentArgs, *customOS)
+			}
+			if customOSVersion != nil {
+				parentFields = append(parentFields, `custom_os_version = ?`)
+				parentArgs = append(parentArgs, *customOSVersion)
+			}
+			if customOSFamily != nil {
+				parentFields = append(parentFields, `custom_os_family = ?`)
+				parentArgs = append(parentArgs, *customOSFamily)
 			}
 
 			if len(parentFields) > 0 {
@@ -1169,6 +1177,23 @@ func (s *Storage) UpdateDeviceFields(ip string, label, notes, group, customHostn
 	if customOS != nil {
 		fields = append(fields, `custom_os = ?`)
 		args = append(args, *customOS)
+	}
+	if customOSVersion != nil {
+		fields = append(fields, `custom_os_version = ?`)
+		args = append(args, *customOSVersion)
+	}
+	if customOSFamily != nil {
+		fields = append(fields, `custom_os_family = ?`)
+		args = append(args, *customOSFamily)
+	}
+	if mac != nil {
+		cleanMAC := NormalizeMAC(*mac)
+		fields = append(fields, `mac = ?`)
+		args = append(args, cleanMAC)
+	}
+	if vendor != nil && *vendor != "" {
+		fields = append(fields, `vendor = ?`)
+		args = append(args, *vendor)
 	}
 
 	if len(fields) == 0 {
@@ -3620,4 +3645,51 @@ func (s *Storage) UpdateDeviceCustomOS(mac, customOS, customOSVersion, customOSF
 		return fmt.Errorf("device with mac %s not found", mac)
 	}
 	return nil
+}
+
+// UpdateDeviceCustomOSByIP updates custom OS override fields by IP address.
+func (s *Storage) UpdateDeviceCustomOSByIP(ip, customOS, customOSVersion, customOSFamily string) error {
+	if strings.TrimSpace(ip) == "" {
+		return fmt.Errorf("ip cannot be empty")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	res, err := s.db.Exec(`
+		UPDATE devices
+		SET custom_os = ?, custom_os_version = ?, custom_os_family = ?
+		WHERE ip = ?
+	`, customOS, customOSVersion, customOSFamily, strings.TrimSpace(ip))
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("device with ip %s not found", ip)
+	}
+	return nil
+}
+
+// UpdateDeviceMAC updates the MAC address and optional vendor of a device by IP.
+func (s *Storage) UpdateDeviceMAC(ip, mac, vendor string) error {
+	norm := NormalizeMAC(mac)
+	if norm == "" {
+		return fmt.Errorf("mac cannot be empty")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var err error
+	if vendor != "" {
+		_, err = s.db.Exec("UPDATE devices SET mac = ?, vendor = ? WHERE ip = ?", norm, vendor, strings.TrimSpace(ip))
+	} else {
+		_, err = s.db.Exec("UPDATE devices SET mac = ? WHERE ip = ?", norm, strings.TrimSpace(ip))
+	}
+	return err
 }

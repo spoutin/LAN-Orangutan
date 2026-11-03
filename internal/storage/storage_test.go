@@ -469,7 +469,7 @@ func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
 	// Customize parent device settings
 	labelVal := "My Parent S10"
 	notesVal := "Owner: John Doe"
-	if err := s.UpdateDeviceFields(parentIP, &labelVal, &notesVal, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+	if err := s.UpdateDeviceFields(parentIP, &labelVal, &notesVal, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -483,7 +483,7 @@ func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
 	}
 
 	// Link Child Device to Parent Device using parentMAC
-	if err := s.UpdateDeviceFields(childIP, nil, nil, nil, nil, nil, nil, &parentMAC, nil, nil, nil, nil, nil); err != nil {
+	if err := s.UpdateDeviceFields(childIP, nil, nil, nil, nil, nil, nil, &parentMAC, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -703,7 +703,7 @@ func TestUpdateDevicePersistsAnsibleManaged(t *testing.T) {
 
 	// Now toggle off via UpdateDeviceFields
 	ansibleOff := false
-	if err := s.UpdateDeviceFields("192.168.1.240", nil, nil, nil, nil, nil, nil, nil, nil, nil, &ansibleOff, nil, nil); err != nil {
+	if err := s.UpdateDeviceFields("192.168.1.240", nil, nil, nil, nil, nil, nil, nil, nil, nil, &ansibleOff, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("UpdateDeviceFields: %v", err)
 	}
 	stored = s.GetDevice("192.168.1.240")
@@ -772,7 +772,7 @@ func TestStorage_OSPersistenceAndCustomOverride(t *testing.T) {
 
 	// Test UpdateDeviceFields for custom_os
 	newCustomOS := "Debian 12"
-	if err := s.UpdateDeviceFields("192.168.1.50", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, &newCustomOS); err != nil {
+	if err := s.UpdateDeviceFields("192.168.1.50", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, &newCustomOS, nil, nil, nil, nil); err != nil {
 		t.Fatalf("UpdateDeviceFields with customOS: %v", err)
 	}
 	updated := s.GetDevice("192.168.1.50")

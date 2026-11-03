@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -234,14 +235,15 @@ func (h *Handler) handleDeviceDeepScan(w http.ResponseWriter, r *http.Request) {
 	h.success(w, h.job.snapshot(h.cfg, h.store))
 }
 
-// handleDeviceFacts updates device OS and version facts by MAC address
-func (h *Handler) handleDeviceFacts(w http.ResponseWriter, r *http.Request, mac string) {
+// handleDeviceFacts updates device OS, version, and optional MAC facts by MAC or IP address
+func (h *Handler) handleDeviceFacts(w http.ResponseWriter, r *http.Request, target string) {
 	if r.Method != http.MethodPost && r.Method != http.MethodPut {
 		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req struct {
+		MAC       string `json:"mac"`
 		OS        string `json:"os"`
 		OSVersion string `json:"os_version"`
 		OSFamily  string `json:"os_family"`
@@ -251,19 +253,51 @@ func (h *Handler) handleDeviceFacts(w http.ResponseWriter, r *http.Request, mac 
 		return
 	}
 
-	cleanMAC := storage.NormalizeMAC(mac)
-	dev := h.store.GetDeviceByMAC(cleanMAC)
+	trimmedTarget := strings.TrimSpace(target)
+	var dev *types.Device
+	var isIP bool
+
+	if net.ParseIP(trimmedTarget) != nil {
+		isIP = true
+		dev = h.store.GetDevice(trimmedTarget)
+	} else {
+		cleanMAC := storage.NormalizeMAC(trimmedTarget)
+		dev = h.store.GetDeviceByMAC(cleanMAC)
+	}
+
 	if dev == nil {
-		h.error(w, http.StatusNotFound, fmt.Sprintf("device with MAC %s not found", mac))
+		if isIP {
+			h.error(w, http.StatusNotFound, fmt.Sprintf("device with IP %s not found", target))
+		} else {
+			h.error(w, http.StatusNotFound, fmt.Sprintf("device with MAC %s not found", target))
+		}
 		return
 	}
 
-	if err := h.store.UpdateDeviceCustomOS(cleanMAC, req.OS, req.OSVersion, req.OSFamily); err != nil {
-		h.error(w, http.StatusInternalServerError, err.Error())
-		return
+	// Update MAC address if provided in request body
+	if req.MAC != "" {
+		newMAC := storage.NormalizeMAC(req.MAC)
+		if newMAC != "" {
+			vendor := scanner.GetMACVendor(newMAC)
+			_ = h.store.UpdateDeviceMAC(dev.IP, newMAC, vendor)
+		}
 	}
 
-	updated := h.store.GetDeviceByMAC(cleanMAC)
+	// Update custom OS facts
+	if isIP {
+		if err := h.store.UpdateDeviceCustomOSByIP(dev.IP, req.OS, req.OSVersion, req.OSFamily); err != nil {
+			h.error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else {
+		cleanMAC := storage.NormalizeMAC(trimmedTarget)
+		if err := h.store.UpdateDeviceCustomOS(cleanMAC, req.OS, req.OSVersion, req.OSFamily); err != nil {
+			h.error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	updated := h.store.GetDevice(dev.IP)
 	h.success(w, updated)
 }
 
@@ -413,6 +447,7 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost, http.MethodPut:
 		var req struct {
 			IP              string  `json:"ip"`
+			MAC             *string `json:"mac"`
 			Label           *string `json:"label"`
 			Notes           *string `json:"notes"`
 			Group           *string `json:"group"`
@@ -425,6 +460,8 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			SSHOverride     *string `json:"ssh_override"`
 			SSHOverridePort *int    `json:"ssh_override_port"`
 			CustomOS        *string `json:"custom_os"`
+			CustomOSVersion *string `json:"custom_os_version"`
+			CustomOSFamily  *string `json:"custom_os_family"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			h.error(w, http.StatusBadRequest, "invalid JSON")
@@ -452,7 +489,19 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC, req.SSHOverride, req.NotifyOnSeen, req.AnsibleManaged, req.SSHOverridePort, req.CustomOS); err != nil {
+		var resolvedVendor *string
+		if req.MAC != nil {
+			cleanMAC := storage.NormalizeMAC(*req.MAC)
+			req.MAC = &cleanMAC
+			if cleanMAC != "" {
+				v := scanner.GetMACVendor(cleanMAC)
+				if v != "" {
+					resolvedVendor = &v
+				}
+			}
+		}
+
+		if err := h.store.UpdateDeviceFields(ip, req.Label, req.Notes, req.Group, req.CustomHostname, req.CustomWebURL, req.CustomType, req.LinkedMAC, req.SSHOverride, req.NotifyOnSeen, req.AnsibleManaged, req.SSHOverridePort, req.CustomOS, req.CustomOSVersion, req.CustomOSFamily, req.MAC, resolvedVendor); err != nil {
 			h.error(w, http.StatusNotFound, err.Error())
 			return
 		}

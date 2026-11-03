@@ -204,6 +204,73 @@ func TestDevice_POST_FactsEndpoint(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for unknown MAC, got %d", rec.Code)
 	}
+
+	// 3. Post facts by IP address for routed L3 host without MAC, including MAC in body
+	routedDev := types.Device{
+		IP:  "10.10.10.50",
+		MAC: "",
+	}
+	if err := store.UpdateDevice(&routedDev); err != nil {
+		t.Fatalf("UpdateDevice routed: %v", err)
+	}
+
+	routedBody, _ := json.Marshal(map[string]interface{}{
+		"os":         "Red Hat Enterprise Linux",
+		"os_version": "9.4",
+		"os_family":  "Linux",
+		"mac":        "00:50:56:a1:b2:c3", // VMware MAC
+	})
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/devices/10.10.10.50/facts", bytes.NewReader(routedBody))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/devices/{ip}/facts status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	updatedRouted := store.GetDevice("10.10.10.50")
+	if updatedRouted == nil {
+		t.Fatal("routed device not found")
+	}
+	if updatedRouted.CustomOS != "Red Hat Enterprise Linux" || updatedRouted.CustomOSVersion != "9.4" || updatedRouted.CustomOSFamily != "Linux" {
+		t.Errorf("routed CustomOS = %q / %q / %q, want RHEL / 9.4 / Linux",
+			updatedRouted.CustomOS, updatedRouted.CustomOSVersion, updatedRouted.CustomOSFamily)
+	}
+	if updatedRouted.MAC != "00:50:56:a1:b2:c3" {
+		t.Errorf("routed MAC = %q, want 00:50:56:a1:b2:c3", updatedRouted.MAC)
+	}
+	if updatedRouted.Vendor != "VMware, Inc." && updatedRouted.Vendor != "VMware" {
+		t.Logf("routed Vendor = %q", updatedRouted.Vendor)
+	}
+
+	// 4. Update MAC and custom OS fields via PUT /api/devices/{ip}
+	putBody, _ := json.Marshal(map[string]interface{}{
+		"mac":               "00:1c:42:11:22:33", // Parallels MAC
+		"custom_os":         "Debian",
+		"custom_os_version": "12.5",
+		"custom_os_family":  "Linux",
+	})
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/devices/10.10.10.50", bytes.NewReader(putBody))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/devices/{ip} status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	updatedPut := store.GetDevice("10.10.10.50")
+	if updatedPut == nil {
+		t.Fatal("device not found after PUT")
+	}
+	if updatedPut.MAC != "00:1c:42:11:22:33" {
+		t.Errorf("PUT updated MAC = %q, want 00:1c:42:11:22:33", updatedPut.MAC)
+	}
+	if updatedPut.CustomOS != "Debian" || updatedPut.CustomOSVersion != "12.5" || updatedPut.CustomOSFamily != "Linux" {
+		t.Errorf("PUT CustomOS = %q / %q / %q, want Debian / 12.5 / Linux",
+			updatedPut.CustomOS, updatedPut.CustomOSVersion, updatedPut.CustomOSFamily)
+	}
 }
 
 func TestAPITokensEndpoints(t *testing.T) {
