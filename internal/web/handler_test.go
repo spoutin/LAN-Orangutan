@@ -1249,4 +1249,21 @@ func TestDashboardFullWidthLayoutAndScanAllToolbar(t *testing.T) {
 	}
 }
 
+func TestDashboardRendersScanStatusFooter(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index page status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="scan-status-footer"`) {
+		t.Error("expected dashboard to contain scan-status-footer")
+	}
+	if !strings.Contains(body, `id="scan-footer-ticker"`) {
+		t.Error("expected dashboard to contain scan-footer-ticker")
+	}
+}
+
+
 

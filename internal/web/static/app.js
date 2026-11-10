@@ -3121,6 +3121,75 @@ async function disconnectTailscale() {
     window.addEventListener('devices-refreshed', measureOffsets);
 })();
 
+function updateScanStatusFooter(progress) {
+    const footer = document.getElementById('scan-status-footer');
+    if (!footer) return;
+
+    const dot = footer.querySelector('.scan-status-dot');
+    const label = document.getElementById('scan-status-label');
+    const detail = document.getElementById('scan-status-detail');
+
+    const isScanning = progress && progress.status === 'running';
+    if (dot) dot.classList.toggle('active', Boolean(isScanning));
+
+    if (label) {
+        if (isScanning) {
+            const current = progress.stage === 'deep'
+                ? `Services: ${progress.current_network || 'all hosts'}`
+                : `Scanning: ${progress.current_network_name || progress.current_network || 'networks'}`;
+            label.textContent = current;
+        } else {
+            label.textContent = 'All networks idle';
+        }
+    }
+
+    if (detail) {
+        if (isScanning) {
+            const pct = progress.percent >= 0 ? `${progress.percent}%` : '';
+            detail.textContent = pct ? `(${pct})` : '';
+        } else if (progress && progress.last_scan_ago) {
+            detail.textContent = `scanned ${progress.last_scan_ago}`;
+        }
+    }
+
+    if (progress && Array.isArray(progress.networks)) {
+        progress.networks.forEach(n => {
+            const chip = footer.querySelector(`.scan-ticker-chip[data-cidr="${CSS.escape(n.network)}"]`);
+            if (chip) {
+                const isNetScanning = isScanning && (n.status === 'scanning' || progress.current_network === n.network);
+                chip.classList.toggle('scanning', isNetScanning);
+                const timeEl = chip.querySelector('.ticker-net-time');
+                if (timeEl && isNetScanning) {
+                    timeEl.textContent = 'scanning...';
+                }
+            }
+        });
+    }
+}
+
+function toggleScanFooter() {
+    const footer = document.getElementById('scan-status-footer');
+    if (!footer) return;
+    if (window.scanRefresh && window.scanRefresh.toggleScanFooterMinimized) {
+        window.scanRefresh.toggleScanFooterMinimized(footer);
+    } else {
+        footer.classList.toggle('minimized');
+    }
+}
+
+(function initScanFooter() {
+    const footer = document.getElementById('scan-status-footer');
+    if (!footer) return;
+    try {
+        if (localStorage.getItem('scan-footer-minimized') === 'true') {
+            footer.classList.add('minimized');
+        }
+    } catch (_) {}
+    if (typeof scanCoordinator !== 'undefined') {
+        scanCoordinator.addListener(updateScanStatusFooter);
+    }
+})();
+
 // Instant tooltips for truncated table cells (hostname, vendor, label). The
 // native `title` attribute waits ~1s before showing (and resets to that delay
 // when "cold"), so those cells use this instead: one shared element at the body

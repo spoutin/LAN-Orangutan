@@ -136,12 +136,72 @@
         return lines.join('\n');
     }
 
+    function formatScanFooterStatus(progress) {
+        if (!progress) {
+            return { isScanning: false, text: 'All networks idle', detail: '' };
+        }
+        if (progress.scanning) {
+            const netName = progress.current_network_name || progress.current_network || '';
+            const netCidr = progress.current_network && progress.current_network_name && progress.current_network_name !== progress.current_network
+                ? ` (${progress.current_network})`
+                : '';
+            const target = netName ? `${netName}${netCidr}` : 'networks';
+            return {
+                isScanning: true,
+                text: `Scanning: ${target}`,
+                mode: progress.mode || 'quick'
+            };
+        }
+        const lastAgo = progress.last_scan_ago ? `scanned ${progress.last_scan_ago}` : '';
+        return {
+            isScanning: false,
+            text: 'All networks idle',
+            detail: lastAgo
+        };
+    }
+
+    function formatScanFooterTicker(networks) {
+        if (!Array.isArray(networks)) return [];
+        return networks.map(n => {
+            const name = n.friendly_name || n.name || n.cidr || '';
+            const isScanning = Boolean(n.is_scanning || n.is_deep_scanning);
+            let statusText = '';
+            if (isScanning) {
+                statusText = n.is_deep_scanning ? 'services...' : 'scanning...';
+            } else if (n.last_scan_ago) {
+                statusText = n.last_scan_ago;
+            } else {
+                statusText = 'never';
+            }
+            return {
+                name,
+                cidr: n.cidr || '',
+                statusText,
+                isScanning
+            };
+        });
+    }
+
+    function toggleScanFooterMinimized(footerEl, storage = (typeof localStorage !== 'undefined' ? localStorage : null)) {
+        if (!footerEl) return false;
+        const isMin = footerEl.classList.toggle('minimized');
+        if (storage && typeof storage.setItem === 'function') {
+            try {
+                storage.setItem('scan-footer-minimized', isMin ? 'true' : 'false');
+            } catch (e) {}
+        }
+        return isMin;
+    }
+
     return {
         completedNetworkKeys,
         automaticScanFailureMessage,
         scannedSubnetCount,
         formatScanCompletionSummary,
         formatRefreshCountdown,
-        formatRefreshTooltip
+        formatRefreshTooltip,
+        formatScanFooterStatus,
+        formatScanFooterTicker,
+        toggleScanFooterMinimized
     };
 });

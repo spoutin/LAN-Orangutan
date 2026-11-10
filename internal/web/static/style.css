@@ -3691,3 +3691,166 @@ img.login-logo {
     display: block;
 }
 
+/* Pinned Scan Status Footer (Option A) */
+.scan-status-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 38px;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border-color);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.12);
+    z-index: 95;
+    display: flex;
+    align-items: center;
+    transition: transform 0.25s ease, height 0.25s ease;
+    font-size: 0.85rem;
+}
+
+.scan-footer-inner {
+    width: 100%;
+    padding: 0 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.scan-footer-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    font-weight: 500;
+}
+
+.scan-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.scan-status-dot.active {
+    background: var(--accent-primary);
+    box-shadow: 0 0 8px var(--accent-primary);
+    animation: pulse 1.5s infinite;
+}
+
+.scan-status-label {
+    color: var(--text-primary);
+}
+
+.scan-status-detail {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.scan-footer-ticker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 0 8px;
+    white-space: nowrap;
+    scrollbar-width: none;
+}
+.scan-footer-ticker::-webkit-scrollbar {
+    display: none;
+}
+
+.scan-ticker-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-size: 0.75rem;
+}
+
+.scan-ticker-chip.scanning {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+    background: var(--bg-tertiary);
+}
+
+.ticker-net-name {
+    color: var(--text-secondary);
+}
+
+.ticker-net-time {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.scan-footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.scan-footer-link {
+    color: var(--accent-primary);
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.scan-footer-toggle {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    padding: 2px 6px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    display: flex;
+    align-items: center;
+    transition: var(--transition);
+}
+
+.scan-footer-toggle:hover {
+    color: var(--text-primary);
+    background: var(--bg-card-hover);
+}
+
+.scan-footer-toggle .toggle-icon-max {
+    display: none;
+}
+
+/* Minimized State */
+.scan-status-footer.minimized {
+    transform: translateY(calc(100% - 20px));
+}
+
+.scan-status-footer.minimized .scan-footer-status,
+.scan-status-footer.minimized .scan-footer-ticker,
+.scan-status-footer.minimized .scan-footer-link,
+.scan-status-footer.minimized .toggle-icon-min {
+    display: none;
+}
+
+.scan-status-footer.minimized .scan-footer-actions {
+    width: 100%;
+    justify-content: center;
+}
+
+.scan-status-footer.minimized .scan-footer-toggle .toggle-icon-max {
+    display: inline-block;
+    color: var(--accent-primary);
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .scan-footer-inner {
+        padding: 0 0.75rem;
+    }
+    .scan-status-detail {
+        display: none;
+    }
+}
+
+

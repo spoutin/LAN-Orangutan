@@ -1056,6 +1056,32 @@ orangutan export out.csv</code></pre>
         <p style="margin-top:0.5rem;font-size:0.8rem;">Press <kbd class="kbd">/</kbd> to search &bull; <kbd class="kbd">R</kbd> to refresh &bull; <kbd class="kbd">T</kbd> to toggle theme</p>
     </footer>
 
+    <!-- Pinned Scan Status Footer -->
+    <div id="scan-status-footer" class="scan-status-footer" role="region" aria-label="Scan Status Footer">
+        <div class="scan-footer-inner">
+            <div class="scan-footer-status" id="scan-footer-status">
+                <span class="scan-status-dot{{if .ScanRunning}} active{{end}}"></span>
+                <span class="scan-status-label" id="scan-status-label">{{if .ScanRunning}}Scanning in progress...{{else}}All networks idle{{end}}</span>
+                {{if .LastScanAt}}<span class="scan-status-detail" id="scan-status-detail">scanned {{.LastScanAgo}}</span>{{end}}
+            </div>
+            <div class="scan-footer-ticker" id="scan-footer-ticker">
+                {{range .Networks}}{{if not .IsTailscale}}
+                <span class="scan-ticker-chip{{if .IsScanning}} scanning{{end}}" data-cidr="{{.CIDR}}">
+                    <span class="ticker-net-name">{{.FriendlyName}}:</span>
+                    <span class="ticker-net-time">{{if .IsScanning}}scanning...{{else if .LastScanAgo}}{{.LastScanAgo}}{{else}}never{{end}}</span>
+                </span>
+                {{end}}{{end}}
+            </div>
+            <div class="scan-footer-actions">
+                <a href="/scans" class="scan-footer-link" title="Open Scans Page">All Scans &rarr;</a>
+                <button type="button" class="scan-footer-toggle" id="scan-footer-toggle" onclick="toggleScanFooter()" title="Toggle Footer Visibility" aria-label="Toggle Footer Visibility">
+                    <span class="toggle-icon-min">&minus;</span>
+                    <span class="toggle-icon-max">&#9650; Scans</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div id="sb-save-bar" class="sidebar-save-bar hidden">
         <button type="button" id="sb-floating-save" class="btn btn-primary" onclick="saveSidebarDevice()">Save Changes</button>
     </div>
