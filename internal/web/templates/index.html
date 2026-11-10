@@ -1062,7 +1062,7 @@ orangutan export out.csv</code></pre>
             <div class="scan-footer-status" id="scan-footer-status">
                 <span class="scan-status-dot{{if .ScanRunning}} active{{end}}"></span>
                 <span class="scan-status-label" id="scan-status-label">{{if .ScanRunning}}Scanning in progress...{{else}}All networks idle{{end}}</span>
-                {{if .LastScanAt}}<span class="scan-status-detail" id="scan-status-detail">scanned {{.LastScanAgo}}</span>{{end}}
+                <span class="scan-status-detail" id="scan-status-detail">{{if .LastScanAt}}scanned {{.LastScanAgo}}{{end}}</span>
             </div>
             <div class="scan-footer-ticker" id="scan-footer-ticker">
                 {{range .Networks}}{{if not .IsTailscale}}

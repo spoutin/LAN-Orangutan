@@ -74,3 +74,22 @@ test('toggleScanFooterMinimized toggles minimized class and updates localStorage
     assert.equal(hasClass, false);
     assert.equal(mockStorage.getItem('scan-footer-minimized'), 'false');
 });
+
+test('app.js includes scan toolbar and footer in refresh in place selectors', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const appJs = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+
+    assert.match(appJs, /['"]\.btn-scan-all['"]/);
+    assert.match(appJs, /['"]#scan-status-footer['"]/);
+    assert.match(appJs, /['"]#configured-networks-section['"]/);
+});
+
+test('style.css ensures floating save bar sits above bottom scan footer', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const css = fs.readFileSync(path.join(__dirname, 'style.css'), 'utf8');
+
+    assert.match(css, /\.sidebar-save-bar\s*\{[^}]*bottom:\s*calc/);
+});
+

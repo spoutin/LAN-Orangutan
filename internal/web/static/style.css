@@ -3351,6 +3351,7 @@ img.login-logo {
     border-top: 1px solid var(--border);
     background: var(--bg-card);
     box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
+    bottom: calc(1rem + 38px);
 }
 
 .sidebar-save-bar.hidden {
@@ -3365,9 +3366,9 @@ img.login-logo {
     .sidebar-save-bar:not(.hidden) {
         position: fixed;
         right: var(--sidebar-save-right);
-        bottom: 1rem;
+        bottom: calc(1rem + 38px);
         width: var(--sidebar-save-width);
-        z-index: 60;
+        z-index: 105;
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
         box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);

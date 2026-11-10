@@ -2728,17 +2728,32 @@ async function refreshInPlace() {
     }
 
     const freshRows = doc.getElementById('devices-tbody');
-    if (!freshRows) return false;
+    if (!freshRows) {
+        const configuredNets = doc.getElementById('configured-networks-section');
+        const currentNets = document.getElementById('configured-networks-section');
+        if (currentNets && configuredNets) {
+            currentNets.replaceWith(configuredNets);
+        }
+        return false;
+    }
 
     // Preserve selected row across refresh
     const selectedIp = document.querySelector('.device-row.selected-row')?.dataset?.ip;
 
     document.getElementById('devices-tbody')?.replaceWith(freshRows);
 
-    for (const selector of ['.stat-strip', '.table-footer', '#device-count', '#scan-time-top', '.sidebar-networks']) {
+    for (const selector of ['.stat-strip', '.table-footer', '#device-count', '#scan-time-top', '.scan-control-compact', '.btn-scan-all', '#scan-status-footer', '#configured-networks-section']) {
         const current = document.querySelector(selector);
         const replacement = doc.querySelector(selector);
         if (current && replacement) current.replaceWith(replacement);
+    }
+    const refreshedFooter = document.getElementById('scan-status-footer');
+    if (refreshedFooter) {
+        try {
+            if (localStorage.getItem('scan-footer-minimized') === 'true') {
+                refreshedFooter.classList.add('minimized');
+            }
+        } catch (_) {}
     }
     lastPageRefreshTime = Date.now();
     updateRefreshCountdown();
@@ -3159,10 +3174,18 @@ function updateScanStatusFooter(progress) {
                 const isNetScanning = isScanning && (n.status === 'scanning' || progress.current_network === n.network);
                 chip.classList.toggle('scanning', isNetScanning);
                 const timeEl = chip.querySelector('.ticker-net-time');
-                if (timeEl && isNetScanning) {
-                    timeEl.textContent = 'scanning...';
+                if (timeEl) {
+                    if (isNetScanning) {
+                        timeEl.textContent = 'scanning...';
+                    } else if (n.last_scan_ago) {
+                        timeEl.textContent = n.last_scan_ago;
+                    }
                 }
             }
+        });
+    } else if (!isScanning) {
+        footer.querySelectorAll('.scan-ticker-chip.scanning').forEach(chip => {
+            chip.classList.remove('scanning');
         });
     }
 }
@@ -3548,6 +3571,18 @@ async function refreshScansData() {
         const progressData = await progressRes.json();
         if (progressData.success) {
             renderLiveProgressCard(progressData.data);
+        }
+
+        if (document.getElementById('configured-networks-section')) {
+            const pageRes = await fetch(location.href, { credentials: 'same-origin' });
+            if (pageRes.ok) {
+                const doc = new DOMParser().parseFromString(await pageRes.text(), 'text/html');
+                const freshNets = doc.getElementById('configured-networks-section');
+                const currentNets = document.getElementById('configured-networks-section');
+                if (currentNets && freshNets) {
+                    currentNets.replaceWith(freshNets);
+                }
+            }
         }
     } catch (e) {
         console.error('Failed to refresh scans page data', e);

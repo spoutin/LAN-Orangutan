@@ -433,9 +433,8 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	devices := h.store.GetDevices()
 
 	scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
-	networks, _ := network.DetectNetworks()
-	networks = network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
-	numNets := len(networks)
+	networkViews, detectedNetworks := h.buildNetworkViews(scanInterval)
+	numNets := len(detectedNetworks)
 	if numNets < 1 {
 		numNets = 1
 	}
@@ -537,8 +536,6 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		groups = append(groups, g)
 	}
 	sort.Strings(groups)
-
-	networkViews, detectedNetworks := h.buildNetworkViews(cycleInterval)
 
 	// Get Tailscale status
 	tailscale := network.GetTailscaleStatus()
