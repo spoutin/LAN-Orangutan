@@ -372,6 +372,29 @@ button.nav-link {
     flex-wrap: wrap;
     gap: 1rem;
     margin-bottom: 1.5rem;
+    position: sticky;
+    top: var(--header-h, 64px);
+    z-index: 80;
+    background: var(--bg-primary);
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.table-toolbar {
+    position: sticky;
+    top: calc(var(--header-h, 64px) + var(--section-header-h, 54px));
+    z-index: 75;
+    background: var(--bg-primary);
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+#devices-table thead th {
+    position: sticky;
+    top: var(--table-thead-top, calc(var(--header-h, 64px) + var(--section-header-h, 54px) + var(--table-toolbar-h, 38px)));
+    z-index: 70;
+    background: var(--bg-card);
+    box-shadow: 0 1px 0 var(--border-color);
 }
 
 .section-actions {
@@ -2023,6 +2046,20 @@ textarea.input {
     .header { padding: 0 1rem; }
     .header h1 { display: none; }
     .main { padding: 1rem; }
+    .section-header {
+        position: static;
+        padding: 0;
+        border-bottom: none;
+    }
+    .table-toolbar {
+        position: static;
+        padding: 0;
+        border-bottom: none;
+    }
+    .stat-strip-holder {
+        position: static;
+        margin-bottom: 1rem;
+    }
     /* Let the toolbar controls wrap onto more lines instead of squeezing, and
        give the search field its own full-width row above them. */
     .section-actions { gap: 0.5rem; }

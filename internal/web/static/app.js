@@ -3096,6 +3096,31 @@ async function disconnectTailscale() {
     });
 })();
 
+// Sticky header & table column headers dynamic offset measurement
+(function initStickyHeader() {
+    function measureOffsets() {
+        const header = document.querySelector('.header');
+        const secHeader = document.querySelector('.section-header');
+        const toolbar = document.querySelector('.table-toolbar');
+        const headerH = header ? header.offsetHeight : 64;
+        const secHeaderH = secHeader ? secHeader.offsetHeight : 54;
+        const toolbarH = toolbar ? toolbar.offsetHeight : 38;
+
+        document.documentElement.style.setProperty('--header-h', headerH + 'px');
+        document.documentElement.style.setProperty('--section-header-h', secHeaderH + 'px');
+        document.documentElement.style.setProperty('--table-toolbar-h', toolbarH + 'px');
+        document.documentElement.style.setProperty('--table-thead-top', (headerH + secHeaderH + toolbarH) + 'px');
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', measureOffsets);
+    } else {
+        measureOffsets();
+    }
+    window.addEventListener('resize', measureOffsets);
+    window.addEventListener('devices-refreshed', measureOffsets);
+})();
+
 // Instant tooltips for truncated table cells (hostname, vendor, label). The
 // native `title` attribute waits ~1s before showing (and resets to that delay
 // when "cold"), so those cells use this instead: one shared element at the body
