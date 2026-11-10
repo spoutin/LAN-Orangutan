@@ -55,7 +55,7 @@
                     </div>
                     {{end}}
                 </div>
-                <div class="card" style="padding: 1.25rem;">
+                <div class="card" style="padding: 1.25rem; background: var(--bg-card); backdrop-filter: none;">
                     <div class="network-list">
                         {{range .Networks}}{{if not .IsTailscale}}
                         <div class="sidebar-net-item" data-cidr="{{.CIDR}}">
@@ -194,7 +194,7 @@
                     </div>
 
                     <div class="card" style="padding: 0; overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;">
+                        <table style="width: 100%; border-collapse: separate; border-spacing: 0; text-align: left; font-size: 0.9rem;">
                             <thead>
                                 <tr style="background: var(--bg-card-hover); border-bottom: 1px solid var(--border);">
                                     <th style="padding: 0.7rem; font-weight: bold; color: var(--text-muted);">Time</th>
@@ -378,7 +378,7 @@
                         <input type="text" id="scan-modal-search" class="input search-input" style="max-width: 260px;" placeholder="Search devices..." oninput="filterScanModalDevices()">
                     </div>
                     <div style="overflow-x: auto; border: 1px solid var(--border); border-radius: 6px;">
-                        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
+                        <table style="width: 100%; border-collapse: separate; border-spacing: 0; text-align: left; font-size: 0.85rem;">
                             <thead>
                                 <tr style="background: var(--bg-card-hover); border-bottom: 1px solid var(--border);">
                                     <th style="padding: 0.6rem 0.8rem; font-weight: bold; color: var(--text-muted);">IP Address</th>

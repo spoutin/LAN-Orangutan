@@ -415,6 +415,9 @@ const scanCoordinator = {
                     }
                 }
                 await refreshInPlace();
+                if (typeof refreshConfiguredNetworksInPlace === 'function') {
+                    await refreshConfiguredNetworksInPlace();
+                }
                 return;
             }
 
@@ -424,6 +427,9 @@ const scanCoordinator = {
             if (completedNetworks.some(key => !this.refreshedNetworkKeys.has(key))) {
                 completedNetworks.forEach(key => this.refreshedNetworkKeys.add(key));
                 await refreshInPlace();
+                if (typeof refreshConfiguredNetworksInPlace === 'function') {
+                    await refreshConfiguredNetworksInPlace();
+                }
             }
         } catch (_) {
         } finally {
@@ -2745,10 +2751,8 @@ async function refreshInPlace() {
 
     const freshRows = doc.getElementById('devices-tbody');
     if (!freshRows) {
-        const configuredNets = doc.getElementById('configured-networks-section');
-        const currentNets = document.getElementById('configured-networks-section');
-        if (currentNets && configuredNets) {
-            currentNets.replaceWith(configuredNets);
+        if (typeof refreshConfiguredNetworksInPlace === 'function') {
+            await refreshConfiguredNetworksInPlace();
         }
         return false;
     }
@@ -3602,21 +3606,29 @@ async function refreshScansData() {
         if (progressData.success) {
             renderLiveProgressCard(progressData.data);
         }
-
-        if (document.getElementById('configured-networks-section')) {
-            const pageRes = await fetch(location.href, { credentials: 'same-origin' });
-            if (pageRes.ok) {
-                const doc = new DOMParser().parseFromString(await pageRes.text(), 'text/html');
-                const freshNets = doc.getElementById('configured-networks-section');
-                const currentNets = document.getElementById('configured-networks-section');
-                if (currentNets && freshNets) {
-                    currentNets.replaceWith(freshNets);
-                }
-            }
-        }
     } catch (e) {
         console.error('Failed to refresh scans page data', e);
     }
+}
+
+async function refreshConfiguredNetworksInPlace() {
+    const section = document.getElementById('configured-networks-section');
+    if (!section) return;
+    try {
+        const pageRes = await fetch(location.href, { credentials: 'same-origin' });
+        if (!pageRes.ok) return;
+        const doc = new DOMParser().parseFromString(await pageRes.text(), 'text/html');
+        const freshList = doc.querySelector('#configured-networks-section .network-list');
+        const currentList = section.querySelector('.network-list');
+        if (currentList && freshList) {
+            currentList.innerHTML = freshList.innerHTML;
+        }
+        const freshScanAll = doc.querySelector('#configured-networks-section .btn-scan-all');
+        const currentScanAll = section.querySelector('.btn-scan-all');
+        if (currentScanAll && freshScanAll) {
+            currentScanAll.replaceWith(freshScanAll);
+        }
+    } catch (_) {}
 }
 
 function renderLiveProgressCard(progress) {

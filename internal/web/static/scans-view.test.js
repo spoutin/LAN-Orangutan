@@ -89,3 +89,13 @@ test('parseNetworkScanTarget parses network and mode from control elements', () 
     assert.equal(parseNetworkScanTarget(null), null);
 });
 
+test('scans.html uses border-collapse separate on tables to prevent scroll flicker', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const html = fs.readFileSync(path.join(__dirname, '../templates/scans.html'), 'utf8');
+
+    assert.doesNotMatch(html, /border-collapse:\s*collapse/);
+    assert.match(html, /border-collapse:\s*separate/);
+});
+
+
