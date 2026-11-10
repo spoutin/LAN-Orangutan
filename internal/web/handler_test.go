@@ -818,7 +818,7 @@ func TestIndexPageRendersFloatingSaveAsPageOverlay(t *testing.T) {
 	}
 }
 
-func TestIndexPageOmitsConfiguredNetworkInterface(t *testing.T) {
+func TestScansPageOmitsConfiguredNetworkInterface(t *testing.T) {
 	h, _ := newTestHandler(t, "")
 	var rendered bytes.Buffer
 	data := PageData{Networks: []NetworkView{{Network: types.Network{
@@ -826,8 +826,8 @@ func TestIndexPageOmitsConfiguredNetworkInterface(t *testing.T) {
 		Interface:    "eth0",
 		FriendlyName: "Home",
 	}}}}
-	if err := h.templates.ExecuteTemplate(&rendered, "index.html", data); err != nil {
-		t.Fatalf("render index: %v", err)
+	if err := h.templates.ExecuteTemplate(&rendered, "scans.html", data); err != nil {
+		t.Fatalf("render scans: %v", err)
 	}
 	body := rendered.String()
 
@@ -835,7 +835,7 @@ func TestIndexPageOmitsConfiguredNetworkInterface(t *testing.T) {
 		t.Error("configured network CIDR should remain visible")
 	}
 	if strings.Contains(body, "eth0") {
-		t.Error("configured network interface should not be shown in the sidebar")
+		t.Error("configured network interface should not be shown in the network list")
 	}
 }
 
@@ -932,16 +932,16 @@ func TestHandler_MultipleNetworksScanningState(t *testing.T) {
 	h.store.SetNetworkScanning("10.5.5.0/24", true)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/scans", nil)
 	token, ok := authn.Login("127.0.0.1:5000", testPassword)
 	if !ok {
 		t.Fatal("login failed")
 	}
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
 
-	h.handleIndex(rec, req)
+	h.handleScans(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+		t.Fatalf("handleScans status = %d, want 200", rec.Code)
 	}
 
 	body := rec.Body.String()
@@ -960,16 +960,16 @@ func TestHandler_NetworkScanErrorState(t *testing.T) {
 	h.store.SetNetworkScanError("10.5.5.0/24", "SSH connection refused")
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/scans", nil)
 	token, ok := authn.Login("127.0.0.1:5000", testPassword)
 	if !ok {
 		t.Fatal("login failed")
 	}
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
 
-	h.handleIndex(rec, req)
+	h.handleScans(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+		t.Fatalf("handleScans status = %d, want 200", rec.Code)
 	}
 
 	body := rec.Body.String()
@@ -992,16 +992,16 @@ func TestHandler_ActiveScanningPrecedesScanError(t *testing.T) {
 	h.store.SetNetworkScanning("10.5.5.0/24", true)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/scans", nil)
 	token, ok := authn.Login("127.0.0.1:5000", testPassword)
 	if !ok {
 		t.Fatal("login failed")
 	}
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
 
-	h.handleIndex(rec, req)
+	h.handleScans(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+		t.Fatalf("handleScans status = %d, want 200", rec.Code)
 	}
 
 	body := rec.Body.String()
@@ -1023,16 +1023,16 @@ func TestHandler_NetworkDeepScanningState(t *testing.T) {
 	h.store.SetNetworkDeepScanning("10.5.5.0/24", true)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/scans", nil)
 	token, ok := authn.Login("127.0.0.1:5000", testPassword)
 	if !ok {
 		t.Fatal("login failed")
 	}
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
 
-	h.handleIndex(rec, req)
+	h.handleScans(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+		t.Fatalf("handleScans status = %d, want 200", rec.Code)
 	}
 
 	body := rec.Body.String()
@@ -1229,4 +1229,24 @@ func TestScansPageRendersConfiguredNetworks(t *testing.T) {
 		t.Error("scans page should contain network-list container")
 	}
 }
+
+func TestDashboardFullWidthLayoutAndScanAllToolbar(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index page status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `class="sidebar-networks"`) {
+		t.Error("index page should no longer contain sidebar-networks")
+	}
+	if !strings.Contains(body, `btn-scan-all`) {
+		t.Error("index page toolbar should contain btn-scan-all")
+	}
+	if !strings.Contains(body, `data-network="all"`) {
+		t.Error("btn-scan-all should target all networks")
+	}
+}
+
 

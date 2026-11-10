@@ -2698,12 +2698,52 @@ img.login-logo {
     cursor: help;
 }
 
-/* Dashboard Split Sidebar Layout */
+/* Dashboard Full Width Layout */
 .dashboard-layout {
     display: flex;
-    gap: 1.5rem;
-    align-items: flex-start;
+    flex-direction: column;
+    gap: 1rem;
+    align-items: stretch;
     margin-top: 1rem;
+    width: 100%;
+}
+
+.section-actions .scan-control-compact {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.section-actions .btn-scan-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--accent-primary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 6px 12px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.section-actions .btn-scan-all:hover:not(:disabled) {
+    background: var(--bg-card-hover);
+    border-color: var(--accent-primary);
+}
+
+.section-actions .scan-mode-select {
+    height: 36px;
+    padding: 0 0.5rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 0.85rem;
 }
 
 .sidebar-networks {
