@@ -17,3 +17,12 @@ test('style.css defines sticky hierarchy for frozen header and table thead', () 
     // Table thead th sticky
     assert.match(css, /#devices-table\s+thead\s+th\s*\{[^}]*position:\s*sticky/);
 });
+
+test('style.css prevents scroll flicker with border-collapse separate and unclipped table container', () => {
+    const cssPath = path.join(__dirname, 'style.css');
+    const css = fs.readFileSync(cssPath, 'utf8');
+
+    assert.match(css, /\.table\s*\{[^}]*border-collapse:\s*separate/);
+    assert.doesNotMatch(css, /\.table-container\s*\{[^}]*overflow:\s*clip/);
+});
+

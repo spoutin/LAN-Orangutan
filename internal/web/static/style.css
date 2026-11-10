@@ -380,15 +380,6 @@ button.nav-link {
     border-bottom: 1px solid var(--border-color);
 }
 
-.table-toolbar {
-    position: sticky;
-    top: calc(var(--header-h, 64px) + var(--section-header-h, 54px));
-    z-index: 75;
-    background: var(--bg-primary);
-    padding: 0.5rem 0;
-    border-bottom: 1px solid var(--border-color);
-}
-
 #devices-table thead th {
     position: sticky;
     top: var(--table-thead-top, calc(var(--header-h, 64px) + var(--section-header-h, 54px) + var(--table-toolbar-h, 38px)));
@@ -973,24 +964,26 @@ body.strip-docked .stat-strip .stat-scan {
 
 /* Table */
 .table-container {
-    background: var(--glass);
-    backdrop-filter: var(--blur);
-    -webkit-backdrop-filter: var(--blur);
+    background: var(--bg-card);
     border-radius: var(--radius-lg);
-    overflow: clip;
     box-shadow: var(--card-shadow);
     border: 1px solid var(--border-color);
 }
 
 .table-toolbar {
-    padding: 1rem 1.25rem;
-    background: var(--bg-tertiary);
+    padding: 0.85rem 1.25rem;
+    background: var(--bg-card);
     border-bottom: 1px solid var(--border-color);
+    border-top-left-radius: var(--radius-lg);
+    border-top-right-radius: var(--radius-lg);
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 1rem;
     flex-wrap: wrap;
+    position: sticky;
+    top: calc(var(--header-h, 64px) + var(--section-header-h, 54px));
+    z-index: 75;
 }
 
 /* Mirrors the toolbar above the table, closing the panel and stating how
@@ -1123,7 +1116,8 @@ td[data-copy]:not([data-copy=""]) {
 
 .table {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     /* Fixed layout makes the columns share the panel width and hold their
        place, so no combination of long hostnames, vendors or MAC strings can
        push the table wider than its container. Overlong values truncate within
@@ -1389,7 +1383,6 @@ td[data-copy]:not([data-copy=""]) {
 .device-row,
 .device-subrow {
     cursor: pointer;
-    transition: background-color 0.15s ease;
 }
 
 .device-row td {
@@ -3792,6 +3785,31 @@ img.login-logo {
     align-items: center;
     gap: 12px;
     flex-shrink: 0;
+}
+
+.scan-footer-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--accent-primary);
+    border-radius: var(--radius-sm);
+    padding: 2px 8px;
+    height: 24px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.scan-footer-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--accent-primary);
+}
+
+.scan-footer-btn svg {
+    stroke: var(--accent-primary);
 }
 
 .scan-footer-link {

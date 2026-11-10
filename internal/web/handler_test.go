@@ -1263,6 +1263,9 @@ func TestDashboardRendersScanStatusFooter(t *testing.T) {
 	if !strings.Contains(body, `id="scan-footer-ticker"`) {
 		t.Error("expected dashboard to contain scan-footer-ticker")
 	}
+	if !strings.Contains(body, `class="scan-footer-btn"`) {
+		t.Error("expected dashboard footer to contain scan-footer-btn refresh button")
+	}
 	if !strings.Contains(body, `id="scan-status-detail"`) {
 		t.Error("expected dashboard to always contain scan-status-detail span")
 	}
