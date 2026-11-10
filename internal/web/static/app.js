@@ -523,6 +523,20 @@ function setNetworkScanningUI(target) {
             }
         }
     });
+
+    document.querySelectorAll('.scan-ticker-chip').forEach(chip => {
+        const cidr = chip.dataset?.cidr;
+        if (target === 'all' || target === cidr) {
+            chip.classList.add('scanning');
+            const timeEl = chip.querySelector('.ticker-net-time');
+            if (timeEl) timeEl.textContent = 'scanning...';
+            const btn = chip.querySelector('.btn-ticker-scan');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<svg class="spinner-svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>';
+            }
+        }
+    });
 }
 
 async function runScan(target, mode = 'quick') {
@@ -573,7 +587,9 @@ async function startScan(target, mode = 'quick') {
 }
 
 async function startSelectedScan(button) {
-    const mode = button.parentElement?.querySelector('.scan-mode-select')?.value || 'quick';
+    const mode = button.parentElement?.querySelector('.scan-mode-select')?.value
+        || document.querySelector('.section-actions .scan-mode-select')?.value
+        || 'quick';
     await startScan(button.dataset.network || 'all', mode);
 }
 
@@ -3181,11 +3197,25 @@ function updateScanStatusFooter(progress) {
                         timeEl.textContent = n.last_scan_ago;
                     }
                 }
+                const btn = chip.querySelector('.btn-ticker-scan');
+                if (btn) {
+                    btn.disabled = isScanning;
+                    if (isNetScanning) {
+                        btn.innerHTML = '<svg class="spinner-svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>';
+                    } else {
+                        btn.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+                    }
+                }
             }
         });
     } else if (!isScanning) {
         footer.querySelectorAll('.scan-ticker-chip.scanning').forEach(chip => {
             chip.classList.remove('scanning');
+            const btn = chip.querySelector('.btn-ticker-scan');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+            }
         });
     }
 }

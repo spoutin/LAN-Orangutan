@@ -1271,6 +1271,20 @@ func TestDashboardRendersScanStatusFooter(t *testing.T) {
 	}
 }
 
+func TestDashboardRendersPerNetworkScanButtonsInFooter(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index page status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="btn-ticker-scan"`) {
+		t.Error("expected dashboard footer to render btn-ticker-scan for networks")
+	}
+}
+
+
 
 
 

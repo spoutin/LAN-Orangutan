@@ -1069,6 +1069,13 @@ orangutan export out.csv</code></pre>
                 <span class="scan-ticker-chip{{if .IsScanning}} scanning{{end}}" data-cidr="{{.CIDR}}">
                     <span class="ticker-net-name">{{.FriendlyName}}:</span>
                     <span class="ticker-net-time">{{if .IsScanning}}scanning...{{else if .LastScanAgo}}{{.LastScanAgo}}{{else}}never{{end}}</span>
+                    <button type="button" class="btn-ticker-scan" data-network="{{.CIDR}}" onclick="startSelectedScan(this)" title="Scan {{.FriendlyName}}" aria-label="Scan {{.FriendlyName}}" {{if $.ScanRunning}}disabled{{end}}>
+                        {{if .IsScanning}}
+                        <svg class="spinner-svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
+                        {{else}}
+                        <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        {{end}}
+                    </button>
                 </span>
                 {{end}}{{end}}
             </div>
@@ -1080,7 +1087,7 @@ orangutan export out.csv</code></pre>
                 <a href="/scans" class="scan-footer-link" title="Open Scans Page">All Scans &rarr;</a>
                 <button type="button" class="scan-footer-toggle" id="scan-footer-toggle" onclick="toggleScanFooter()" title="Toggle Footer Visibility" aria-label="Toggle Footer Visibility">
                     <span class="toggle-icon-min">&minus;</span>
-                    <span class="toggle-icon-max">&#9650; Scans</span>
+                    <span class="toggle-icon-max">&#9650; Show Networks &amp; Scans</span>
                 </button>
             </div>
         </div>

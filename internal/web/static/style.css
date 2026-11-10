@@ -3780,6 +3780,36 @@ img.login-logo {
     font-weight: 500;
 }
 
+.btn-ticker-scan {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    margin-left: 2px;
+    background: transparent;
+    border: none;
+    color: var(--accent-primary);
+    cursor: pointer;
+    border-radius: 50%;
+    transition: var(--transition);
+}
+
+.btn-ticker-scan:hover:not(:disabled) {
+    background: var(--bg-card-hover);
+    transform: scale(1.15);
+}
+
+.btn-ticker-scan:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.btn-ticker-scan svg {
+    display: block;
+}
+
 .scan-footer-actions {
     display: flex;
     align-items: center;
@@ -3842,12 +3872,14 @@ img.login-logo {
 
 /* Minimized State */
 .scan-status-footer.minimized {
-    transform: translateY(calc(100% - 20px));
+    height: 26px;
+    background: var(--bg-secondary);
 }
 
 .scan-status-footer.minimized .scan-footer-status,
 .scan-status-footer.minimized .scan-footer-ticker,
 .scan-status-footer.minimized .scan-footer-link,
+.scan-status-footer.minimized .scan-footer-btn,
 .scan-status-footer.minimized .toggle-icon-min {
     display: none;
 }
@@ -3857,10 +3889,20 @@ img.login-logo {
     justify-content: center;
 }
 
+.scan-status-footer.minimized .scan-footer-toggle {
+    background: transparent;
+    border: none;
+    padding: 2px 10px;
+    height: 22px;
+}
+
 .scan-status-footer.minimized .scan-footer-toggle .toggle-icon-max {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     color: var(--accent-primary);
     font-weight: 600;
+    font-size: 0.78rem;
 }
 
 @media (max-width: 768px) {

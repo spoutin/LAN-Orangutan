@@ -93,3 +93,13 @@ test('style.css ensures floating save bar sits above bottom scan footer', () => 
     assert.match(css, /\.sidebar-save-bar\s*\{[^}]*bottom:\s*calc/);
 });
 
+test('style.css ensures minimized scan footer stays on screen without translateY offscreen transform', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const css = fs.readFileSync(path.join(__dirname, 'style.css'), 'utf8');
+
+    assert.doesNotMatch(css, /\.scan-status-footer\.minimized\s*\{[^}]*translateY/);
+    assert.match(css, /\.scan-status-footer\.minimized\s*\{[^}]*height:\s*\d+px/);
+});
+
+
