@@ -49,6 +49,20 @@ function filterScanHistoryRows(rows, { selectedDay = null, showAll = false, type
     });
 }
 
+function parseNetworkScanTarget(btn, selectEl = null) {
+    if (!btn) return null;
+    const network = (typeof btn.getAttribute === 'function' ? btn.getAttribute('data-network') : btn.dataset?.network) || '';
+    let mode = 'quick';
+    if (selectEl && selectEl.value) {
+        mode = selectEl.value;
+    } else if (btn.closest) {
+        const parent = btn.closest('.scan-control');
+        const sel = parent ? parent.querySelector('.scan-mode-select') : null;
+        if (sel && sel.value) mode = sel.value;
+    }
+    return { network, mode };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { formatRelativeTime, isSameDay, filterScanHistoryRows };
+    module.exports = { formatRelativeTime, isSameDay, filterScanHistoryRows, parseNetworkScanTarget };
 }

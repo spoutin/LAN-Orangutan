@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { formatRelativeTime, isSameDay, filterScanHistoryRows } = require('./scans-view.js');
+const { formatRelativeTime, isSameDay, filterScanHistoryRows, parseNetworkScanTarget } = require('./scans-view.js');
 
 test('formatRelativeTime formats accurate relative times', () => {
     const now = 1700000000000;
@@ -75,3 +75,17 @@ test('filterScanHistoryRows filters by day, scan type, and search query', () => 
     const netSearch = filterScanHistoryRows(rows, { showAll: true, query: '10.0.0' });
     assert.equal(netSearch.length, 2);
 });
+
+test('parseNetworkScanTarget parses network and mode from control elements', () => {
+    const btn = {
+        getAttribute: (attr) => attr === 'data-network' ? '10.0.0.0/24' : null,
+        closest: (sel) => ({
+            querySelector: (q) => q === '.scan-mode-select' ? { value: 'deep' } : null
+        })
+    };
+    const target = parseNetworkScanTarget(btn);
+    assert.deepEqual(target, { network: '10.0.0.0/24', mode: 'deep' });
+
+    assert.equal(parseNetworkScanTarget(null), null);
+});
+

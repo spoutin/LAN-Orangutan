@@ -1213,3 +1213,20 @@ func TestIndexPageOpenWrtSubnetReplacesStaleOpnsenseSource(t *testing.T) {
 		t.Errorf("OpenWrt device must NOT display [opnsense] badge")
 	}
 }
+
+func TestScansPageRendersConfiguredNetworks(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+	rec := httptest.NewRecorder()
+	h.handleScans(rec, httptest.NewRequest(http.MethodGet, "/scans", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scans page status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Configured Networks") {
+		t.Error("scans page should contain Configured Networks heading")
+	}
+	if !strings.Contains(body, `class="network-list"`) {
+		t.Error("scans page should contain network-list container")
+	}
+}
+

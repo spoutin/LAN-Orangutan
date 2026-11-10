@@ -380,16 +380,61 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *Handler) buildNetworkViews(cycleInterval time.Duration) ([]NetworkView, []types.Network) {
+	networks, _ := network.DetectNetworks()
+	networks = network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
+
+	devices := h.store.GetDevices()
+	networkCounts := make(map[string]int)
+	for _, d := range devices {
+		if d.IsOnline(cycleInterval) && d.NetworkName != "" {
+			networkCounts[strings.ToLower(d.NetworkName)]++
+		}
+	}
+
+	var networkViews []NetworkView
+	for _, n := range networks {
+		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
+			n.FriendlyName = name
+		}
+		friendlyLower := strings.ToLower(n.FriendlyName)
+
+		// Get last scan info
+		lastScanTime := h.store.GetLastScan(n.CIDR)
+		var lastScanUnix int64
+		var lastScanAgo string
+		if !lastScanTime.IsZero() {
+			lastScanUnix = lastScanTime.Unix()
+			lastScanAgo = timeAgo(lastScanTime)
+		}
+
+		isScanning := h.store.IsNetworkScanning(n.CIDR)
+		isDeepScanning := h.store.IsNetworkDeepScanning(n.CIDR)
+		isCompleted := h.store.IsNetworkCompletedInCurrentRun(n.CIDR)
+		scanError := h.store.GetNetworkScanError(n.CIDR)
+
+		networkViews = append(networkViews, NetworkView{
+			Network:        n,
+			DeviceCount:    networkCounts[friendlyLower],
+			IsScanning:     isScanning,
+			IsDeepScanning: isDeepScanning,
+			IsCompleted:    isCompleted,
+			ScanError:      scanError,
+			LastScanUnix:   lastScanUnix,
+			LastScanAgo:    lastScanAgo,
+		})
+	}
+	return networkViews, networks
+}
+
 // handleIndex renders the main dashboard
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// Get devices
 	devices := h.store.GetDevices()
 
-	// Get networks and determine effective cycle time for staggered scanning
+	scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
 	networks, _ := network.DetectNetworks()
 	networks = network.WithConfigured(networks, network.Filter{Configured: h.cfg.Scanning.Networks, Excluded: h.cfg.Scanning.ExcludeNetworks, OnlyConfigured: h.cfg.Scanning.OnlyConfiguredNetworks})
-
-	scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
 	numNets := len(networks)
 	if numNets < 1 {
 		numNets = 1
@@ -493,45 +538,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(groups)
 
-	networkCounts := make(map[string]int)
-	for _, d := range devices {
-		if d.IsOnline(cycleInterval) && d.NetworkName != "" {
-			networkCounts[strings.ToLower(d.NetworkName)]++
-		}
-	}
-
-	var networkViews []NetworkView
-	for _, n := range networks {
-		if name, ok := h.cfg.Scanning.NetworkNames[n.CIDR]; ok {
-			n.FriendlyName = name
-		}
-		friendlyLower := strings.ToLower(n.FriendlyName)
-
-		// Get last scan info
-		lastScanTime := h.store.GetLastScan(n.CIDR)
-		var lastScanUnix int64
-		var lastScanAgo string
-		if !lastScanTime.IsZero() {
-			lastScanUnix = lastScanTime.Unix()
-			lastScanAgo = timeAgo(lastScanTime)
-		}
-
-		isScanning := h.store.IsNetworkScanning(n.CIDR)
-		isDeepScanning := h.store.IsNetworkDeepScanning(n.CIDR)
-		isCompleted := h.store.IsNetworkCompletedInCurrentRun(n.CIDR)
-		scanError := h.store.GetNetworkScanError(n.CIDR)
-
-		networkViews = append(networkViews, NetworkView{
-			Network:        n,
-			DeviceCount:    networkCounts[friendlyLower],
-			IsScanning:     isScanning,
-			IsDeepScanning: isDeepScanning,
-			IsCompleted:    isCompleted,
-			ScanError:      scanError,
-			LastScanUnix:   lastScanUnix,
-			LastScanAgo:    lastScanAgo,
-		})
-	}
+	networkViews, detectedNetworks := h.buildNetworkViews(cycleInterval)
 
 	// Get Tailscale status
 	tailscale := network.GetTailscaleStatus()
@@ -557,7 +564,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ScanRunning:    scanRunning,
 	}
 
-	data.NetworkWarning = network.IsolationWarning(networks)
+	data.NetworkWarning = network.IsolationWarning(detectedNetworks)
 	data.ScanIntervalSeconds = h.cfg.Scanning.ScanInterval
 
 	// The table is only as current as the last scan. Say so, so that a "last
@@ -647,14 +654,26 @@ func (h *Handler) handleScans(w http.ResponseWriter, r *http.Request) {
 	// Get stats
 	stats := h.store.GetStats()
 
+	scanInterval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
+	networks, _ := network.DetectNetworks()
+	numNets := len(networks)
+	if numNets < 1 {
+		numNets = 1
+	}
+	cycleInterval := time.Duration(numNets) * scanInterval
+	networkViews, detectedNets := h.buildNetworkViews(cycleInterval)
+
 	data := PageData{
 		Title:       "Scans - LAN Orangutan",
 		Theme:       h.cfg.UI.Theme,
 		Version:     h.version,
 		Tailscale:   tailscale,
 		Stats:       stats,
+		Networks:    networkViews,
+		ScanRunning: h.store.IsScanRunning(),
 		AuthEnabled: h.auth.Enabled(),
 	}
+	data.NetworkWarning = network.IsolationWarning(detectedNets)
 
 	// Buffer the template output to avoid superfluous WriteHeader on error
 	var buf bytes.Buffer
