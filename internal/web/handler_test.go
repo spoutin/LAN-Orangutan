@@ -1283,8 +1283,3 @@ func TestDashboardRendersPerNetworkScanButtonsInFooter(t *testing.T) {
 		t.Error("expected dashboard footer to render btn-ticker-scan for networks")
 	}
 }
-
-
-
-
-
