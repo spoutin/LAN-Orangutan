@@ -98,6 +98,12 @@ func New(devicesFile, stateFile string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to prune ephemeral IPv6: %w", err)
 	}
 
+	// Run deduplicate MACs on load
+	if err := s.DeduplicateMACs(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to deduplicate MACs: %w", err)
+	}
+
 	return s, nil
 }
 
@@ -1301,6 +1307,187 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 	return d, nil
 }
 
+func (s *Storage) mergeDuplicateDevice(target *types.Device, source *types.Device, now time.Time) {
+	if source == nil {
+		return
+	}
+	// Tier 1: User overrides preserved (copied from source if target has not set them)
+	if target.Label == "" && source.Label != "" {
+		target.Label = source.Label
+	}
+	if target.Notes == "" && source.Notes != "" {
+		target.Notes = source.Notes
+	}
+	if target.Group == "" && source.Group != "" {
+		target.Group = source.Group
+	}
+	if target.CustomHostname == "" && source.CustomHostname != "" {
+		target.CustomHostname = source.CustomHostname
+	}
+	if target.CustomWebURL == "" && source.CustomWebURL != "" {
+		target.CustomWebURL = source.CustomWebURL
+	}
+	if target.CustomType == "" && source.CustomType != "" {
+		target.CustomType = source.CustomType
+	}
+	if target.CustomOS == "" && source.CustomOS != "" {
+		target.CustomOS = source.CustomOS
+	}
+	if target.CustomOSVersion == "" && source.CustomOSVersion != "" {
+		target.CustomOSVersion = source.CustomOSVersion
+	}
+	if target.CustomOSFamily == "" && source.CustomOSFamily != "" {
+		target.CustomOSFamily = source.CustomOSFamily
+	}
+	if target.SSHOverride == "" && source.SSHOverride != "" {
+		target.SSHOverride = source.SSHOverride
+	}
+	if target.SSHOverridePort == 0 && source.SSHOverridePort != 0 {
+		target.SSHOverridePort = source.SSHOverridePort
+	}
+	if !target.NotifyOnSeen && source.NotifyOnSeen {
+		target.NotifyOnSeen = source.NotifyOnSeen
+	}
+	if !target.AnsibleManaged && source.AnsibleManaged {
+		target.AnsibleManaged = source.AnsibleManaged
+	}
+	if target.LinkedMAC == "" && source.LinkedMAC != "" {
+		target.LinkedMAC = source.LinkedMAC
+	}
+
+	// Tier 2: New scanned values (already on target) take precedence.
+	// Tier 3: Older scanned values fallback if target is empty/zero.
+	if target.Hostname == "" && source.Hostname != "" {
+		target.Hostname = source.Hostname
+	}
+	if target.Vendor == "" && source.Vendor != "" {
+		target.Vendor = source.Vendor
+	}
+	if target.Type == "" && source.Type != "" {
+		target.Type = source.Type
+	}
+	if !target.WebUI && source.WebUI {
+		target.WebUI = source.WebUI
+	}
+	if target.WebPort == 0 && source.WebPort != 0 {
+		target.WebPort = source.WebPort
+		target.WebScheme = source.WebScheme
+	}
+	if !target.Probed && source.Probed {
+		target.Probed = source.Probed
+		target.WebScheme = source.WebScheme
+	}
+	if len(target.Risks) == 0 && len(source.Risks) > 0 {
+		target.Risks = source.Risks
+	}
+	if len(target.OpenPorts) == 0 && len(source.OpenPorts) > 0 {
+		target.OpenPorts = source.OpenPorts
+	}
+	if len(target.OpenServices) == 0 && len(source.OpenServices) > 0 {
+		target.OpenServices = source.OpenServices
+	}
+	if target.DetectedSSHPort == 0 && source.DetectedSSHPort != 0 {
+		target.DetectedSSHPort = source.DetectedSSHPort
+	}
+	if target.OS == "" && source.OS != "" {
+		target.OS = source.OS
+		target.OSVersion = source.OSVersion
+		target.OSFamily = source.OSFamily
+	}
+	if target.Assignment == "" && source.Assignment != "" {
+		target.Assignment = source.Assignment
+	}
+	if target.SSID == "" && source.SSID != "" {
+		target.SSID = source.SSID
+	}
+	if target.APName == "" && source.APName != "" {
+		target.APName = source.APName
+	}
+	if target.RadioBand == "" && source.RadioBand != "" {
+		target.RadioBand = source.RadioBand
+	}
+	if target.Channel == 0 && source.Channel != 0 {
+		target.Channel = source.Channel
+	}
+	if target.WiFiStandard == "" && source.WiFiStandard != "" {
+		target.WiFiStandard = source.WiFiStandard
+	}
+	if target.Signal == 0 && source.Signal != 0 {
+		target.Signal = source.Signal
+		target.SignalQuality = source.SignalQuality
+	}
+	if target.RxRate == 0 && source.RxRate != 0 {
+		target.RxRate = source.RxRate
+	}
+	if target.TxRate == 0 && source.TxRate != 0 {
+		target.TxRate = source.TxRate
+	}
+	if target.RxBytes == 0 && source.RxBytes != 0 {
+		target.RxBytes = source.RxBytes
+	}
+	if target.TxBytes == 0 && source.TxBytes != 0 {
+		target.TxBytes = source.TxBytes
+	}
+	if target.AssociationUptime == 0 && source.AssociationUptime != 0 {
+		target.AssociationUptime = source.AssociationUptime
+	}
+	if target.UniFiModel == "" && source.UniFiModel != "" {
+		target.UniFiModel = source.UniFiModel
+	}
+	if target.UniFiName == "" && source.UniFiName != "" {
+		target.UniFiName = source.UniFiName
+	}
+	if target.VLAN == 0 && source.VLAN != 0 {
+		target.VLAN = source.VLAN
+	}
+	if target.RouterSource == "" && source.RouterSource != "" {
+		target.RouterSource = source.RouterSource
+	}
+	if target.RouterInterface == "" && source.RouterInterface != "" {
+		target.RouterInterface = source.RouterInterface
+	}
+	if target.LeaseExpires.IsZero() && !source.LeaseExpires.IsZero() {
+		target.LeaseExpires = source.LeaseExpires
+	}
+	if target.LeaseLifetime == 0 && source.LeaseLifetime != 0 {
+		target.LeaseLifetime = source.LeaseLifetime
+	}
+	if target.RouterNotes == "" && source.RouterNotes != "" {
+		target.RouterNotes = source.RouterNotes
+	}
+	if target.SwitchName == "" && source.SwitchName != "" {
+		target.SwitchName = source.SwitchName
+		target.SwitchHost = source.SwitchHost
+		target.SwitchPort = source.SwitchPort
+		target.SwitchVLAN = source.SwitchVLAN
+		target.SwitchLinkState = source.SwitchLinkState
+		target.SwitchLinkSpeed = source.SwitchLinkSpeed
+		target.SwitchDuplex = source.SwitchDuplex
+		target.SwitchPoEWatts = source.SwitchPoEWatts
+		target.SwitchUpdatedAt = source.SwitchUpdatedAt
+	}
+	if target.TrafficSource == "" && source.TrafficSource != "" {
+		target.TrafficSource = source.TrafficSource
+		target.RxRateBps = source.RxRateBps
+		target.TxRateBps = source.TxRateBps
+		target.WanRxRateBps = source.WanRxRateBps
+		target.WanTxRateBps = source.WanTxRateBps
+		target.WanRxBytes = source.WanRxBytes
+		target.WanTxBytes = source.WanTxBytes
+	}
+	if target.ResponseTime == nil && source.ResponseTime != nil {
+		target.ResponseTime = source.ResponseTime
+	}
+	if target.LastDeepScanAt.IsZero() && !source.LastDeepScanAt.IsZero() {
+		target.LastDeepScanAt = source.LastDeepScanAt
+	}
+	if target.FirstSeen.IsZero() || (!source.FirstSeen.IsZero() && source.FirstSeen.Before(target.FirstSeen)) {
+		target.FirstSeen = source.FirstSeen
+	}
+
+	target.AddressHistory = appendAddressChange(source.AddressHistory, source.IP, now)
+}
+
 func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time, activeIPs map[string]bool) (bool, error) {
 	isNew := true
 	if d.MAC != "" {
@@ -1310,106 +1497,18 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		}
 		if old != nil {
 			isNew = false
-			// Check if the old IP is also active (using either sweep active list, or DB online state depending on subnet boundary)
-			var oldIPActive bool
-			if s.inSameSubnetLocked(d.IP, oldIP) {
-				// Same subnet: both must be present in the active sweep list to coexist
-				oldIPActive = activeIPs != nil && activeIPs[oldIP]
-			} else {
-				// Different subnets/concurrency: check if the old IP is online in the DB state
-				oldIPActive = old.IsOnline(s.GetScanInterval())
-			}
+			s.mergeDuplicateDevice(d, old, now)
 
-			d.Label = old.Label
-			d.Notes = old.Notes
-			d.Group = old.Group
-			d.CustomHostname = old.CustomHostname
-			d.CustomWebURL = old.CustomWebURL
-			d.CustomType = old.CustomType
-			d.WebPort = old.WebPort
-			d.WebScheme = old.WebScheme
-			d.Probed = old.Probed
-			d.FirstSeen = old.FirstSeen
-			d.NotifyOnSeen = old.NotifyOnSeen
-			if d.Type == "" {
-				d.Type = old.Type
+			// Migrate presence history from old IP to new IP
+			if _, err = tx.Exec("UPDATE device_presence_history SET ip = ? WHERE ip = ?", d.IP, oldIP); err != nil {
+				return false, err
 			}
-			if d.SSID == "" {
-				d.SSID = old.SSID
-			}
-			if d.APName == "" {
-				d.APName = old.APName
-			}
-			if d.RadioBand == "" {
-				d.RadioBand = old.RadioBand
-			}
-			if d.Channel == 0 {
-				d.Channel = old.Channel
-			}
-			if d.WiFiStandard == "" {
-				d.WiFiStandard = old.WiFiStandard
-			}
-			if d.Signal == 0 {
-				d.Signal = old.Signal
-			}
-			if d.SignalQuality == 0 {
-				d.SignalQuality = old.SignalQuality
-			}
-			if d.RxRate == 0 {
-				d.RxRate = old.RxRate
-			}
-			if d.TxRate == 0 {
-				d.TxRate = old.TxRate
-			}
-			if d.RxBytes == 0 {
-				d.RxBytes = old.RxBytes
-			}
-			if d.TxBytes == 0 {
-				d.TxBytes = old.TxBytes
-			}
-			if d.AssociationUptime == 0 {
-				d.AssociationUptime = old.AssociationUptime
-			}
-			if d.UniFiModel == "" {
-				d.UniFiModel = old.UniFiModel
-			}
-			if d.VLAN == 0 {
-				d.VLAN = old.VLAN
-			}
-			if d.RouterSource == "" {
-				d.RouterSource = old.RouterSource
-			}
-			if d.RouterInterface == "" {
-				d.RouterInterface = old.RouterInterface
-			}
-			if d.LeaseExpires.IsZero() {
-				d.LeaseExpires = old.LeaseExpires
-			}
-			if d.LeaseLifetime == 0 {
-				d.LeaseLifetime = old.LeaseLifetime
-			}
-			if d.RouterNotes == "" {
-				d.RouterNotes = old.RouterNotes
-			}
-			if d.TrafficSource == "" {
-				d.TrafficSource = old.TrafficSource
-			}
-			if d.RxRateBps == 0 {
-				d.RxRateBps = old.RxRateBps
-			}
-			if d.TxRateBps == 0 {
-				d.TxRateBps = old.TxRateBps
-			}
-			d.NotifyOnSeen = old.NotifyOnSeen
-			d.AnsibleManaged = old.AnsibleManaged
-
-			if !oldIPActive {
-				// Relocation: Old IP is offline, so migrate and delete
-				d.AddressHistory = appendAddressChange(old.AddressHistory, oldIP, now)
-				_, err = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP)
-				if err != nil {
-					return false, err
-				}
+			// Migrate open ports
+			_, _ = tx.Exec("UPDATE OR IGNORE device_open_ports SET ip = ? WHERE ip = ?", d.IP, oldIP)
+			_, _ = tx.Exec("DELETE FROM device_open_ports WHERE ip = ?", oldIP)
+			// Remove the old duplicate device record
+			if _, err = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP); err != nil {
+				return false, err
 			}
 		}
 	}
@@ -1643,6 +1742,16 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 
 			if d.MAC != "" {
 				existing.MAC = d.MAC
+			}
+			if existing.MAC != "" {
+				oldIP, old, err := s.findByMACLocked(tx, existing.MAC, existing.IP)
+				if err == nil && old != nil {
+					s.mergeDuplicateDevice(&existing, old, now)
+					_, _ = tx.Exec("UPDATE device_presence_history SET ip = ? WHERE ip = ?", existing.IP, oldIP)
+					_, _ = tx.Exec("UPDATE OR IGNORE device_open_ports SET ip = ? WHERE ip = ?", existing.IP, oldIP)
+					_, _ = tx.Exec("DELETE FROM device_open_ports WHERE ip = ?", oldIP)
+					_, _ = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP)
+				}
 			}
 			if d.Hostname != "" {
 				existing.Hostname = d.Hostname
@@ -3058,6 +3167,142 @@ func (s *Storage) GetPresenceEventsFiltered(mac, ip, q string) ([]types.Presence
 	}
 
 	return result, nil
+}
+
+// DeduplicateMACs finds duplicate MAC records across devices, merges them into the newest/active record,
+// migrates presence history, and deletes the stale records.
+func (s *Storage) DeduplicateMACs() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`
+		SELECT mac
+		FROM devices
+		WHERE mac <> ''
+		GROUP BY mac
+		HAVING COUNT(*) > 1
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var duplicateMACs []string
+	for rows.Next() {
+		var mac string
+		if err := rows.Scan(&mac); err == nil && mac != "" {
+			duplicateMACs = append(duplicateMACs, mac)
+		}
+	}
+	rows.Close()
+
+	now := time.Now()
+	for _, mac := range duplicateMACs {
+		for _, wantV4 := range []bool{true, false} {
+			devRows, err := tx.Query(`
+				SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+				       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
+				       assignment, network_name, first_seen, last_seen, response_time, address_history,
+				       linked_mac, notify_on_seen, ansible_managed,
+				       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
+				       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+				       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
+				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+				       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
+				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+				FROM devices
+				WHERE mac = ?
+			`, mac)
+			if err != nil {
+				continue
+			}
+
+			var list []*types.Device
+			for devRows.Next() {
+				d, err := s.scanDevice(devRows)
+				if err == nil && isIPv4(d.IP) == wantV4 {
+					list = append(list, d)
+				}
+			}
+			devRows.Close()
+
+			if len(list) <= 1 {
+				continue
+			}
+
+			// Sort newest/active first: online first, then newest LastSeen, then newest FirstSeen
+			sort.Slice(list, func(i, j int) bool {
+				if list[i].IsOnline() != list[j].IsOnline() {
+					return list[i].IsOnline()
+				}
+				if !list[i].LastSeen.Equal(list[j].LastSeen) {
+					return list[i].LastSeen.After(list[j].LastSeen)
+				}
+				return list[i].FirstSeen.After(list[j].FirstSeen)
+			})
+
+			target := list[0]
+			for _, old := range list[1:] {
+				s.mergeDuplicateDevice(target, old, now)
+				// Migrate presence
+				_, _ = tx.Exec("UPDATE device_presence_history SET ip = ? WHERE ip = ?", target.IP, old.IP)
+				// Migrate open ports
+				_, _ = tx.Exec("UPDATE OR IGNORE device_open_ports SET ip = ? WHERE ip = ?", target.IP, old.IP)
+				_, _ = tx.Exec("DELETE FROM device_open_ports WHERE ip = ?", old.IP)
+				// Delete stale device
+				_, _ = tx.Exec("DELETE FROM devices WHERE ip = ?", old.IP)
+			}
+
+			// Save updated target
+			risksJSON, _ := json.Marshal(target.Risks)
+			historyJSON, _ := json.Marshal(target.AddressHistory)
+			var leaseExpiresVal interface{}
+			if !target.LeaseExpires.IsZero() {
+				leaseExpiresVal = target.LeaseExpires
+			}
+			var switchUpdatedAtVal interface{}
+			if !target.SwitchUpdatedAt.IsZero() {
+				switchUpdatedAtVal = target.SwitchUpdatedAt
+			}
+
+			_, _ = tx.Exec(`
+				UPDATE devices SET
+					hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
+					label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
+					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, detected_ssh_port = ?,
+					ssh_override = ?, ssh_override_port = ?, assignment = ?, network_name = ?,
+					first_seen = ?, last_seen = ?, response_time = ?, address_history = ?,
+					linked_mac = ?, notify_on_seen = ?, ansible_managed = ?,
+					os = ?, os_version = ?, os_family = ?, custom_os = ?, custom_os_version = ?, custom_os_family = ?,
+					ssid = ?, ap_name = ?, radio_band = ?, channel = ?, wifi_standard = ?, signal = ?, signal_quality = ?,
+					rx_rate = ?, tx_rate = ?, rx_bytes = ?, tx_bytes = ?, association_uptime = ?, unifi_model = ?, vlan = ?, unifi_name = ?,
+					router_source = ?, router_interface = ?, lease_expires = ?, lease_lifetime = ?, router_notes = ?,
+					switch_name = ?, switch_host = ?, switch_port = ?, switch_vlan = ?, switch_link_state = ?, switch_link_speed = ?, switch_duplex = ?, switch_poe_watts = ?, switch_updated_at = ?,
+					traffic_source = ?, rx_rate_bps = ?, tx_rate_bps = ?, wan_rx_rate_bps = ?, wan_tx_rate_bps = ?, wan_rx_bytes = ?, wan_tx_bytes = ?
+				WHERE ip = ?
+			`, target.Hostname, target.Vendor, target.Type, boolToInt(target.WebUI), string(risksJSON),
+				target.Label, target.Notes, target.Group, target.CustomHostname, target.CustomWebURL,
+				target.CustomType, target.WebPort, target.WebScheme, boolToInt(target.Probed), target.DetectedSSHPort,
+				target.SSHOverride, target.SSHOverridePort, target.Assignment, target.NetworkName,
+				target.FirstSeen, target.LastSeen, target.ResponseTime, string(historyJSON),
+				target.LinkedMAC, boolToInt(target.NotifyOnSeen), boolToInt(target.AnsibleManaged),
+				target.OS, target.OSVersion, target.OSFamily, target.CustomOS, target.CustomOSVersion, target.CustomOSFamily,
+				target.SSID, target.APName, target.RadioBand, target.Channel, target.WiFiStandard, target.Signal, target.SignalQuality,
+				target.RxRate, target.TxRate, target.RxBytes, target.TxBytes, target.AssociationUptime, target.UniFiModel, target.VLAN, target.UniFiName,
+				target.RouterSource, target.RouterInterface, leaseExpiresVal, target.LeaseLifetime, target.RouterNotes,
+				target.SwitchName, target.SwitchHost, target.SwitchPort, target.SwitchVLAN, target.SwitchLinkState, target.SwitchLinkSpeed, target.SwitchDuplex, target.SwitchPoEWatts, switchUpdatedAtVal,
+				target.TrafficSource, target.RxRateBps, target.TxRateBps, target.WanRxRateBps, target.WanTxRateBps, target.WanRxBytes, target.WanTxBytes,
+				target.IP)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // PruneOldHistory deletes device presence events, scan history, and stale offline devices older than a duration.

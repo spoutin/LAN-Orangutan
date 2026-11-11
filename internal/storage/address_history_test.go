@@ -108,83 +108,10 @@ func TestSupplementalMergeDoesNotClobber(t *testing.T) {
 	}
 }
 
-// TestVirtualIPCoexistenceSameMAC confirms that when two virtual IPs share the
-// same MAC address and are discovered simultaneously in the same scan, they both
-// coexist cleanly in the database without deleting each other or triggering the moved state.
-func TestVirtualIPCoexistenceSameMAC(t *testing.T) {
-	s := newTestStorage(t)
-
-	// Simultaneously discover .10 and .20 sharing the same MAC.
-	if err := mergeDevicesForTest(s, []types.Device{
-		{IP: "192.168.1.10", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server1", Type: "Server"},
-		{IP: "192.168.1.20", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server2", Type: "Server"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	devices := s.GetDevices()
-	if len(devices) != 2 {
-		t.Fatalf("expected two coexisting devices, got %d", len(devices))
-	}
-
-	dev10 := devices["192.168.1.10"]
-	dev20 := devices["192.168.1.20"]
-
-	if dev10 == nil || dev20 == nil {
-		t.Fatal("both IPs should exist in the database simultaneously")
-	}
-
-	if len(dev10.AddressHistory) != 0 || len(dev20.AddressHistory) != 0 {
-		t.Error("neither device should trigger an address move history record")
-	}
-}
-
-// TestVirtualIPCoexistenceSweepAndPortScan confirms that coexisting virtual IPs
-// on the same MAC are not deleted or recorded as moved, even when Stage 2
-// individual port scan saves are performed.
-func TestVirtualIPCoexistenceSweepAndPortScan(t *testing.T) {
-	s := newTestStorage(t)
-
-	// Step 1: Simulate Stage 1 Sweep (both discovered simultaneously)
-	if err := mergeDevicesForTest(s, []types.Device{
-		{IP: "192.168.1.10", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server1", Type: "Server"},
-		{IP: "192.168.1.20", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server2", Type: "Server"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify both exist with clean address history
-	devices := s.GetDevices()
-	if len(devices) != 2 {
-		t.Fatalf("expected 2 coexisting devices, got %d", len(devices))
-	}
-
-	// Step 2: Simulate Stage 2 individual port scan save on .20
-	// This is where the old code used to delete .10 and record a false relocation!
-	d20 := *devices["192.168.1.20"]
-	d20.WebUI = true
-	if err := mergeDevicesForTest(s, []types.Device{d20}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Step 3: Verify coexistence persists completely
-	devices = s.GetDevices()
-	if len(devices) != 2 {
-		t.Fatalf("expected 2 devices after port scan, got %d. Coexisting IP was deleted!", len(devices))
-	}
-
-	dev10 := devices["192.168.1.10"]
-	dev20 := devices["192.168.1.20"]
-
-	if len(dev10.AddressHistory) != 0 || len(dev20.AddressHistory) != 0 {
-		t.Errorf("expected 0 address history records, got dev10=%v, dev20=%v", dev10.AddressHistory, dev20.AddressHistory)
-	}
-}
-
-// TestVirtualIPCoexistenceCrossSubnet replicates a sequential multi-subnet scan:
-// Subnet A is scanned (discovering only IP A), then Subnet B is scanned (discovering only IP B).
-// Both virtual IPs share the same MAC and must coexist cleanly without any deletions or move history.
-func TestVirtualIPCoexistenceCrossSubnet(t *testing.T) {
+// TestDuplicateMACCrossSubnetDeduplication confirms that when Subnet A is scanned
+// discovering IP A, and then Subnet B is scanned discovering IP B on the same MAC,
+// the old IP is removed and deduplicated into the new IP with address history recorded.
+func TestDuplicateMACCrossSubnetDeduplication(t *testing.T) {
 	s := newTestStorage(t)
 
 	// Step 1: Declare two configured subnets
@@ -201,27 +128,33 @@ func TestVirtualIPCoexistenceCrossSubnet(t *testing.T) {
 	}
 
 	// Step 3: Scan Subnet B (discovers only .20 on the same MAC)
-	// This is the sequential cross-subnet sweep!
 	if err := mergeDevicesForTest(s, []types.Device{
-		{IP: "192.168.1.20", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server-vpn", Type: "Server"},
+		{IP: "192.168.1.20", MAC: "aa:bb:cc:dd:ee:ff", Hostname: "server-vpn"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// Step 4: Verify both coexist with zero history after the cross-subnet scan
+	// Step 4: Verify deduplicated to 1 device: old .10 removed, new .20 retained
 	devices := s.GetDevices()
-	if len(devices) != 2 {
-		t.Fatalf("expected 2 coexisting devices, got %d. Cross-subnet IP was deleted!", len(devices))
+	if len(devices) != 1 {
+		t.Fatalf("expected 1 deduplicated device, got %d", len(devices))
 	}
 
-	devA := devices["10.0.0.10"]
+	if _, exists := devices["10.0.0.10"]; exists {
+		t.Error("old IP 10.0.0.10 should be removed")
+	}
+
 	devB := devices["192.168.1.20"]
-
-	if devA == nil || devB == nil {
-		t.Fatal("both IPs must exist in the database simultaneously")
+	if devB == nil {
+		t.Fatal("device at 192.168.1.20 must exist")
 	}
-
-	if len(devA.AddressHistory) != 0 || len(devB.AddressHistory) != 0 {
-		t.Errorf("expected 0 address history records, got devA=%v, devB=%v", devA.AddressHistory, devB.AddressHistory)
+	if devB.Hostname != "server-vpn" {
+		t.Errorf("hostname = %q, want %q", devB.Hostname, "server-vpn")
+	}
+	if devB.Type != "Server" {
+		t.Errorf("fallback type = %q, want %q", devB.Type, "Server")
+	}
+	if len(devB.AddressHistory) == 0 || devB.AddressHistory[len(devB.AddressHistory)-1].IP != "10.0.0.10" {
+		t.Errorf("expected address history to record old IP 10.0.0.10, got %v", devB.AddressHistory)
 	}
 }
