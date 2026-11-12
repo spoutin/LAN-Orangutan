@@ -741,7 +741,13 @@ function updateRowMultiIPPresentation(row, activeNetworkFilters) {
     if (!ordered || ordered.length <= 1) return;
 
     multiIpCell.innerHTML = ordered.map(att => `<div class="ip-row">${escapeHtml(att.ip)}</div>`).join('');
-    multiNetCell.innerHTML = ordered.map(att => `<span class="network-badge">${escapeHtml(att.network_name || att.networkName || '')}</span>`).join('');
+    multiNetCell.innerHTML = ordered.map(att => {
+        const net = att.network_name || att.networkName || '';
+        const colorKey = (typeof deviceOperationState !== 'undefined' && deviceOperationState.getNetworkColorKey)
+            ? deviceOperationState.getNetworkColorKey(net)
+            : 'blue';
+        return `<span class="network-badge net-${colorKey}">${escapeHtml(net)}</span>`;
+    }).join('');
 
     const ipCell = row.querySelector('.col-ip.ip-cell');
     if (ipCell) {
@@ -1689,7 +1695,13 @@ function syncDeviceSidebarTelemetry(data) {
                 if (Array.isArray(ips) && ips.length > 1) {
                     res = {
                         isHTML: true,
-                        html: ips.map(att => `<div style="font-family: var(--font-mono);">${escapeHtml(att.ip)} <span style="font-size:0.75rem; color:var(--text-muted); font-family:sans-serif;">(${escapeHtml(att.network_name || att.networkName || data.network || 'LAN')})</span></div>`).join('')
+                        html: ips.map(att => {
+                            const net = att.network_name || att.networkName || data.network || 'LAN';
+                            const colorKey = (typeof deviceOperationState !== 'undefined' && deviceOperationState.getNetworkColorKey)
+                                ? deviceOperationState.getNetworkColorKey(net)
+                                : 'blue';
+                            return `<div style="font-family: var(--font-mono);">${escapeHtml(att.ip)} <span class="network-badge net-${colorKey}" style="margin-left:4px; font-size:0.7rem;">${escapeHtml(net)}</span></div>`;
+                        }).join('')
                     };
                 } else {
                     res = { isHTML: false, text: data.ip || '—' };
@@ -1705,7 +1717,16 @@ function syncDeviceSidebarTelemetry(data) {
 
         ['sb-subnet', 'sb-network'].forEach(id => {
             const el = document.getElementById(id);
-            if (el) el.textContent = data.network || '—';
+            if (el) {
+                if (data.network) {
+                    const colorKey = (typeof deviceOperationState !== 'undefined' && deviceOperationState.getNetworkColorKey)
+                        ? deviceOperationState.getNetworkColorKey(data.network)
+                        : 'blue';
+                    el.innerHTML = `<span class="network-badge net-${colorKey}">${escapeHtml(data.network)}</span>`;
+                } else {
+                    el.textContent = '—';
+                }
+            }
         });
 
         const assignEl = document.getElementById('sb-assignment');

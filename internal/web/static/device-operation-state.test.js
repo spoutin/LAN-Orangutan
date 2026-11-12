@@ -8,6 +8,7 @@ const {
   ipToComparable,
   getEffectiveRowIP,
   getOrderedAttachments,
+  getNetworkColorKey,
 } = require('./device-operation-state.js');
 
 test('shouldSyncSidebarForm rejects sync when user has unsaved edits', () => {
@@ -183,4 +184,24 @@ test('effective IP ordering compares correctly with or without network filter', 
   const filteredA = ipToComparable(getEffectiveRowIP(rowA, ['home lan']));
   const filteredB = ipToComparable(getEffectiveRowIP(rowB, ['home lan']));
   assert.equal(filteredA < filteredB, true);
+});
+
+test('getNetworkColorKey maps common networks to expected theme colors and falls back deterministically', () => {
+  assert.equal(getNetworkColorKey('LAN'), 'blue');
+  assert.equal(getNetworkColorKey('Home LAN'), 'blue');
+  assert.equal(getNetworkColorKey('DMZ'), 'pink');
+  assert.equal(getNetworkColorKey('IoT LAN'), 'amber');
+  assert.equal(getNetworkColorKey('Guest WiFi'), 'purple');
+  assert.equal(getNetworkColorKey('Tailscale'), 'cyan');
+  assert.equal(getNetworkColorKey('Management'), 'emerald');
+
+  // Empty or invalid
+  assert.equal(getNetworkColorKey(''), 'neutral');
+  assert.equal(getNetworkColorKey(null), 'neutral');
+
+  // Custom arbitrary name produces consistent deterministic color
+  const customColor1 = getNetworkColorKey('Lab-VLAN-99');
+  const customColor2 = getNetworkColorKey('Lab-VLAN-99');
+  assert.equal(customColor1, customColor2);
+  assert.notEqual(customColor1, 'neutral');
 });

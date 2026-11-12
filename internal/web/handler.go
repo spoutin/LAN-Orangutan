@@ -175,6 +175,7 @@ func NewHandler(store *storage.Storage, cfg *config.Config, authn *auth.Authenti
 			}
 			return fmt.Sprintf("%d Mbps", speedMbps)
 		},
+		"netColor": networkColorKey,
 	}
 
 	tmpl := template.Must(template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html"))
@@ -738,6 +739,39 @@ func timeAgo(t time.Time) string {
 // ipToLong converts an IP string to a sortable integer
 func ipToLong(ip string) int64 {
 	return types.IPToLong(ip)
+}
+
+var networkPalette = []string{"blue", "pink", "amber", "purple", "cyan", "emerald", "orange", "indigo"}
+
+func networkColorKey(networkName string) string {
+	s := strings.ToLower(strings.TrimSpace(networkName))
+	if s == "" {
+		return "neutral"
+	}
+	if strings.Contains(s, "dmz") || strings.Contains(s, "untrusted") || strings.Contains(s, "external") {
+		return "pink"
+	}
+	if strings.Contains(s, "iot") || strings.Contains(s, "camera") || strings.Contains(s, "smart") || strings.Contains(s, "sensor") {
+		return "amber"
+	}
+	if strings.Contains(s, "guest") || strings.Contains(s, "visitor") {
+		return "purple"
+	}
+	if strings.Contains(s, "tailscale") || strings.Contains(s, "vpn") || strings.Contains(s, "wireguard") || strings.Contains(s, "wg") {
+		return "cyan"
+	}
+	if strings.Contains(s, "mgmt") || strings.Contains(s, "manage") || strings.Contains(s, "server") || strings.Contains(s, "infra") {
+		return "emerald"
+	}
+	if strings.Contains(s, "lan") || strings.Contains(s, "home") || strings.Contains(s, "internal") || strings.Contains(s, "corp") || strings.Contains(s, "main") {
+		return "blue"
+	}
+
+	var hash uint32
+	for i := 0; i < len(s); i++ {
+		hash = (hash << 5) - hash + uint32(s[i])
+	}
+	return networkPalette[int(hash)%len(networkPalette)]
 }
 
 func formatDurationFriendly(d time.Duration) string {

@@ -1322,6 +1322,12 @@ func TestDashboardRendersMultiNetworkAndMultiIPDeviceRow(t *testing.T) {
 	if !strings.Contains(body, `data-ips-json='[{"ip":"10.0.0.10","network_name":"Home LAN"},{"ip":"10.0.0.20","network_name":"Home LAN"},{"ip":"100.64.1.5","network_name":"Tailscale"}]'`) {
 		t.Errorf("expected data-ips-json attribute for sidebar presentation")
 	}
+	if !strings.Contains(body, `class="network-badge net-blue"`) {
+		t.Errorf("expected Home LAN badge to have net-blue class")
+	}
+	if !strings.Contains(body, `class="network-badge net-cyan"`) {
+		t.Errorf("expected Tailscale badge to have net-cyan class")
+	}
 }
 
 func TestDashboardSuppressesDuplicateStandaloneRowsForAttachedVIPs(t *testing.T) {

@@ -177,7 +177,7 @@ orangutan export out.csv</code></pre>
                             {{range .Networks}}
                                 <label class="dropdown-item checkbox-label">
                                     <input type="checkbox" class="network-filter-checkbox" value="{{lower .FriendlyName}}" onchange="toggleNetworkDropdownFilter('{{lower .FriendlyName}}')">
-                                    <span>{{.FriendlyName}}</span>
+                                    <span><span class="network-badge net-{{netColor .FriendlyName}}" style="margin-right: 4px; padding: 0.1rem 0.45rem; font-size: 0.7rem;">{{.FriendlyName}}</span></span>
                                 </label>
                             {{end}}
                         </div>
@@ -340,14 +340,14 @@ orangutan export out.csv</code></pre>
                                          {{if gt (len .IPs) 1}}
                                              <div class="multi-network-cell">
                                                  {{range .IPs}}
-                                                     <span class="network-badge">{{.NetworkName}}</span>
+                                                     <span class="network-badge net-{{netColor .NetworkName}}">{{.NetworkName}}</span>
                                                  {{end}}
                                              </div>
                                          {{else}}
                                              <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
                                                  <!-- Parent Network Badge -->
                                                  {{if .NetworkName}}
-                                                     <span class="network-badge {{if eq .StatusClass "status-offline"}}translucent-network-badge{{end}}"
+                                                     <span class="network-badge net-{{netColor .NetworkName}} {{if eq .StatusClass "status-offline"}}translucent-network-badge{{end}}"
                                                            {{if eq .StatusClass "status-offline"}}style="opacity: 0.5; border: 1px dashed var(--border); background: transparent;"{{end}}
                                                            data-tip="{{if eq .StatusClass "status-offline"}}Parent Offline on {{.NetworkName}} (not detected){{else}}Parent Active on {{.NetworkName}}{{end}}">
                                                          {{.NetworkName}}
@@ -357,7 +357,7 @@ orangutan export out.csv</code></pre>
                                                  <!-- Children Network Badges -->
                                                   {{range .LinkedChildrenDetails}}
                                                      {{if .NetworkName}}
-                                                         <span class="network-badge child-network-badge"
+                                                         <span class="network-badge net-{{netColor .NetworkName}} child-network-badge"
                                                                style="{{if not .IsOnline}}opacity: 0.5; border: 1px dashed var(--border); background: transparent;{{end}}"
                                                                data-tip="{{if .IsOnline}}Alias '{{.Hostname}}' Active on {{.NetworkName}}{{else}}Alias '{{.Hostname}}' Offline on {{.NetworkName}} (not detected){{end}}">
                                                              {{.NetworkName}}

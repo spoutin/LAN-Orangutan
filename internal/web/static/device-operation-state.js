@@ -56,6 +56,29 @@
             .replace(/'/g, '&#39;');
     }
 
+    const networkPalette = ['blue', 'pink', 'amber', 'purple', 'cyan', 'emerald', 'orange', 'indigo'];
+
+    function getNetworkColorKey(networkName) {
+        if (!networkName || typeof networkName !== 'string') return 'neutral';
+        const s = networkName.toLowerCase().trim();
+        if (!s) return 'neutral';
+
+        if (s.includes('dmz') || s.includes('untrusted') || s.includes('external')) return 'pink';
+        if (s.includes('iot') || s.includes('camera') || s.includes('smart') || s.includes('sensor')) return 'amber';
+        if (s.includes('guest') || s.includes('visitor')) return 'purple';
+        if (s.includes('tailscale') || s.includes('vpn') || s.includes('wireguard') || s.includes('wg')) return 'cyan';
+        if (s.includes('mgmt') || s.includes('manage') || s.includes('server') || s.includes('infra')) return 'emerald';
+        if (s.includes('lan') || s.includes('home') || s.includes('internal') || s.includes('corp') || s.includes('main')) return 'blue';
+
+        let hash = 0;
+        for (let i = 0; i < s.length; i++) {
+            hash = (hash << 5) - hash + s.charCodeAt(i);
+            hash |= 0;
+        }
+        const index = Math.abs(hash) % networkPalette.length;
+        return networkPalette[index];
+    }
+
     function formatSidebarIPDisplay(data) {
         if (!data) return { isHTML: false, text: '—' };
         let ips = [];
@@ -66,7 +89,11 @@
         }
 
         if (Array.isArray(ips) && ips.length > 1) {
-            const html = ips.map(att => `<div style="font-family: var(--font-mono);">${escapeHtml(att.ip)} <span style="font-size:0.75rem; color:var(--text-muted); font-family:sans-serif;">(${escapeHtml(att.network_name || att.networkName || data.network || 'LAN')})</span></div>`).join('');
+            const html = ips.map(att => {
+                const net = att.network_name || att.networkName || data.network || 'LAN';
+                const colorKey = getNetworkColorKey(net);
+                return `<div style="font-family: var(--font-mono);">${escapeHtml(att.ip)} <span class="network-badge net-${colorKey}" style="margin-left:4px; font-size:0.7rem;">${escapeHtml(net)}</span></div>`;
+            }).join('');
             return { isHTML: true, html };
         }
 
@@ -184,5 +211,6 @@
         ipToComparable,
         getEffectiveRowIP,
         getOrderedAttachments,
+        getNetworkColorKey,
     };
 });
