@@ -468,6 +468,12 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		if len(d.AddressHistory) > 0 {
 			moved++
 		}
+		// Sort attachments numerically by IP ascending so lowest IP is first in the shared list
+		if len(d.IPs) > 1 {
+			sort.Slice(d.IPs, func(i, j int) bool {
+				return types.IPToLong(d.IPs[i].IP) < types.IPToLong(d.IPs[j].IP)
+			})
+		}
 		// Devices recorded by an older version have no vendor stored, so look it
 		// up now rather than showing "Unknown" until a rescan.
 		resolvedVendor := scanner.ResolveVendor(d.Vendor, d.MAC)
@@ -538,9 +544,9 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Sort by IP
+	// Sort by lowest IP
 	sort.Slice(deviceViews, func(i, j int) bool {
-		return ipToLong(deviceViews[i].IP) < ipToLong(deviceViews[j].IP)
+		return types.IPToLong(deviceViews[i].LowestIP()) < types.IPToLong(deviceViews[j].LowestIP())
 	})
 
 	// Get groups
@@ -731,22 +737,7 @@ func timeAgo(t time.Time) string {
 
 // ipToLong converts an IP string to a sortable integer
 func ipToLong(ip string) int64 {
-	parts := strings.Split(ip, ".")
-	if len(parts) != 4 {
-		return 0x7FFFFFFFFFFFFFFF
-	}
-
-	var result int64
-	for i, p := range parts {
-		var n int
-		for _, c := range p {
-			if c >= '0' && c <= '9' {
-				n = n*10 + int(c-'0')
-			}
-		}
-		result |= int64(n) << (24 - 8*i)
-	}
-	return result
+	return types.IPToLong(ip)
 }
 
 func formatDurationFriendly(d time.Duration) string {

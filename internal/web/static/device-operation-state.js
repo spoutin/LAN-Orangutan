@@ -126,11 +126,14 @@
     function getEffectiveRowIP(data, activeNetworkFilters) {
         if (!data) return '';
         const fallbackIP = data.ip || '';
+        const attachments = parseAttachments(data);
+
         if (!activeNetworkFilters || activeNetworkFilters.length === 0) {
-            return fallbackIP;
+            if (attachments.length === 0) return fallbackIP;
+            const sorted = [...attachments].sort((a, b) => ipToComparable(a.ip).localeCompare(ipToComparable(b.ip)));
+            return sorted[0].ip || fallbackIP;
         }
 
-        const attachments = parseAttachments(data);
         if (attachments.length === 0) {
             return fallbackIP;
         }
@@ -139,7 +142,8 @@
         const matching = attachments.filter(att => isAttachmentMatchingFilters(att, normalizedFilters));
 
         if (matching.length === 0) {
-            return fallbackIP;
+            const sorted = [...attachments].sort((a, b) => ipToComparable(a.ip).localeCompare(ipToComparable(b.ip)));
+            return sorted[0].ip || fallbackIP;
         }
 
         matching.sort((a, b) => ipToComparable(a.ip).localeCompare(ipToComparable(b.ip)));
@@ -152,7 +156,7 @@
             return attachments;
         }
         if (!activeNetworkFilters || activeNetworkFilters.length === 0) {
-            return attachments;
+            return [...attachments].sort((a, b) => ipToComparable(a.ip).localeCompare(ipToComparable(b.ip)));
         }
 
         const normalizedFilters = activeNetworkFilters.map(f => (f || '').toLowerCase().trim());
@@ -168,6 +172,7 @@
         });
 
         matching.sort((a, b) => ipToComparable(a.ip).localeCompare(ipToComparable(b.ip)));
+        nonMatching.sort((a, b) => ipToComparable(a.ip).localeCompare(ipToComparable(b.ip)));
         return [...matching, ...nonMatching];
     }
 

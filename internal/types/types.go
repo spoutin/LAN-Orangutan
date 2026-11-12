@@ -3,6 +3,7 @@ package types
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,41 @@ type OpenService struct {
 type IPAttachment struct {
 	IP          string `json:"ip"`
 	NetworkName string `json:"network_name,omitempty"`
+}
+
+// IPToLong converts an IPv4 address to a sortable integer
+func IPToLong(ip string) int64 {
+	parts := strings.Split(ip, ".")
+	if len(parts) != 4 {
+		return 0x7FFFFFFFFFFFFFFF
+	}
+	var result int64
+	for i, p := range parts {
+		var n int
+		for _, c := range p {
+			if c >= '0' && c <= '9' {
+				n = n*10 + int(c-'0')
+			}
+		}
+		result |= int64(n) << (24 - 8*i)
+	}
+	return result
+}
+
+// LowestIP returns the lowest numerical IP among active attachments in d.IPs (or d.IP if empty)
+func (d *Device) LowestIP() string {
+	best := d.IP
+	bestLong := IPToLong(best)
+	for _, att := range d.IPs {
+		if att.IP != "" {
+			l := IPToLong(att.IP)
+			if best == "" || l < bestLong {
+				best = att.IP
+				bestLong = l
+			}
+		}
+	}
+	return best
 }
 
 // Device represents a discovered network device

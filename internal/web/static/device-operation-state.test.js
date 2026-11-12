@@ -133,11 +133,11 @@ test('getEffectiveRowIP selects matching subnet IP when network filter is active
   // When filtered on VLAN 4, returns 10.0.4.1
   assert.equal(getEffectiveRowIP(dataset, ['vlan 4']), '10.0.4.1');
 
-  // When All Networks (empty active filter), falls back to primary IP
-  assert.equal(getEffectiveRowIP(dataset, []), '10.0.4.1');
+  // When All Networks (empty active filter), sorts based on lowest IP (10.0.0.1)
+  assert.equal(getEffectiveRowIP(dataset, []), '10.0.0.1');
 
-  // When filter doesn't match, falls back to primary IP
-  assert.equal(getEffectiveRowIP(dataset, ['tailscale']), '10.0.4.1');
+  // When filter doesn't match, falls back to lowest IP
+  assert.equal(getEffectiveRowIP(dataset, ['tailscale']), '10.0.0.1');
 });
 
 test('getOrderedAttachments orders matching subnet attachments first when filtered', () => {
@@ -158,13 +158,13 @@ test('getOrderedAttachments orders matching subnet attachments first when filter
   const orderedCIDR = getOrderedAttachments(dataset, ['10.0.0.0/24']);
   assert.equal(orderedCIDR[0].ip, '10.0.0.1');
 
-  // When All Networks (empty filter), original order is preserved
+  // When All Networks (empty filter), attachments are ordered by lowest IP first
   const original = getOrderedAttachments(dataset, []);
-  assert.equal(original[0].ip, '10.0.4.1');
-  assert.equal(original[1].ip, '10.0.0.1');
+  assert.equal(original[0].ip, '10.0.0.1');
+  assert.equal(original[1].ip, '10.0.4.1');
 });
 
-test('effective IP ordering compares correctly when filtered by network', () => {
+test('effective IP ordering compares correctly with or without network filter', () => {
   const rowA = {
     ip: '10.0.4.1',
     ipsJson: '[{"ip":"10.0.4.1","network_name":"VLAN 4"},{"ip":"10.0.0.1","network_name":"Home LAN"}]',
@@ -174,12 +174,12 @@ test('effective IP ordering compares correctly when filtered by network', () => 
     ipsJson: '[{"ip":"10.0.0.15","network_name":"Home LAN"}]',
   };
 
-  // Without network filter: rowB (10.0.0.15) comes before rowA (10.0.4.1)
+  // Even without network filter: rowA's lowest IP is 10.0.0.1, so rowA comes BEFORE rowB (10.0.0.15)!
   const noFilterA = ipToComparable(getEffectiveRowIP(rowA, []));
   const noFilterB = ipToComparable(getEffectiveRowIP(rowB, []));
-  assert.equal(noFilterA > noFilterB, true);
+  assert.equal(noFilterA < noFilterB, true);
 
-  // With Home LAN filter: rowA effective IP is 10.0.0.1, so rowA comes BEFORE rowB (10.0.0.15)!
+  // With Home LAN filter: rowA effective IP is 10.0.0.1, so rowA still comes BEFORE rowB (10.0.0.15)!
   const filteredA = ipToComparable(getEffectiveRowIP(rowA, ['home lan']));
   const filteredB = ipToComparable(getEffectiveRowIP(rowB, ['home lan']));
   assert.equal(filteredA < filteredB, true);

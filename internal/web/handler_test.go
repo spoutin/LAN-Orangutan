@@ -1369,3 +1369,46 @@ func TestDashboardSuppressesDuplicateStandaloneRowsForAttachedVIPs(t *testing.T)
 		t.Error("expected standalone row data-ip='10.0.0.1' to be suppressed since it is attached to 10.0.4.1")
 	}
 }
+
+func TestDashboardDefaultSortUsesLowestAttachedIP(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+
+	// Device 1: primary 10.0.4.1, but has VIP 10.0.0.1
+	devVIP := types.Device{
+		IP:          "10.0.4.1",
+		MAC:         "aa:bb:cc:dd:ee:01",
+		Hostname:    "router-gateway",
+		NetworkName: "VLAN 4",
+		IPs: []types.IPAttachment{
+			{IP: "10.0.4.1", NetworkName: "VLAN 4"},
+			{IP: "10.0.0.1", NetworkName: "Home LAN"},
+		},
+	}
+	// Device 2: 10.0.0.15
+	devOther := types.Device{
+		IP:          "10.0.0.15",
+		MAC:         "aa:bb:cc:dd:ee:15",
+		Hostname:    "other-server",
+		NetworkName: "Home LAN",
+	}
+
+	if _, _, err := h.store.MergeDevices([]types.Device{devVIP, devOther}); err != nil {
+		t.Fatalf("failed to seed devices: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index page status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	idxVIP := strings.Index(body, `data-ip="10.0.4.1"`)
+	idxOther := strings.Index(body, `data-ip="10.0.0.15"`)
+	if idxVIP == -1 || idxOther == -1 {
+		t.Fatalf("expected both devices in dashboard, got idxVIP=%d, idxOther=%d", idxVIP, idxOther)
+	}
+	if idxVIP > idxOther {
+		t.Errorf("expected router (with lowest VIP 10.0.0.1) to sort before 10.0.0.15, got idxVIP=%d > idxOther=%d", idxVIP, idxOther)
+	}
+}
