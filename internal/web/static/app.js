@@ -719,10 +719,34 @@ function filterDevices() {
         const subrow = document.querySelector(`.device-subrow[data-ip="${CSS.escape(row.dataset.ip)}"]`);
         if (subrow) subrow.style.display = show ? '' : 'none';
         if (show) visible++;
+
+        updateRowMultiIPPresentation(row, activeNetworkFilters);
     });
 
     const countEl = document.getElementById('device-count');
     if (countEl) countEl.textContent = `Showing ${visible} device${visible === 1 ? '' : 's'}`;
+
+    applyCurrentSort();
+}
+
+function updateRowMultiIPPresentation(row, activeNetworkFilters) {
+    if (!row.dataset.ipsJson) return;
+    const multiIpCell = row.querySelector('.multi-ip-cell');
+    const multiNetCell = row.querySelector('.multi-network-cell');
+    if (!multiIpCell || !multiNetCell) return;
+
+    const ordered = (typeof deviceOperationState !== 'undefined' && deviceOperationState.getOrderedAttachments)
+        ? deviceOperationState.getOrderedAttachments(row.dataset, activeNetworkFilters)
+        : null;
+    if (!ordered || ordered.length <= 1) return;
+
+    multiIpCell.innerHTML = ordered.map(att => `<div class="ip-row">${escapeHtml(att.ip)}</div>`).join('');
+    multiNetCell.innerHTML = ordered.map(att => `<span class="network-badge">${escapeHtml(att.network_name || att.networkName || '')}</span>`).join('');
+
+    const ipCell = row.querySelector('.col-ip.ip-cell');
+    if (ipCell) {
+        ipCell.dataset.copy = ordered[0].ip;
+    }
 }
 
 // Device editing
@@ -2596,9 +2620,19 @@ function compareRows(a, b, column) {
 
     switch (column) {
         case 'ip':
-            // Sort IP addresses numerically
-            valA = a.dataset.ip.split('.').map(n => n.padStart(3, '0')).join('');
-            valB = b.dataset.ip.split('.').map(n => n.padStart(3, '0')).join('');
+            // Sort IP addresses numerically, using effective IP for active network filters if any
+            const ipA = (typeof deviceOperationState !== 'undefined' && deviceOperationState.getEffectiveRowIP)
+                ? deviceOperationState.getEffectiveRowIP(a.dataset, activeNetworkFilters)
+                : a.dataset.ip;
+            const ipB = (typeof deviceOperationState !== 'undefined' && deviceOperationState.getEffectiveRowIP)
+                ? deviceOperationState.getEffectiveRowIP(b.dataset, activeNetworkFilters)
+                : b.dataset.ip;
+            valA = (typeof deviceOperationState !== 'undefined' && deviceOperationState.ipToComparable)
+                ? deviceOperationState.ipToComparable(ipA)
+                : ipA.split('.').map(n => n.padStart(3, '0')).join('.');
+            valB = (typeof deviceOperationState !== 'undefined' && deviceOperationState.ipToComparable)
+                ? deviceOperationState.ipToComparable(ipB)
+                : ipB.split('.').map(n => n.padStart(3, '0')).join('.');
             break;
         case 'hostname':
             valA = a.dataset.hostname || 'zzz';
@@ -2640,12 +2674,27 @@ function compareRows(a, b, column) {
 }
 
 // applyCurrentSort reorders the rows in the DOM to match the active sort. It
-// does nothing when no column is sorted, so a freshly loaded (server-ordered)
-// table is left as the server sent it.
+// does nothing when no column is sorted, unless a network filter is active in
+// which case it orders rows by their effective IP in that network.
 function applyCurrentSort() {
-    if (!sortColumn) return;
     const tbody = document.getElementById('devices-tbody');
     if (!tbody) return;
+
+    if (!sortColumn) {
+        if (activeNetworkFilters && activeNetworkFilters.length > 0) {
+            const rows = Array.from(tbody.querySelectorAll('.device-row'));
+            rows.sort((a, b) => compareRows(a, b, 'ip'));
+            rows.forEach(row => {
+                tbody.appendChild(row);
+                const subrow = tbody.querySelector(`.device-subrow[data-ip="${CSS.escape(row.dataset.ip)}"]`);
+                if (subrow) tbody.appendChild(subrow);
+            });
+        } else {
+            restoreDefaultDeviceOrder();
+        }
+        return;
+    }
+
     const rows = Array.from(tbody.querySelectorAll('.device-row'));
     rows.sort((a, b) => compareRows(a, b, sortColumn));
     rows.forEach(row => {
@@ -2687,7 +2736,11 @@ function sortTable(column) {
 function resetDeviceSort() {
     sortColumn = null;
     sortAsc = true;
-    restoreDefaultDeviceOrder();
+    if (activeNetworkFilters && activeNetworkFilters.length > 0) {
+        applyCurrentSort();
+    } else {
+        restoreDefaultDeviceOrder();
+    }
     updateSortIndicator();
 }
 
@@ -2787,6 +2840,7 @@ async function refreshInPlace() {
     const selectedIp = document.querySelector('.device-row.selected-row')?.dataset?.ip;
 
     document.getElementById('devices-tbody')?.replaceWith(freshRows);
+    captureDefaultDeviceOrder();
 
     for (const selector of ['.stat-strip', '.table-footer', '#device-count', '#scan-time-top', '.scan-control-compact', '.btn-scan-all', '#scan-status-footer', '#configured-networks-section']) {
         const current = document.querySelector(selector);

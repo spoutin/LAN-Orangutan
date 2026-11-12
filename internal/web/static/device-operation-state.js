@@ -73,10 +73,111 @@
         return { isHTML: false, text: data.ip || '—' };
     }
 
+    function ipToComparable(ip) {
+        if (!ip) return '999.999.999.999';
+        if (ip.includes('.')) {
+            return ip.split('.').map(n => n.padStart(3, '0')).join('.');
+        }
+        return ip;
+    }
+
+    function ipInCIDR(ip, cidr) {
+        if (!ip || !cidr || !cidr.includes('/')) return false;
+        const parts = cidr.split('/');
+        const prefix = parts[0];
+        const bits = parseInt(parts[1], 10);
+        if (isNaN(bits) || bits < 0 || bits > 32) return false;
+        const ipParts = ip.split('.');
+        const prefixParts = prefix.split('.');
+        if (ipParts.length !== 4 || prefixParts.length !== 4) return false;
+        const ipNum = ipParts.reduce((acc, octet) => ((acc << 8) + (parseInt(octet, 10) || 0)) >>> 0, 0) >>> 0;
+        const prefixNum = prefixParts.reduce((acc, octet) => ((acc << 8) + (parseInt(octet, 10) || 0)) >>> 0, 0) >>> 0;
+        const mask = bits === 0 ? 0 : ((0xFFFFFFFF << (32 - bits)) >>> 0);
+        return (ipNum & mask) === (prefixNum & mask);
+    }
+
+    function isAttachmentMatchingFilters(att, normalizedFilters) {
+        if (!att || !normalizedFilters || normalizedFilters.length === 0) return false;
+        const net = (att.network_name || att.networkName || '').toLowerCase().trim();
+        for (const filter of normalizedFilters) {
+            if (filter === net) return true;
+            if (filter.includes('/') && ipInCIDR(att.ip, filter)) return true;
+        }
+        return false;
+    }
+
+    function parseAttachments(data) {
+        if (!data) return [];
+        if (Array.isArray(data.ips)) {
+            return data.ips;
+        }
+        if (data.ipsJson && typeof data.ipsJson === 'string') {
+            try {
+                const parsed = JSON.parse(data.ipsJson);
+                if (Array.isArray(parsed)) return parsed;
+            } catch (_) {}
+        }
+        if (data.ip) {
+            return [{ ip: data.ip, network_name: data.network || '' }];
+        }
+        return [];
+    }
+
+    function getEffectiveRowIP(data, activeNetworkFilters) {
+        if (!data) return '';
+        const fallbackIP = data.ip || '';
+        if (!activeNetworkFilters || activeNetworkFilters.length === 0) {
+            return fallbackIP;
+        }
+
+        const attachments = parseAttachments(data);
+        if (attachments.length === 0) {
+            return fallbackIP;
+        }
+
+        const normalizedFilters = activeNetworkFilters.map(f => (f || '').toLowerCase().trim());
+        const matching = attachments.filter(att => isAttachmentMatchingFilters(att, normalizedFilters));
+
+        if (matching.length === 0) {
+            return fallbackIP;
+        }
+
+        matching.sort((a, b) => ipToComparable(a.ip).localeCompare(ipToComparable(b.ip)));
+        return matching[0].ip || fallbackIP;
+    }
+
+    function getOrderedAttachments(data, activeNetworkFilters) {
+        const attachments = parseAttachments(data);
+        if (attachments.length <= 1) {
+            return attachments;
+        }
+        if (!activeNetworkFilters || activeNetworkFilters.length === 0) {
+            return attachments;
+        }
+
+        const normalizedFilters = activeNetworkFilters.map(f => (f || '').toLowerCase().trim());
+        const matching = [];
+        const nonMatching = [];
+
+        attachments.forEach(att => {
+            if (isAttachmentMatchingFilters(att, normalizedFilters)) {
+                matching.push(att);
+            } else {
+                nonMatching.push(att);
+            }
+        });
+
+        matching.sort((a, b) => ipToComparable(a.ip).localeCompare(ipToComparable(b.ip)));
+        return [...matching, ...nonMatching];
+    }
+
     return {
         shouldSyncSidebarForm,
         isElementProtectedFromTimeUpdate,
         formatLastDeepScan,
         formatSidebarIPDisplay,
+        ipToComparable,
+        getEffectiveRowIP,
+        getOrderedAttachments,
     };
 });
