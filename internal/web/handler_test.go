@@ -1323,3 +1323,49 @@ func TestDashboardRendersMultiNetworkAndMultiIPDeviceRow(t *testing.T) {
 		t.Errorf("expected data-ips-json attribute for sidebar presentation")
 	}
 }
+
+func TestDashboardSuppressesDuplicateStandaloneRowsForAttachedVIPs(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+
+	// Unified router device at 10.0.4.1 with attached VIP 10.0.0.1
+	devRouter := types.Device{
+		IP:          "10.0.4.1",
+		MAC:         "aa:bb:cc:dd:ee:01",
+		Hostname:    "router-gateway",
+		NetworkName: "VLAN 4",
+		IPs: []types.IPAttachment{
+			{IP: "10.0.4.1", NetworkName: "VLAN 4"},
+			{IP: "10.0.0.1", NetworkName: "Home LAN"},
+		},
+	}
+	if _, _, err := h.store.MergeDevices([]types.Device{devRouter}); err != nil {
+		t.Fatalf("failed to seed router: %v", err)
+	}
+
+	// Suppose a standalone device entry for 10.0.0.1 existed in storage
+	devStandalone := types.Device{
+		IP:          "10.0.0.1",
+		Hostname:    "old-standalone",
+		NetworkName: "Home LAN",
+	}
+	if err := h.store.UpdateDevice(&devStandalone); err != nil {
+		t.Fatalf("failed to seed standalone: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index page status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// The unified router row should be present
+	if !strings.Contains(body, `data-ip="10.0.4.1"`) {
+		t.Error("expected unified router row data-ip='10.0.4.1' to be present")
+	}
+
+	// A standalone row for 10.0.0.1 must NOT be rendered as a separate device row
+	if strings.Contains(body, `data-ip="10.0.0.1"`) {
+		t.Error("expected standalone row data-ip='10.0.0.1' to be suppressed since it is attached to 10.0.4.1")
+	}
+}

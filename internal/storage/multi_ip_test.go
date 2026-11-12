@@ -146,3 +146,61 @@ func TestMultiIPCrossNetworkCoexistence(t *testing.T) {
 		t.Errorf("expected both Home LAN and Tailscale attachments, got %+v", d.IPs)
 	}
 }
+
+func TestMultiIPAttachedSecondaryIPsNotDuplicated(t *testing.T) {
+	s := newTestStorage(t)
+
+	// 1. Initial router device at 10.0.4.1 with attached VIPs on other subnets
+	devRouter := types.Device{
+		IP:       "10.0.4.1",
+		MAC:      "aa:bb:cc:dd:ee:01",
+		Hostname: "router-gateway",
+		IPs: []types.IPAttachment{
+			{IP: "10.0.4.1", NetworkName: "VLAN 4"},
+			{IP: "10.0.0.1", NetworkName: "Home LAN"},
+			{IP: "10.0.1.1", NetworkName: "IoT LAN"},
+			{IP: "10.0.3.1", NetworkName: "Guest LAN"},
+		},
+	}
+	if _, _, err := s.MergeDevices([]types.Device{devRouter}); err != nil {
+		t.Fatalf("failed to merge devRouter: %v", err)
+	}
+
+	// 2. Later, a sweep on 10.0.0.0/24 discovers 10.0.0.1 (even with no MAC or same MAC)
+	sweepDev := types.Device{
+		IP:       "10.0.0.1",
+		Hostname: "router-gateway",
+	}
+	if _, _, err := s.MergeDevices([]types.Device{sweepDev}); err != nil {
+		t.Fatalf("failed to merge sweepDev: %v", err)
+	}
+
+	// Must NOT create a separate device entry for 10.0.0.1
+	devices := s.GetDevices()
+	if len(devices) != 1 {
+		t.Fatalf("expected 1 unified router device, got %d devices: %+v", len(devices), devices)
+	}
+	if _, exists := devices["10.0.0.1"]; exists {
+		t.Errorf("found separate device entry for 10.0.0.1, should be unified under primary device")
+	}
+
+	// 3. What if a separate standalone row for 10.0.1.1 existed in SQLite?
+	// Seed standalone row for 10.0.1.1 directly in DB
+	_, err := s.db.Exec(`
+		INSERT INTO devices (ip, mac, hostname, first_seen, last_seen, is_online, last_presence_change)
+		VALUES ('10.0.1.1', '', 'old-standalone', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, CURRENT_TIMESTAMP)
+	`)
+	if err != nil {
+		t.Fatalf("failed to seed standalone row: %v", err)
+	}
+
+	// DeduplicateMACs should detect that 10.0.1.1 is already an attached IP on 10.0.4.1 and remove the standalone row
+	if err := s.DeduplicateMACs(); err != nil {
+		t.Fatalf("DeduplicateMACs failed: %v", err)
+	}
+
+	devicesAfterDedup := s.GetDevices()
+	if len(devicesAfterDedup) != 1 {
+		t.Fatalf("expected 1 unified router device after dedup, got %d: %+v", len(devicesAfterDedup), devicesAfterDedup)
+	}
+}

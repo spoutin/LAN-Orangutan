@@ -1544,6 +1544,75 @@ func (s *Storage) mergeDuplicateDevice(target *types.Device, source *types.Devic
 
 func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time, activeIPs map[string]bool) (bool, error) {
 	isNew := true
+
+	// Check if this IP is already attached to an existing device (e.g. VIP or multi-network attachment)
+	if d.IP != "" {
+		row := tx.QueryRow(`
+			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
+			       assignment, network_name, first_seen, last_seen, response_time, address_history,
+			       linked_mac, notify_on_seen, ansible_managed,
+			       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
+			       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+			       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
+			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+			       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
+			       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+			       COALESCE(ips, '[]') AS ips
+			FROM devices
+			WHERE ip != ? AND instr(ips, '"' || ? || '"') > 0
+			LIMIT 1
+		`, d.IP, d.IP)
+		if old, err := s.scanDevice(row); err == nil && old != nil {
+			s.mergeDuplicateDevice(old, d, now)
+			s.attachIP(old, d.IP, d.NetworkName)
+			s.syncAttachments(old)
+			// Update old device in DB
+			risksJSON, _ := json.Marshal(old.Risks)
+			historyJSON, _ := json.Marshal(old.AddressHistory)
+			ipsJSON, _ := json.Marshal(old.IPs)
+			var leaseExpiresVal interface{}
+			if !old.LeaseExpires.IsZero() {
+				leaseExpiresVal = old.LeaseExpires
+			}
+			var switchUpdatedAtVal interface{}
+			if !old.SwitchUpdatedAt.IsZero() {
+				switchUpdatedAtVal = old.SwitchUpdatedAt
+			}
+			_, err = tx.Exec(`
+				UPDATE devices SET
+					hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
+					label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
+					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, detected_ssh_port = ?,
+					ssh_override = ?, ssh_override_port = ?, assignment = ?, network_name = ?,
+					first_seen = ?, last_seen = ?, response_time = ?, address_history = ?,
+					linked_mac = ?, notify_on_seen = ?, ansible_managed = ?,
+					os = ?, os_version = ?, os_family = ?, custom_os = ?, custom_os_version = ?, custom_os_family = ?,
+					ssid = ?, ap_name = ?, radio_band = ?, channel = ?, wifi_standard = ?, signal = ?, signal_quality = ?,
+					rx_rate = ?, tx_rate = ?, rx_bytes = ?, tx_bytes = ?, association_uptime = ?, unifi_model = ?, vlan = ?, unifi_name = ?,
+					router_source = ?, router_interface = ?, lease_expires = ?, lease_lifetime = ?, router_notes = ?,
+					switch_name = ?, switch_host = ?, switch_port = ?, switch_vlan = ?, switch_link_state = ?, switch_link_speed = ?, switch_duplex = ?, switch_poe_watts = ?, switch_updated_at = ?,
+					traffic_source = ?, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+					ips = ?
+				WHERE ip = ?
+			`, old.Hostname, old.Vendor, old.Type, boolToInt(old.WebUI), string(risksJSON),
+				old.Label, old.Notes, old.Group, old.CustomHostname, old.CustomWebURL,
+				old.CustomType, old.WebPort, old.WebScheme, boolToInt(old.Probed), old.DetectedSSHPort,
+				old.SSHOverride, old.SSHOverridePort, old.Assignment, old.NetworkName,
+				old.FirstSeen, old.LastSeen, old.ResponseTime, string(historyJSON),
+				old.LinkedMAC, boolToInt(old.NotifyOnSeen), boolToInt(old.AnsibleManaged),
+				old.OS, old.OSVersion, old.OSFamily, old.CustomOS, old.CustomOSVersion, old.CustomOSFamily,
+				old.SSID, old.APName, old.RadioBand, old.Channel, old.WiFiStandard, old.Signal, old.SignalQuality,
+				old.RxRate, old.TxRate, old.RxBytes, old.TxBytes, old.AssociationUptime, old.UniFiModel, old.VLAN, old.UniFiName,
+				old.RouterSource, old.RouterInterface, leaseExpiresVal, old.LeaseLifetime, old.RouterNotes,
+				old.SwitchName, old.SwitchHost, old.SwitchPort, old.SwitchVLAN, old.SwitchLinkState, old.SwitchLinkSpeed, old.SwitchDuplex, old.SwitchPoEWatts, switchUpdatedAtVal,
+				old.TrafficSource, old.RxRateBps, old.TxRateBps, old.WanRxRateBps, old.WanTxRateBps, old.WanRxBytes, old.WanTxBytes,
+				string(ipsJSON),
+				old.IP)
+			return false, err
+		}
+	}
+
 	if d.MAC != "" {
 		oldIP, old, err := s.findByMACLocked(tx, d.MAC, d.IP)
 		if err != nil {
@@ -1844,8 +1913,9 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 			       assignment, network_name, first_seen, last_seen, response_time, address_history,
 			       is_online, last_presence_change, notify_on_seen, ansible_managed,
 			       COALESCE(ips, '[]') AS ips
-			FROM devices WHERE ip = ?
-		`, d.IP)
+			FROM devices WHERE ip = ? OR instr(ips, '"' || ? || '"') > 0
+			LIMIT 1
+		`, d.IP, d.IP)
 
 		var existing types.Device
 		var webUIVal, probedVal int
@@ -1861,6 +1931,10 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 		)
 
 		if err == nil {
+			if existing.IP != d.IP {
+				// d.IP is an attached secondary IP of existing; remove any obsolete standalone row for d.IP
+				_, _ = tx.Exec("DELETE FROM devices WHERE ip = ?", d.IP)
+			}
 			existing.WebUI = webUIVal != 0
 			existing.Probed = probedVal != 0
 			existing.NotifyOnSeen = notifyOnSeenVal != 0
@@ -3449,6 +3523,60 @@ func (s *Storage) DeduplicateMACs() error {
 				target.TrafficSource, target.RxRateBps, target.TxRateBps, target.WanRxRateBps, target.WanTxRateBps, target.WanRxBytes, target.WanTxBytes,
 				string(ipsJSON),
 				target.IP)
+		}
+	}
+
+	// Deduplicate any standalone device rows that are already attached as secondary IPs on another device
+	attRows, err := tx.Query(`
+		SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+		       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
+		       assignment, network_name, first_seen, last_seen, response_time, address_history,
+		       linked_mac, notify_on_seen, ansible_managed,
+		       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
+		       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
+		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+		       COALESCE(ips, '[]') AS ips
+		FROM devices
+		WHERE ips != '[]' AND ips != ''
+	`)
+	if err == nil {
+		var multiIPDevices []*types.Device
+		for attRows.Next() {
+			if d, err := s.scanDevice(attRows); err == nil && len(d.IPs) > 1 {
+				multiIPDevices = append(multiIPDevices, d)
+			}
+		}
+		attRows.Close()
+
+		for _, target := range multiIPDevices {
+			for _, att := range target.IPs {
+				if att.IP != "" && att.IP != target.IP {
+					row := tx.QueryRow(`
+						SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
+						       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
+						       assignment, network_name, first_seen, last_seen, response_time, address_history,
+						       linked_mac, notify_on_seen, ansible_managed,
+						       os, os_version, os_family, custom_os, custom_os_version, custom_os_family,
+						       ssid, ap_name, radio_band, channel, wifi_standard, signal, signal_quality,
+						       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
+						       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
+						       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
+						       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+						       COALESCE(ips, '[]') AS ips
+						FROM devices WHERE ip = ?
+					`, att.IP)
+					if duplicate, err := s.scanDevice(row); err == nil && duplicate != nil {
+						s.mergeDuplicateDevice(target, duplicate, now)
+						_, _ = tx.Exec("UPDATE device_presence_history SET ip = ? WHERE ip = ?", target.IP, duplicate.IP)
+						_, _ = tx.Exec("UPDATE OR IGNORE device_open_ports SET ip = ? WHERE ip = ?", target.IP, duplicate.IP)
+						_, _ = tx.Exec("DELETE FROM device_open_ports WHERE ip = ?", duplicate.IP)
+						_, _ = tx.Exec("DELETE FROM devices WHERE ip = ?", duplicate.IP)
+					}
+				}
+			}
 		}
 	}
 

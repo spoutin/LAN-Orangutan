@@ -445,9 +445,22 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	groupSet := make(map[string]bool)
 	var flagged, moved int
 
+	// Identify any secondary attached IPs so duplicate records are never displayed as separate table rows
+	attachedSecondaryIPs := make(map[string]bool)
+	for _, d := range devices {
+		for _, att := range d.IPs {
+			if att.IP != "" && att.IP != d.IP {
+				attachedSecondaryIPs[att.IP] = true
+			}
+		}
+	}
+
 	for _, d := range devices {
 		if d.LinkedMAC != "" {
 			continue // Skip linked children, keeping the main dashboard clean!
+		}
+		if attachedSecondaryIPs[d.IP] {
+			continue // Skip secondary VIP/network attachments that belong to a unified device
 		}
 		if len(d.Risks) > 0 {
 			flagged++
