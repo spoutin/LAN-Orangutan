@@ -13,12 +13,20 @@ type OpenService struct {
 	Version string `json:"version,omitempty"`
 }
 
+// IPAttachment represents a network attachment (IP and its associated network name)
+type IPAttachment struct {
+	IP          string `json:"ip"`
+	NetworkName string `json:"network_name,omitempty"`
+}
+
 // Device represents a discovered network device
 type Device struct {
 	IP       string `json:"ip"`
 	MAC      string `json:"mac"`
 	Hostname string `json:"hostname"`
 	Vendor   string `json:"vendor"`
+	// IPs lists all active IP attachments for this device (including VIPs, secondary IPs, and multi-network interfaces)
+	IPs []IPAttachment `json:"ips,omitempty"`
 	// Type is the inferred device kind (Phone, Printer, TV, and so on), or ""
 	// when it could not be determined. It is derived at scan time from the
 	// vendor, the hostname and, when service detection is on, the open ports.

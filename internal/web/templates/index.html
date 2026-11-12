@@ -238,6 +238,8 @@ orangutan export out.csv</code></pre>
                                     data-type="{{lower .Type}}"
                                     data-type-display="{{.Type}}"
                                     data-network="{{lower .NetworkName}}"
+                                    data-networks="{{range $i, $att := .IPs}}{{if $i}},{{end}}{{lower $att.NetworkName}}{{else}}{{lower .NetworkName}}{{end}}"
+                                    data-ips="{{range $i, $att := .IPs}}{{if $i}},{{end}}{{$att.IP}}{{else}}{{.IP}}{{end}}"
                                     data-assignment="{{.Assignment}}"
                                     data-custom-hostname="{{lower .CustomHostname}}"
                                     data-custom-hostname-original="{{.CustomHostname}}"
@@ -303,7 +305,15 @@ orangutan export out.csv</code></pre>
                                        data-wan-rx-bytes="{{.WanRxBytes}}"
                                        data-wan-tx-bytes="{{.WanTxBytes}}">
                                       <td class="col-ip ip-cell" data-label="IP Address" data-copy="{{.IP}}" data-tip="{{.StatusTip}}">
-                                          {{.IP}}{{if .AddressHistory}}<span class="moved-indicator" data-tip="Changed address{{range .AddressHistory}}, was {{.IP}}{{end}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></span>{{end}}
+                                          {{if gt (len .IPs) 1}}
+                                              <div class="multi-ip-cell">
+                                                  {{range .IPs}}
+                                                      <div class="ip-row">{{.IP}}</div>
+                                                  {{end}}
+                                              </div>
+                                          {{else}}
+                                              {{.IP}}{{if .AddressHistory}}<span class="moved-indicator" data-tip="Changed address{{range .AddressHistory}}, was {{.IP}}{{end}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></span>{{end}}
+                                          {{end}}
                                       </td>
                                       <td class="col-hostname hostname-cell" data-label="Hostname" data-copy="{{if .CustomHostname}}{{.CustomHostname}}{{else if .Hostname}}{{.Hostname}}{{else if .UniFiName}}{{.UniFiName}}{{end}}">
                                           {{if .CustomHostname}}
@@ -326,26 +336,35 @@ orangutan export out.csv</code></pre>
                                          {{end}}
                                      </td>
                                      <td class="col-network network-cell" data-label="Network">
-                                         <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
-                                             <!-- Parent Network Badge -->
-                                             {{if .NetworkName}}
-                                                 <span class="network-badge {{if eq .StatusClass "status-offline"}}translucent-network-badge{{end}}"
-                                                       {{if eq .StatusClass "status-offline"}}style="opacity: 0.5; border: 1px dashed var(--border); background: transparent;"{{end}}
-                                                       data-tip="{{if eq .StatusClass "status-offline"}}Parent Offline on {{.NetworkName}} (not detected){{else}}Parent Active on {{.NetworkName}}{{end}}">
-                                                     {{.NetworkName}}
-                                                 </span>
-                                             {{end}}
-                                             
-                                             <!-- Children Network Badges -->
-                                              {{range .LinkedChildrenDetails}}
+                                         {{if gt (len .IPs) 1}}
+                                             <div class="multi-network-cell">
+                                                 {{range .IPs}}
+                                                     <span class="network-badge">{{.NetworkName}}</span>
+                                                 {{end}}
+                                             </div>
+                                         {{else}}
+                                             <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
+                                                 <!-- Parent Network Badge -->
                                                  {{if .NetworkName}}
-                                                     <span class="network-badge child-network-badge"
-                                                           style="{{if not .IsOnline}}opacity: 0.5; border: 1px dashed var(--border); background: transparent;{{end}}"
-                                                           data-tip="{{if .IsOnline}}Alias '{{.Hostname}}' Active on {{.NetworkName}}{{else}}Alias '{{.Hostname}}' Offline on {{.NetworkName}} (not detected){{end}}">
+                                                     <span class="network-badge {{if eq .StatusClass "status-offline"}}translucent-network-badge{{end}}"
+                                                           {{if eq .StatusClass "status-offline"}}style="opacity: 0.5; border: 1px dashed var(--border); background: transparent;"{{end}}
+                                                           data-tip="{{if eq .StatusClass "status-offline"}}Parent Offline on {{.NetworkName}} (not detected){{else}}Parent Active on {{.NetworkName}}{{end}}">
                                                          {{.NetworkName}}
                                                      </span>
                                                  {{end}}
-                                              {{end}}
+                                                 
+                                                 <!-- Children Network Badges -->
+                                                  {{range .LinkedChildrenDetails}}
+                                                     {{if .NetworkName}}
+                                                         <span class="network-badge child-network-badge"
+                                                               style="{{if not .IsOnline}}opacity: 0.5; border: 1px dashed var(--border); background: transparent;{{end}}"
+                                                               data-tip="{{if .IsOnline}}Alias '{{.Hostname}}' Active on {{.NetworkName}}{{else}}Alias '{{.Hostname}}' Offline on {{.NetworkName}} (not detected){{end}}">
+                                                             {{.NetworkName}}
+                                                         </span>
+                                                     {{end}}
+                                                  {{end}}
+                                             </div>
+                                         {{end}}
 										<div class="device-indicators" aria-label="Device capabilities and notes">
 											{{if .Notes}}<span class="notes-indicator" data-tip="{{.Notes}}"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0-2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>{{end}}
 										</div>

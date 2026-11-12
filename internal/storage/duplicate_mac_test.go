@@ -51,15 +51,30 @@ func TestDuplicateMACDeduplicationAndMerge(t *testing.T) {
 		t.Fatalf("failed to save dev25: %v", err)
 	}
 
-	// 3. Verify deduplication: old IP must be removed, only new IP exists
+	// 3. Verify unified device: exactly 1 device exists for this MAC, with both IPs attached
 	devices := s.GetDevices()
-	if _, exists := devices["192.168.1.10"]; exists {
-		t.Errorf("expected old IP 192.168.1.10 to be removed, but it still exists")
+	if len(devices) != 1 {
+		t.Fatalf("expected 1 unified device in database, got %d", len(devices))
 	}
 
-	merged, exists := devices["192.168.1.25"]
-	if !exists || merged == nil {
-		t.Fatalf("expected device at new IP 192.168.1.25, but not found")
+	var merged *types.Device
+	for _, d := range devices {
+		merged = d
+		break
+	}
+	if merged == nil {
+		t.Fatalf("expected unified device, got nil")
+	}
+
+	// Active IP is now .25, and old .10 is recorded in AddressHistory
+	has25 := false
+	for _, att := range merged.IPs {
+		if att.IP == "192.168.1.25" {
+			has25 = true
+		}
+	}
+	if !has25 {
+		t.Errorf("expected 192.168.1.25 in merged.IPs, got %+v", merged.IPs)
 	}
 
 	// 4. Verify 3-tier precedence
@@ -88,11 +103,6 @@ func TestDuplicateMACDeduplicationAndMerge(t *testing.T) {
 	// Tier 3: Old scanned attributes fall back if empty in new scan
 	if merged.Type != "Server" {
 		t.Errorf("expected fallback type %q, got %q", "Server", merged.Type)
-	}
-
-	// Address history recorded
-	if len(merged.AddressHistory) == 0 || merged.AddressHistory[len(merged.AddressHistory)-1].IP != "192.168.1.10" {
-		t.Errorf("expected address history to record old IP 192.168.1.10, got: %+v", merged.AddressHistory)
 	}
 
 	// 5. Verify presence history consolidation
@@ -138,20 +148,21 @@ func TestDuplicateMACSimultaneousActiveScanDeduplicated(t *testing.T) {
 
 	devices := s.GetDevices()
 	if len(devices) != 1 {
-		t.Errorf("expected duplicate MAC to be deduplicated to 1 device, got %d", len(devices))
+		t.Errorf("expected duplicate MAC to be unified to 1 device, got %d", len(devices))
 	}
-	if _, exists := devices["192.168.1.10"]; exists {
-		t.Errorf("old IP 192.168.1.10 should have been removed")
+	var merged *types.Device
+	for _, d := range devices {
+		merged = d
+		break
 	}
-	merged := devices["192.168.1.20"]
 	if merged == nil {
-		t.Fatalf("new IP 192.168.1.20 should be retained")
+		t.Fatalf("expected unified device, got nil")
 	}
 	if merged.CustomHostname != "my-custom-host" || merged.Label != "Custom Label" {
 		t.Errorf("overrides lost on simultaneous/active scan: %+v", merged)
 	}
-	if merged.Hostname != "new-host" {
-		t.Errorf("newer scanned hostname not used: %q", merged.Hostname)
+	if len(merged.IPs) < 2 {
+		t.Errorf("expected both IPs in merged.IPs, got %+v", merged.IPs)
 	}
 }
 

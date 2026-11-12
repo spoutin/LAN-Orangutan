@@ -468,7 +468,7 @@ func (s *Storage) scanDevice(scanner interface {
 }) (*types.Device, error) {
 	var d types.Device
 	var webUIVal, probedVal, notifyOnSeenVal, ansibleManagedVal int
-	var risksStr, addressHistoryStr string
+	var risksStr, addressHistoryStr, ipsStr string
 	var leaseExpiresVal, switchUpdatedAtVal sql.NullTime
 	var switchPoEWattsVal sql.NullFloat64
 	var trafficSourceVal sql.NullString
@@ -485,7 +485,7 @@ func (s *Storage) scanDevice(scanner interface {
 		&d.RouterSource, &d.RouterInterface, &leaseExpiresVal, &d.LeaseLifetime, &d.RouterNotes,
 		&d.SwitchName, &d.SwitchHost, &d.SwitchPort, &d.SwitchVLAN, &d.SwitchLinkState, &d.SwitchLinkSpeed, &d.SwitchDuplex, &switchPoEWattsVal, &switchUpdatedAtVal,
 		&trafficSourceVal, &rxRateBpsVal, &txRateBpsVal,
-		&wanRxRateBpsVal, &wanTxRateBpsVal, &wanRxBytesVal, &wanTxBytesVal,
+		&wanRxRateBpsVal, &wanTxRateBpsVal, &wanRxBytesVal, &wanTxBytesVal, &ipsStr,
 	)
 	if err != nil {
 		return nil, err
@@ -526,6 +526,10 @@ func (s *Storage) scanDevice(scanner interface {
 	}
 	_ = json.Unmarshal([]byte(risksStr), &d.Risks)
 	_ = json.Unmarshal([]byte(addressHistoryStr), &d.AddressHistory)
+	_ = json.Unmarshal([]byte(ipsStr), &d.IPs)
+	if len(d.IPs) == 0 && d.IP != "" {
+		d.IPs = []types.IPAttachment{{IP: d.IP, NetworkName: d.NetworkName}}
+	}
 	return &d, nil
 }
 
@@ -552,7 +556,8 @@ func (s *Storage) GetDevices() map[string]*types.Device {
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan, d.unifi_name,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
-			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
+			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes,
+			COALESCE(d.ips, '[]') AS ips
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 	`)
@@ -685,11 +690,13 @@ func (s *Storage) GetDevice(ip string) *types.Device {
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan, d.unifi_name,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
-			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
+			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes,
+			COALESCE(d.ips, '[]') AS ips
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
-		WHERE d.ip = ?
-	`, ip)
+		WHERE d.ip = ? OR instr(d.ips, '"' || ? || '"') > 0
+		LIMIT 1
+	`, ip, ip)
 	d, err := s.scanDevice(row)
 	if err != nil {
 		return nil
@@ -754,7 +761,8 @@ func (s *Storage) GetDeviceLocked(ip string) *types.Device {
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan, d.unifi_name,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
-			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
+			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes,
+			COALESCE(d.ips, '[]') AS ips
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 		WHERE d.ip = ?
@@ -1258,7 +1266,8 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+		       COALESCE(ips, '[]') AS ips
 		FROM devices
 		WHERE mac = ? AND ip != ?
 	`, mac, excludeIP)
@@ -1292,7 +1301,8 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+		       COALESCE(ips, '[]') AS ips
 		FROM devices
 		WHERE mac = ?
 		LIMIT 1
@@ -1307,11 +1317,52 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 	return d, nil
 }
 
+func (s *Storage) attachIP(d *types.Device, ip, networkName string) {
+	if ip == "" {
+		return
+	}
+	if networkName == "" {
+		networkName = resolveNetworkName(ip, s.networkNames)
+	}
+	if len(d.IPs) == 0 && d.IP != "" {
+		d.IPs = []types.IPAttachment{{IP: d.IP, NetworkName: d.NetworkName}}
+	}
+	for i, att := range d.IPs {
+		if att.IP == ip {
+			if networkName != "" && att.NetworkName != networkName {
+				d.IPs[i].NetworkName = networkName
+			}
+			return
+		}
+	}
+	d.IPs = append(d.IPs, types.IPAttachment{
+		IP:          ip,
+		NetworkName: networkName,
+	})
+}
+
+func (s *Storage) syncAttachments(d *types.Device) {
+	if len(d.IPs) == 0 && d.IP != "" {
+		d.IPs = []types.IPAttachment{{IP: d.IP, NetworkName: d.NetworkName}}
+		return
+	}
+	foundPrimary := false
+	for _, att := range d.IPs {
+		if att.IP == d.IP {
+			foundPrimary = true
+			break
+		}
+	}
+	if !foundPrimary && d.IP != "" {
+		d.IPs = append([]types.IPAttachment{{IP: d.IP, NetworkName: d.NetworkName}}, d.IPs...)
+	}
+}
+
 func (s *Storage) mergeDuplicateDevice(target *types.Device, source *types.Device, now time.Time) {
 	if source == nil {
 		return
 	}
-	// Tier 1: User overrides preserved (copied from source if target has not set them)
+	// Tier 1: User overrides preserved (target keeps its overrides, or inherits from source if target has not set them)
 	if target.Label == "" && source.Label != "" {
 		target.Label = source.Label
 	}
@@ -1355,8 +1406,7 @@ func (s *Storage) mergeDuplicateDevice(target *types.Device, source *types.Devic
 		target.LinkedMAC = source.LinkedMAC
 	}
 
-	// Tier 2: New scanned values (already on target) take precedence.
-	// Tier 3: Older scanned values fallback if target is empty/zero.
+	// Tier 2: target's values take precedence; fall back to source if target is empty
 	if target.Hostname == "" && source.Hostname != "" {
 		target.Hostname = source.Hostname
 	}
@@ -1485,7 +1535,11 @@ func (s *Storage) mergeDuplicateDevice(target *types.Device, source *types.Devic
 		target.FirstSeen = source.FirstSeen
 	}
 
-	target.AddressHistory = appendAddressChange(source.AddressHistory, source.IP, now)
+	for _, att := range source.IPs {
+		s.attachIP(target, att.IP, att.NetworkName)
+	}
+	s.attachIP(target, source.IP, source.NetworkName)
+	s.syncAttachments(target)
 }
 
 func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time, activeIPs map[string]bool) (bool, error) {
@@ -1497,17 +1551,88 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		}
 		if old != nil {
 			isNew = false
-			s.mergeDuplicateDevice(d, old, now)
-
-			// Migrate presence history from old IP to new IP
-			if _, err = tx.Exec("UPDATE device_presence_history SET ip = ? WHERE ip = ?", d.IP, oldIP); err != nil {
-				return false, err
+			// Check if this is a relocation:
+			// If oldIP and d.IP are in the same subnet, and oldIP did NOT answer the sweep (activeIPs != nil && !activeIPs[oldIP]):
+			// then the device moved on the local subnet!
+			isRelocation := false
+			if s.inSameSubnetLocked(d.IP, oldIP) && activeIPs != nil && !activeIPs[oldIP] {
+				isRelocation = true
 			}
-			// Migrate open ports
-			_, _ = tx.Exec("UPDATE OR IGNORE device_open_ports SET ip = ? WHERE ip = ?", d.IP, oldIP)
-			_, _ = tx.Exec("DELETE FROM device_open_ports WHERE ip = ?", oldIP)
-			// Remove the old duplicate device record
-			if _, err = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP); err != nil {
+
+			if isRelocation {
+				// Relocation on same subnet: retire oldIP to address history, promote d.IP
+				d.AddressHistory = appendAddressChange(old.AddressHistory, oldIP, now)
+				s.mergeDuplicateDevice(d, old, now)
+				var newIPs []types.IPAttachment
+				for _, att := range old.IPs {
+					if att.IP != oldIP {
+						newIPs = append(newIPs, att)
+					}
+				}
+				d.IPs = newIPs
+				s.attachIP(d, d.IP, d.NetworkName)
+				s.syncAttachments(d)
+
+				_, _ = tx.Exec("UPDATE device_presence_history SET ip = ? WHERE ip = ?", d.IP, oldIP)
+				_, _ = tx.Exec("UPDATE OR IGNORE device_open_ports SET ip = ? WHERE ip = ?", d.IP, oldIP)
+				_, _ = tx.Exec("DELETE FROM device_open_ports WHERE ip = ?", oldIP)
+				_, _ = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP)
+			} else {
+				// Multi-IP unified device attachment (VIP or multi-network): both are active
+				s.mergeDuplicateDevice(d, old, now)
+				s.attachIP(d, old.IP, old.NetworkName)
+				s.syncAttachments(d)
+				*old = *d
+
+				// Record presence event for d.IP
+				_, _ = tx.Exec(`
+					INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+					VALUES (?, ?, ?, 'join', 0.0, ?)
+				`, d.IP, d.MAC, d.Hostname, now)
+
+				// Update old device in DB
+				risksJSON, _ := json.Marshal(old.Risks)
+				historyJSON, _ := json.Marshal(old.AddressHistory)
+				ipsJSON, _ := json.Marshal(old.IPs)
+				var leaseExpiresVal interface{}
+				if !old.LeaseExpires.IsZero() {
+					leaseExpiresVal = old.LeaseExpires
+				}
+				var switchUpdatedAtVal interface{}
+				if !old.SwitchUpdatedAt.IsZero() {
+					switchUpdatedAtVal = old.SwitchUpdatedAt
+				}
+
+				_, err = tx.Exec(`
+					UPDATE devices SET
+						hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
+						label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
+						custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, detected_ssh_port = ?,
+						ssh_override = ?, ssh_override_port = ?, assignment = ?, network_name = ?,
+						first_seen = ?, last_seen = ?, response_time = ?, address_history = ?,
+						linked_mac = ?, notify_on_seen = ?, ansible_managed = ?,
+						os = ?, os_version = ?, os_family = ?, custom_os = ?, custom_os_version = ?, custom_os_family = ?,
+						ssid = ?, ap_name = ?, radio_band = ?, channel = ?, wifi_standard = ?, signal = ?, signal_quality = ?,
+						rx_rate = ?, tx_rate = ?, rx_bytes = ?, tx_bytes = ?, association_uptime = ?, unifi_model = ?, vlan = ?, unifi_name = ?,
+						router_source = ?, router_interface = ?, lease_expires = ?, lease_lifetime = ?, router_notes = ?,
+						switch_name = ?, switch_host = ?, switch_port = ?, switch_vlan = ?, switch_link_state = ?, switch_link_speed = ?, switch_duplex = ?, switch_poe_watts = ?, switch_updated_at = ?,
+						traffic_source = ?, rx_rate_bps = ?, tx_rate_bps = ?, wan_rx_rate_bps = ?, wan_tx_rate_bps = ?, wan_rx_bytes = ?, wan_tx_bytes = ?,
+						ips = ?
+					WHERE ip = ?
+				`, old.Hostname, old.Vendor, old.Type, boolToInt(old.WebUI), string(risksJSON),
+					old.Label, old.Notes, old.Group, old.CustomHostname, old.CustomWebURL,
+					old.CustomType, old.WebPort, old.WebScheme, boolToInt(old.Probed), old.DetectedSSHPort,
+					old.SSHOverride, old.SSHOverridePort, old.Assignment, old.NetworkName,
+					old.FirstSeen, old.LastSeen, old.ResponseTime, string(historyJSON),
+					old.LinkedMAC, boolToInt(old.NotifyOnSeen), boolToInt(old.AnsibleManaged),
+					old.OS, old.OSVersion, old.OSFamily, old.CustomOS, old.CustomOSVersion, old.CustomOSFamily,
+					old.SSID, old.APName, old.RadioBand, old.Channel, old.WiFiStandard, old.Signal, old.SignalQuality,
+					old.RxRate, old.TxRate, old.RxBytes, old.TxBytes, old.AssociationUptime, old.UniFiModel, old.VLAN, old.UniFiName,
+					old.RouterSource, old.RouterInterface, leaseExpiresVal, old.LeaseLifetime, old.RouterNotes,
+					old.SwitchName, old.SwitchHost, old.SwitchPort, old.SwitchVLAN, old.SwitchLinkState, old.SwitchLinkSpeed, old.SwitchDuplex, old.SwitchPoEWatts, switchUpdatedAtVal,
+					old.TrafficSource, old.RxRateBps, old.TxRateBps, old.WanRxRateBps, old.WanTxRateBps, old.WanRxBytes, old.WanTxBytes,
+					string(ipsJSON),
+					oldIP)
 				return false, err
 			}
 		}
@@ -1517,8 +1642,10 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 	}
 	d.LastSeen = now
 
+	s.syncAttachments(d)
 	risksJSON, _ := json.Marshal(d.Risks)
 	historyJSON, _ := json.Marshal(d.AddressHistory)
+	ipsJSON, _ := json.Marshal(d.IPs)
 	isOnline := 0
 	if d.IsOnline() {
 		isOnline = 1
@@ -1545,7 +1672,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 			traffic_source, rx_rate_bps, tx_rate_bps,
-			wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+			wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+			ips
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -1557,7 +1685,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
-			?, ?, ?, ?
+			?, ?, ?, ?,
+			?
 		)
 	`, d.IP, d.MAC, d.Hostname, d.Vendor, d.Type, boolToInt(d.WebUI), string(risksJSON),
 		d.Label, d.Notes, d.Group, d.CustomHostname, d.CustomWebURL, d.CustomType,
@@ -1570,7 +1699,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 		d.RouterSource, d.RouterInterface, leaseExpiresVal, d.LeaseLifetime, d.RouterNotes,
 		d.SwitchName, d.SwitchHost, d.SwitchPort, d.SwitchVLAN, d.SwitchLinkState, d.SwitchLinkSpeed, d.SwitchDuplex, d.SwitchPoEWatts, switchUpdatedAtVal,
 		d.TrafficSource, d.RxRateBps, d.TxRateBps,
-		d.WanRxRateBps, d.WanTxRateBps, d.WanRxBytes, d.WanTxBytes)
+		d.WanRxRateBps, d.WanTxRateBps, d.WanRxBytes, d.WanTxBytes,
+		string(ipsJSON))
 	if err != nil {
 		return false, err
 	}
@@ -1613,7 +1743,8 @@ func (s *Storage) pruneEphemeralIPv6() error {
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+		       COALESCE(ips, '[]') AS ips
 		FROM devices
 	`)
 	if err != nil {
@@ -1711,13 +1842,14 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
 			       assignment, network_name, first_seen, last_seen, response_time, address_history,
-			       is_online, last_presence_change, notify_on_seen, ansible_managed
+			       is_online, last_presence_change, notify_on_seen, ansible_managed,
+			       COALESCE(ips, '[]') AS ips
 			FROM devices WHERE ip = ?
 		`, d.IP)
 
 		var existing types.Device
 		var webUIVal, probedVal int
-		var risksStr, addressHistoryStr string
+		var risksStr, addressHistoryStr, ipsStr string
 		var isOnlineVal, notifyOnSeenVal, ansibleManagedVal int
 		var lastPresenceChange time.Time
 
@@ -1725,7 +1857,7 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 			&existing.IP, &existing.MAC, &existing.Hostname, &existing.Vendor, &existing.Type, &webUIVal, &risksStr, &existing.Label, &existing.Notes, &existing.Group,
 			&existing.CustomHostname, &existing.CustomWebURL, &existing.CustomType, &existing.WebPort, &existing.WebScheme, &probedVal, &existing.Assignment,
 			&existing.NetworkName, &existing.FirstSeen, &existing.LastSeen, &existing.ResponseTime, &addressHistoryStr,
-			&isOnlineVal, &lastPresenceChange, &notifyOnSeenVal, &ansibleManagedVal,
+			&isOnlineVal, &lastPresenceChange, &notifyOnSeenVal, &ansibleManagedVal, &ipsStr,
 		)
 
 		if err == nil {
@@ -1739,18 +1871,21 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 			}
 			_ = json.Unmarshal([]byte(risksStr), &existing.Risks)
 			_ = json.Unmarshal([]byte(addressHistoryStr), &existing.AddressHistory)
+			_ = json.Unmarshal([]byte(ipsStr), &existing.IPs)
+			s.attachIP(&existing, d.IP, d.NetworkName)
+			s.syncAttachments(&existing)
 
 			if d.MAC != "" {
 				existing.MAC = d.MAC
 			}
 			if existing.MAC != "" {
-				oldIP, old, err := s.findByMACLocked(tx, existing.MAC, existing.IP)
+				_, old, err := s.findByMACLocked(tx, existing.MAC, existing.IP)
 				if err == nil && old != nil {
-					s.mergeDuplicateDevice(&existing, old, now)
-					_, _ = tx.Exec("UPDATE device_presence_history SET ip = ? WHERE ip = ?", existing.IP, oldIP)
-					_, _ = tx.Exec("UPDATE OR IGNORE device_open_ports SET ip = ? WHERE ip = ?", existing.IP, oldIP)
-					_, _ = tx.Exec("DELETE FROM device_open_ports WHERE ip = ?", oldIP)
-					_, _ = tx.Exec("DELETE FROM devices WHERE ip = ?", oldIP)
+					s.attachIP(old, existing.IP, existing.NetworkName)
+					s.mergeDuplicateDevice(old, &existing, now)
+					s.syncAttachments(old)
+					_, _ = tx.Exec("DELETE FROM devices WHERE ip = ?", existing.IP)
+					existing = *old
 				}
 			}
 			if d.Hostname != "" {
@@ -1800,8 +1935,10 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 				}
 			}
 
+			s.syncAttachments(&existing)
 			risksJSON, _ := json.Marshal(existing.Risks)
 			historyJSON, _ := json.Marshal(existing.AddressHistory)
+			ipsJSON, _ := json.Marshal(existing.IPs)
 
 			_, err = tx.Exec(`
 				UPDATE devices SET
@@ -1809,13 +1946,16 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 					label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
 					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, assignment = ?,
 					network_name = ?, first_seen = ?, last_seen = ?, response_time = ?,
-					address_history = ?, is_online = ?, last_presence_change = ?
+					address_history = ?, is_online = ?, last_presence_change = ?,
+					ips = ?
 				WHERE ip = ?
 			`, existing.MAC, existing.Hostname, existing.Vendor, existing.Type, boolToInt(existing.WebUI), string(risksJSON),
 				existing.Label, existing.Notes, existing.Group, existing.CustomHostname, existing.CustomWebURL,
 				existing.CustomType, existing.WebPort, existing.WebScheme, boolToInt(existing.Probed), existing.Assignment,
 				existing.NetworkName, existing.FirstSeen, existing.LastSeen, existing.ResponseTime,
-				string(historyJSON), isOnlineVal, lastPresenceChange, existing.IP)
+				string(historyJSON), isOnlineVal, lastPresenceChange,
+				string(ipsJSON),
+				existing.IP)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -2462,7 +2602,8 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 		       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 		       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+		       COALESCE(ips, '[]') AS ips
 		FROM devices
 	`)
 	if err != nil {
@@ -2518,7 +2659,8 @@ func (s *Storage) MergeRouterDHCP(leases []types.Device, reservations []types.De
 			       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-			       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+			       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+			       COALESCE(ips, '[]') AS ips
 			FROM devices WHERE ip = ?
 		`, d.IP)
 		existing, err := s.scanDevice(row)
@@ -2680,7 +2822,8 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 				       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+				       COALESCE(ips, '[]') AS ips
 					FROM devices
 					WHERE LOWER(mac) = LOWER(?) AND ip = ?
 					LIMIT 1
@@ -2700,7 +2843,8 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 					       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 				       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+				       COALESCE(ips, '[]') AS ips
 					FROM devices
 					WHERE LOWER(mac) = LOWER(?)
 					LIMIT 1
@@ -2722,7 +2866,8 @@ func (s *Storage) MergeUniFiClients(clients []types.Device) ([]types.Device, []t
 				       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 			       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 		       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+		       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+		       COALESCE(ips, '[]') AS ips
 		FROM devices
 				WHERE ip = ?
 				LIMIT 1
@@ -3215,7 +3360,8 @@ func (s *Storage) DeduplicateMACs() error {
 				       rx_rate, tx_rate, rx_bytes, tx_bytes, association_uptime, unifi_model, vlan, unifi_name,
 				       router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 				       switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
-				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+				       traffic_source, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+				       COALESCE(ips, '[]') AS ips
 				FROM devices
 				WHERE mac = ?
 			`, mac)
@@ -3260,8 +3406,10 @@ func (s *Storage) DeduplicateMACs() error {
 			}
 
 			// Save updated target
+			s.syncAttachments(target)
 			risksJSON, _ := json.Marshal(target.Risks)
 			historyJSON, _ := json.Marshal(target.AddressHistory)
+			ipsJSON, _ := json.Marshal(target.IPs)
 			var leaseExpiresVal interface{}
 			if !target.LeaseExpires.IsZero() {
 				leaseExpiresVal = target.LeaseExpires
@@ -3284,7 +3432,8 @@ func (s *Storage) DeduplicateMACs() error {
 					rx_rate = ?, tx_rate = ?, rx_bytes = ?, tx_bytes = ?, association_uptime = ?, unifi_model = ?, vlan = ?, unifi_name = ?,
 					router_source = ?, router_interface = ?, lease_expires = ?, lease_lifetime = ?, router_notes = ?,
 					switch_name = ?, switch_host = ?, switch_port = ?, switch_vlan = ?, switch_link_state = ?, switch_link_speed = ?, switch_duplex = ?, switch_poe_watts = ?, switch_updated_at = ?,
-					traffic_source = ?, rx_rate_bps = ?, tx_rate_bps = ?, wan_rx_rate_bps = ?, wan_tx_rate_bps = ?, wan_rx_bytes = ?, wan_tx_bytes = ?
+					traffic_source = ?, rx_rate_bps = ?, tx_rate_bps = ?, wan_rx_rate_bps = ?, wan_tx_rate_bps = ?, wan_rx_bytes = ?, wan_tx_bytes = ?,
+					ips = ?
 				WHERE ip = ?
 			`, target.Hostname, target.Vendor, target.Type, boolToInt(target.WebUI), string(risksJSON),
 				target.Label, target.Notes, target.Group, target.CustomHostname, target.CustomWebURL,
@@ -3298,6 +3447,7 @@ func (s *Storage) DeduplicateMACs() error {
 				target.RouterSource, target.RouterInterface, leaseExpiresVal, target.LeaseLifetime, target.RouterNotes,
 				target.SwitchName, target.SwitchHost, target.SwitchPort, target.SwitchVLAN, target.SwitchLinkState, target.SwitchLinkSpeed, target.SwitchDuplex, target.SwitchPoEWatts, switchUpdatedAtVal,
 				target.TrafficSource, target.RxRateBps, target.TxRateBps, target.WanRxRateBps, target.WanTxRateBps, target.WanRxBytes, target.WanTxBytes,
+				string(ipsJSON),
 				target.IP)
 		}
 	}
@@ -3847,7 +3997,8 @@ func (s *Storage) GetDeviceByMAC(mac string) *types.Device {
 			d.rx_rate, d.tx_rate, d.rx_bytes, d.tx_bytes, d.association_uptime, d.unifi_model, d.vlan, d.unifi_name,
 			d.router_source, d.router_interface, d.lease_expires, d.lease_lifetime, d.router_notes,
 			d.switch_name, d.switch_host, d.switch_port, d.switch_vlan, d.switch_link_state, d.switch_link_speed, d.switch_duplex, d.switch_poe_watts, d.switch_updated_at,
-			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes
+			d.traffic_source, d.rx_rate_bps, d.tx_rate_bps, d.wan_rx_rate_bps, d.wan_tx_rate_bps, d.wan_rx_bytes, d.wan_tx_bytes,
+			COALESCE(d.ips, '[]') AS ips
 		FROM devices d
 		LEFT JOIN devices p ON d.linked_mac = p.mac AND d.linked_mac <> ''
 		WHERE LOWER(REPLACE(d.mac, '-', ':')) = ?

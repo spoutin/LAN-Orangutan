@@ -1283,3 +1283,40 @@ func TestDashboardRendersPerNetworkScanButtonsInFooter(t *testing.T) {
 		t.Error("expected dashboard footer to render btn-ticker-scan for networks")
 	}
 }
+
+func TestDashboardRendersMultiNetworkAndMultiIPDeviceRow(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+	dev := types.Device{
+		IP:          "10.0.0.10",
+		MAC:         "aa:bb:cc:dd:ee:99",
+		Hostname:    "multi-host",
+		NetworkName: "Home LAN",
+		IPs: []types.IPAttachment{
+			{IP: "10.0.0.10", NetworkName: "Home LAN"},
+			{IP: "10.0.0.20", NetworkName: "Home LAN"},
+			{IP: "100.64.1.5", NetworkName: "Tailscale"},
+		},
+	}
+	if _, _, err := h.store.MergeDevices([]types.Device{dev}); err != nil {
+		t.Fatalf("failed to seed device: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index page status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="multi-ip-cell"`) {
+		t.Error("expected dashboard to render multi-ip-cell for device with multiple IPs")
+	}
+	if !strings.Contains(body, `class="multi-network-cell"`) {
+		t.Error("expected dashboard to render multi-network-cell for device with multiple networks")
+	}
+	if !strings.Contains(body, `10.0.0.20`) || !strings.Contains(body, `100.64.1.5`) {
+		t.Error("expected dashboard to render both attached secondary IPs in table")
+	}
+	if !strings.Contains(body, `data-networks="home lan,home lan,tailscale"`) {
+		t.Errorf("expected data-networks attribute for filter matching")
+	}
+}

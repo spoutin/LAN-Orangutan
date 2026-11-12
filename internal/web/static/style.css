@@ -872,6 +872,19 @@ body.strip-docked .stat-strip .stat-scan {
     border: 1px solid var(--border-color);
 }
 
+.multi-ip-cell,
+.multi-network-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-start;
+}
+
+.multi-ip-cell .ip-row {
+    font-family: var(--font-mono);
+    line-height: 1.5;
+}
+
 .assignment-badge {
     display: inline-flex;
     align-items: center;

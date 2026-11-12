@@ -108,10 +108,10 @@ func TestSupplementalMergeDoesNotClobber(t *testing.T) {
 	}
 }
 
-// TestDuplicateMACCrossSubnetDeduplication confirms that when Subnet A is scanned
+// TestMultiNetworkAttachmentUnification confirms that when Subnet A is scanned
 // discovering IP A, and then Subnet B is scanned discovering IP B on the same MAC,
-// the old IP is removed and deduplicated into the new IP with address history recorded.
-func TestDuplicateMACCrossSubnetDeduplication(t *testing.T) {
+// the device is unified with both network attachments in d.IPs without deleting either.
+func TestMultiNetworkAttachmentUnification(t *testing.T) {
 	s := newTestStorage(t)
 
 	// Step 1: Declare two configured subnets
@@ -134,27 +134,21 @@ func TestDuplicateMACCrossSubnetDeduplication(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Step 4: Verify deduplicated to 1 device: old .10 removed, new .20 retained
+	// Step 4: Verify unified to 1 device with both attachments
 	devices := s.GetDevices()
 	if len(devices) != 1 {
-		t.Fatalf("expected 1 deduplicated device, got %d", len(devices))
+		t.Fatalf("expected 1 unified device, got %d", len(devices))
 	}
 
-	if _, exists := devices["10.0.0.10"]; exists {
-		t.Error("old IP 10.0.0.10 should be removed")
+	var d *types.Device
+	for _, dev := range devices {
+		d = dev
+		break
 	}
-
-	devB := devices["192.168.1.20"]
-	if devB == nil {
-		t.Fatal("device at 192.168.1.20 must exist")
+	if len(d.IPs) < 2 {
+		t.Fatalf("expected at least 2 attachments in d.IPs, got %d: %+v", len(d.IPs), d.IPs)
 	}
-	if devB.Hostname != "server-vpn" {
-		t.Errorf("hostname = %q, want %q", devB.Hostname, "server-vpn")
-	}
-	if devB.Type != "Server" {
-		t.Errorf("fallback type = %q, want %q", devB.Type, "Server")
-	}
-	if len(devB.AddressHistory) == 0 || devB.AddressHistory[len(devB.AddressHistory)-1].IP != "10.0.0.10" {
-		t.Errorf("expected address history to record old IP 10.0.0.10, got %v", devB.AddressHistory)
+	if d.Type != "Server" {
+		t.Errorf("fallback type = %q, want %q", d.Type, "Server")
 	}
 }

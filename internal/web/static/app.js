@@ -699,10 +699,10 @@ function filterDevices() {
 
     let visible = 0;
     document.querySelectorAll('.device-row').forEach(row => {
-        const text = [row.dataset.ip, row.dataset.hostname, row.dataset.customHostname || '', row.dataset.customWebUrl || '', row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type, row.dataset.network || '', row.dataset.assignment || '', row.dataset.ssid || '', row.dataset.unifiName || '', row.dataset.os || '', row.dataset.osVersion || '', row.dataset.customOs || ''].join(' ').toLowerCase();
+        const text = [row.dataset.ip, row.dataset.ips || '', row.dataset.hostname, row.dataset.customHostname || '', row.dataset.customWebUrl || '', row.dataset.mac, row.dataset.vendor, row.dataset.label, row.dataset.type, row.dataset.network || '', row.dataset.networks || '', row.dataset.assignment || '', row.dataset.ssid || '', row.dataset.unifiName || '', row.dataset.os || '', row.dataset.osVersion || '', row.dataset.customOs || ''].join(' ').toLowerCase();
         const status = row.dataset.status;
         const group = row.dataset.group || '';
-        const network = (row.dataset.network || '').toLowerCase();
+        const rowNetworks = (row.dataset.networks ? row.dataset.networks.split(',') : [row.dataset.network || '']).map(s => s.trim().toLowerCase());
 
         const matchSearch = !search || text.includes(search);
         const matchStatus = statusFilter === 'all' ||
@@ -712,7 +712,7 @@ function filterDevices() {
         const matchChip = !statChipFilter ||
             (statChipFilter === 'moved' && row.dataset.moved === '1') ||
             (statChipFilter === 'flagged' && row.dataset.flagged === '1');
-        const matchNetwork = activeNetworkFilters.length === 0 || activeNetworkFilters.includes(network);
+        const matchNetwork = activeNetworkFilters.length === 0 || activeNetworkFilters.some(net => rowNetworks.includes(net));
 
         const show = matchSearch && matchStatus && matchGroup && matchChip && matchNetwork;
         row.style.display = show ? '' : 'none';
@@ -1651,7 +1651,13 @@ function syncDeviceSidebarTelemetry(data) {
     const routerCard = document.getElementById('sb-router-card');
     if (routerCard) {
         const ipEl = document.getElementById('sb-ip');
-        if (ipEl) ipEl.textContent = data.ip || '—';
+        if (ipEl) {
+            if (data.ips && data.ips.length > 1) {
+                ipEl.innerHTML = data.ips.map(att => `<div style="font-family: var(--font-mono);">${escapeHtml(att.ip)} <span style="font-size:0.75rem; color:var(--text-muted); font-family:sans-serif;">(${escapeHtml(att.network_name || 'LAN')})</span></div>`).join('');
+            } else {
+                ipEl.textContent = data.ip || '—';
+            }
+        }
 
         ['sb-subnet', 'sb-network'].forEach(id => {
             const el = document.getElementById(id);
