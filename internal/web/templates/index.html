@@ -240,6 +240,7 @@ orangutan export out.csv</code></pre>
                                     data-network="{{lower .NetworkName}}"
                                     data-networks="{{range $i, $att := .IPs}}{{if $i}},{{end}}{{lower $att.NetworkName}}{{else}}{{lower .NetworkName}}{{end}}"
                                     data-ips="{{range $i, $att := .IPs}}{{if $i}},{{end}}{{$att.IP}}{{else}}{{.IP}}{{end}}"
+                                    data-ips-json='[{{range $i, $att := .IPs}}{{if $i}},{{end}}{"ip":"{{$att.IP}}","network_name":"{{$att.NetworkName}}"}{{end}}]'
                                     data-assignment="{{.Assignment}}"
                                     data-custom-hostname="{{lower .CustomHostname}}"
                                     data-custom-hostname-original="{{.CustomHostname}}"

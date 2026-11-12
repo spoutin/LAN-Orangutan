@@ -4,6 +4,7 @@ const {
   shouldSyncSidebarForm,
   isElementProtectedFromTimeUpdate,
   formatLastDeepScan,
+  formatSidebarIPDisplay,
 } = require('./device-operation-state.js');
 
 test('shouldSyncSidebarForm rejects sync when user has unsaved edits', () => {
@@ -68,4 +69,42 @@ test('formatLastDeepScan returns Never when timestamp is missing or invalid', ()
     hasRelativeTime: false,
     unix: null,
   });
+});
+
+test('formatSidebarIPDisplay safely handles string ips from DOM dataset without crashing', () => {
+  // Case from bug report: data.ips is a string "192.168.1.50" from dataset
+  const res = formatSidebarIPDisplay({ ip: '192.168.1.50', ips: '192.168.1.50' });
+  assert.equal(res.isHTML, false);
+  assert.equal(res.text, '192.168.1.50');
+});
+
+test('formatSidebarIPDisplay renders multi-IP HTML when ips is an array with > 1 items', () => {
+  const res = formatSidebarIPDisplay({
+    ip: '10.0.0.10',
+    ips: [
+      { ip: '10.0.0.10', network_name: 'Home LAN' },
+      { ip: '10.0.0.20', network_name: 'Home LAN' },
+    ],
+  });
+  assert.equal(res.isHTML, true);
+  assert.match(res.html, /10\.0\.0\.10/);
+  assert.match(res.html, /10\.0\.0\.20/);
+  assert.match(res.html, /Home LAN/);
+});
+
+test('formatSidebarIPDisplay renders multi-IP HTML when ipsJson string contains > 1 items', () => {
+  const res = formatSidebarIPDisplay({
+    ip: '10.0.0.10',
+    ips: '10.0.0.10,10.0.0.20',
+    ipsJson: '[{"ip":"10.0.0.10","network_name":"Home LAN"},{"ip":"10.0.0.20","network_name":"Home LAN"}]',
+  });
+  assert.equal(res.isHTML, true);
+  assert.match(res.html, /10\.0\.0\.10/);
+  assert.match(res.html, /10\.0\.0\.20/);
+});
+
+test('formatSidebarIPDisplay falls back to dash for empty device data', () => {
+  const res = formatSidebarIPDisplay({});
+  assert.equal(res.isHTML, false);
+  assert.equal(res.text, '—');
 });

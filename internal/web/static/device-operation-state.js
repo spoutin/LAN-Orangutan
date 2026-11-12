@@ -46,9 +46,37 @@
         };
     }
 
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatSidebarIPDisplay(data) {
+        if (!data) return { isHTML: false, text: '—' };
+        let ips = [];
+        if (Array.isArray(data.ips)) {
+            ips = data.ips;
+        } else if (data.ipsJson && typeof data.ipsJson === 'string') {
+            try { ips = JSON.parse(data.ipsJson); } catch (_) {}
+        }
+
+        if (Array.isArray(ips) && ips.length > 1) {
+            const html = ips.map(att => `<div style="font-family: var(--font-mono);">${escapeHtml(att.ip)} <span style="font-size:0.75rem; color:var(--text-muted); font-family:sans-serif;">(${escapeHtml(att.network_name || att.networkName || data.network || 'LAN')})</span></div>`).join('');
+            return { isHTML: true, html };
+        }
+
+        return { isHTML: false, text: data.ip || '—' };
+    }
+
     return {
         shouldSyncSidebarForm,
         isElementProtectedFromTimeUpdate,
         formatLastDeepScan,
+        formatSidebarIPDisplay,
     };
 });

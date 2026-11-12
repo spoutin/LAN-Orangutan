@@ -1652,10 +1652,30 @@ function syncDeviceSidebarTelemetry(data) {
     if (routerCard) {
         const ipEl = document.getElementById('sb-ip');
         if (ipEl) {
-            if (data.ips && data.ips.length > 1) {
-                ipEl.innerHTML = data.ips.map(att => `<div style="font-family: var(--font-mono);">${escapeHtml(att.ip)} <span style="font-size:0.75rem; color:var(--text-muted); font-family:sans-serif;">(${escapeHtml(att.network_name || 'LAN')})</span></div>`).join('');
+            let res;
+            if (typeof deviceOperationState !== 'undefined' && typeof deviceOperationState.formatSidebarIPDisplay === 'function') {
+                res = deviceOperationState.formatSidebarIPDisplay(data);
             } else {
-                ipEl.textContent = data.ip || '—';
+                let ips = [];
+                if (Array.isArray(data.ips)) {
+                    ips = data.ips;
+                } else if (data.ipsJson && typeof data.ipsJson === 'string') {
+                    try { ips = JSON.parse(data.ipsJson); } catch (_) {}
+                }
+                if (Array.isArray(ips) && ips.length > 1) {
+                    res = {
+                        isHTML: true,
+                        html: ips.map(att => `<div style="font-family: var(--font-mono);">${escapeHtml(att.ip)} <span style="font-size:0.75rem; color:var(--text-muted); font-family:sans-serif;">(${escapeHtml(att.network_name || att.networkName || data.network || 'LAN')})</span></div>`).join('')
+                    };
+                } else {
+                    res = { isHTML: false, text: data.ip || '—' };
+                }
+            }
+
+            if (res.isHTML) {
+                ipEl.innerHTML = res.html;
+            } else {
+                ipEl.textContent = res.text;
             }
         }
 
