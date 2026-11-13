@@ -9,6 +9,8 @@ const {
   getEffectiveRowIP,
   getOrderedAttachments,
   getNetworkColorKey,
+  resolveDeviceRow,
+  findSubrowForDeviceRow,
 } = require('./device-operation-state.js');
 
 test('shouldSyncSidebarForm rejects sync when user has unsaved edits', () => {
@@ -204,4 +206,63 @@ test('getNetworkColorKey maps common networks to expected theme colors and falls
   const customColor2 = getNetworkColorKey('Lab-VLAN-99');
   assert.equal(customColor1, customColor2);
   assert.notEqual(customColor1, 'neutral');
+});
+
+test('resolveDeviceRow resolves parent device-row when clicking subrow or child elements', () => {
+  const mainRow = {
+    classList: { contains: cls => cls === 'device-row' },
+    dataset: { ip: '10.0.0.1' },
+    nextElementSibling: null,
+  };
+  const subrow = {
+    classList: { contains: cls => cls === 'device-subrow' },
+    dataset: { ip: '10.0.0.1' },
+    previousElementSibling: mainRow,
+  };
+  mainRow.nextElementSibling = subrow;
+
+  const sshIndicator = {
+    closest: selector => {
+      if (selector === '.device-subrow') return subrow;
+      if (selector === '.device-row') return null;
+      return null;
+    },
+  };
+  const mainRowCell = {
+    closest: selector => {
+      if (selector === '.device-row') return mainRow;
+      if (selector === '.device-subrow') return null;
+      return null;
+    },
+  };
+
+  // Clicking an element in the subrow (like SSH indicator) resolves to the mainRow
+  assert.equal(resolveDeviceRow(sshIndicator), mainRow);
+
+  // Clicking subrow directly resolves to mainRow
+  assert.equal(resolveDeviceRow(subrow), mainRow);
+
+  // Clicking element in mainRow resolves to mainRow
+  assert.equal(resolveDeviceRow(mainRowCell), mainRow);
+
+  // Clicking mainRow directly resolves to mainRow
+  assert.equal(resolveDeviceRow(mainRow), mainRow);
+
+  // Outside element resolves to null
+  const outsideEl = { closest: () => null };
+  assert.equal(resolveDeviceRow(outsideEl), null);
+});
+
+test('findSubrowForDeviceRow finds corresponding subrow element', () => {
+  const mainRow = {
+    dataset: { ip: '10.0.0.1' },
+    nextElementSibling: null,
+  };
+  const subrow = {
+    classList: { contains: cls => cls === 'device-subrow' },
+    dataset: { ip: '10.0.0.1' },
+  };
+  mainRow.nextElementSibling = subrow;
+
+  assert.equal(findSubrowForDeviceRow(mainRow), subrow);
 });

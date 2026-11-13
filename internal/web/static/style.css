@@ -1491,13 +1491,16 @@ td[data-copy]:not([data-copy=""]) {
 .device-row:hover,
 .device-row:hover + .device-subrow,
 .device-subrow:hover,
-.device-row:has(+ .device-subrow:hover) {
+.device-row:has(+ .device-subrow:hover),
+.device-row.row-hover,
+.device-subrow.row-hover {
     background-color: var(--bg-secondary);
 }
 
 .device-row.selected-row,
 .device-row.selected-row + .device-subrow,
 .device-subrow.selected-row,
+.device-row:has(+ .device-subrow.selected-row),
 .device-row.selected-row:hover,
 .device-subrow.selected-row:hover {
     background-color: var(--selected-bg);

@@ -203,6 +203,49 @@
         return [...matching, ...nonMatching];
     }
 
+    function resolveDeviceRow(target, doc) {
+        if (!target) return null;
+        if (typeof target === 'string') {
+            const d = doc || (typeof document !== 'undefined' ? document : null);
+            return d ? d.querySelector(`.device-row[data-ip="${target}"]`) : null;
+        }
+        if (target.classList && target.classList.contains('device-row')) {
+            return target;
+        }
+        if (target.classList && target.classList.contains('device-subrow')) {
+            if (target.previousElementSibling && target.previousElementSibling.classList && target.previousElementSibling.classList.contains('device-row')) {
+                return target.previousElementSibling;
+            }
+            const ip = target.dataset?.ip;
+            const d = doc || (typeof document !== 'undefined' ? document : null);
+            return (ip && d) ? d.querySelector(`.device-row[data-ip="${ip}"]`) : null;
+        }
+        if (typeof target.closest === 'function') {
+            const mainRow = target.closest('.device-row');
+            if (mainRow) return mainRow;
+            const sub = target.closest('.device-subrow');
+            if (sub) {
+                if (sub.previousElementSibling && sub.previousElementSibling.classList && sub.previousElementSibling.classList.contains('device-row')) {
+                    return sub.previousElementSibling;
+                }
+                const ip = sub.dataset?.ip;
+                const d = doc || (typeof document !== 'undefined' ? document : null);
+                return (ip && d) ? d.querySelector(`.device-row[data-ip="${ip}"]`) : null;
+            }
+        }
+        return null;
+    }
+
+    function findSubrowForDeviceRow(row, doc) {
+        if (!row) return null;
+        if (row.nextElementSibling && row.nextElementSibling.classList && row.nextElementSibling.classList.contains('device-subrow')) {
+            return row.nextElementSibling;
+        }
+        const ip = row.dataset?.ip;
+        const d = doc || (typeof document !== 'undefined' ? document : null);
+        return (ip && d) ? d.querySelector(`.device-subrow[data-ip="${ip}"]`) : null;
+    }
+
     return {
         shouldSyncSidebarForm,
         isElementProtectedFromTimeUpdate,
@@ -212,5 +255,7 @@
         getEffectiveRowIP,
         getOrderedAttachments,
         getNetworkColorKey,
+        resolveDeviceRow,
+        findSubrowForDeviceRow,
     };
 });

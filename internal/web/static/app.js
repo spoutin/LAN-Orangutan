@@ -1343,16 +1343,24 @@ function escapeHtml(str) {
 
 function selectDeviceRow(target) {
     let row = null;
-    if (typeof target === 'string') {
-        row = document.querySelector(`.device-row[data-ip="${CSS.escape(target)}"]`);
-    } else if (target instanceof HTMLElement) {
-        row = target.classList.contains('device-row') ? target : (target.closest('.device-row') || document.querySelector(`.device-row[data-ip="${CSS.escape(target.dataset?.ip || target.closest('.device-subrow')?.dataset?.ip || '')}"]`));
+    if (typeof deviceOperationState !== 'undefined' && deviceOperationState.resolveDeviceRow) {
+        row = deviceOperationState.resolveDeviceRow(target, document);
+    } else {
+        if (typeof target === 'string') {
+            row = document.querySelector(`.device-row[data-ip="${CSS.escape(target)}"]`);
+        } else if (target instanceof HTMLElement) {
+            row = target.classList.contains('device-row') 
+                ? target 
+                : (target.closest('.device-row') || target.closest('.device-subrow')?.previousElementSibling || document.querySelector(`.device-row[data-ip="${CSS.escape(target.dataset?.ip || target.closest('.device-subrow')?.dataset?.ip || '')}"]`));
+        }
     }
     if (!row) return;
 
     document.querySelectorAll('.device-row.selected-row, .device-subrow.selected-row').forEach(r => r.classList.remove('selected-row'));
     row.classList.add('selected-row');
-    const subrow = document.querySelector(`.device-subrow[data-ip="${CSS.escape(row.dataset.ip)}"]`);
+    const subrow = (typeof deviceOperationState !== 'undefined' && deviceOperationState.findSubrowForDeviceRow)
+        ? deviceOperationState.findSubrowForDeviceRow(row, document)
+        : (row.nextElementSibling?.classList.contains('device-subrow') ? row.nextElementSibling : document.querySelector(`.device-subrow[data-ip="${CSS.escape(row.dataset.ip)}"]`));
     if (subrow) subrow.classList.add('selected-row');
     openDeviceSidebar(row);
 }
@@ -3440,11 +3448,30 @@ function toggleScanFooter() {
             return;
         }
 
-        const subrow = e.target.closest('.device-subrow');
-        const row = e.target.closest('.device-row') || (subrow ? document.querySelector(`.device-row[data-ip="${CSS.escape(subrow.dataset.ip)}"]`) : null);
+        const row = (typeof deviceOperationState !== 'undefined' && deviceOperationState.resolveDeviceRow)
+            ? deviceOperationState.resolveDeviceRow(e.target, document)
+            : (e.target.closest('.device-row') || e.target.closest('.device-subrow')?.previousElementSibling);
         if (row) {
             selectDeviceRow(row);
         }
+    });
+
+    // Synchronize hover state across the paired device-row and device-subrow
+    table.addEventListener('mouseover', function (e) {
+        const tr = e.target.closest('.device-row, .device-subrow');
+        if (!tr) return;
+        const main = tr.classList.contains('device-row') ? tr : tr.previousElementSibling;
+        const sub = tr.classList.contains('device-subrow') ? tr : tr.nextElementSibling;
+        if (main && main.classList.contains('device-row')) main.classList.add('row-hover');
+        if (sub && sub.classList.contains('device-subrow')) sub.classList.add('row-hover');
+    });
+    table.addEventListener('mouseout', function (e) {
+        const tr = e.target.closest('.device-row, .device-subrow');
+        if (!tr) return;
+        const main = tr.classList.contains('device-row') ? tr : tr.previousElementSibling;
+        const sub = tr.classList.contains('device-subrow') ? tr : tr.nextElementSibling;
+        if (main && main.classList.contains('device-row')) main.classList.remove('row-hover');
+        if (sub && sub.classList.contains('device-subrow')) sub.classList.remove('row-hover');
     });
 })();
 
