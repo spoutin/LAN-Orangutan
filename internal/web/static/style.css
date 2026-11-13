@@ -1357,7 +1357,12 @@ td[data-copy]:not([data-copy=""]) {
    ellipsis in place of the delete button. The `.table td` selector above is
    more specific than a lone class, so this qualifies with `.table td` to win
    and turns the ellipsis off, letting both buttons show. */
-.table td.actions-cell { white-space: nowrap; text-overflow: clip; overflow: visible; }
+.table td.actions-cell {
+    white-space: nowrap;
+    text-overflow: clip;
+    overflow: visible;
+    vertical-align: middle;
+}
 
 /* Keep the table inside its panel with no horizontal scroll: the two free-text
    columns truncate with an ellipsis rather than forcing the table wider. */
@@ -1480,6 +1485,11 @@ td[data-copy]:not([data-copy=""]) {
 .device-row td {
     border-bottom: none;
     padding-bottom: 0.25rem;
+}
+
+.device-row td.actions-cell {
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
 }
 
 .device-subrow td {
@@ -1608,6 +1618,7 @@ td[data-copy]:not([data-copy=""]) {
 /* Action Buttons */
 .actions-cell {
     white-space: nowrap;
+    vertical-align: middle;
 }
 
 .actions-cell .btn-icon {

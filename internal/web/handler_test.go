@@ -1418,3 +1418,29 @@ func TestDashboardDefaultSortUsesLowestAttachedIP(t *testing.T) {
 		t.Errorf("expected router (with lowest VIP 10.0.0.1) to sort before 10.0.0.15, got idxVIP=%d > idxOther=%d", idxVIP, idxOther)
 	}
 }
+
+func TestDashboardActionsCellSpansTwoRowsAndCentered(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+
+	dev := types.Device{
+		IP:          "192.168.1.50",
+		MAC:         "aa:bb:cc:dd:ee:50",
+		Hostname:    "test-server",
+		NetworkName: "Home LAN",
+	}
+	if _, _, err := h.store.MergeDevices([]types.Device{dev}); err != nil {
+		t.Fatalf("failed to seed device: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index page status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Actions cell must span 2 rows so buttons are vertically centered across the item
+	if !strings.Contains(body, `class="col-actions actions-cell" data-label="Actions" rowspan="2"`) {
+		t.Error("expected actions cell to have rowspan='2' to center buttons across both item rows")
+	}
+}
