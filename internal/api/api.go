@@ -604,12 +604,12 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 	h.store.ClearNetworkScanError(cidr)
 
 	// Merge devices into storage
-	newDevs, seenDevs, err := h.store.MergeDevices(result.Devices)
+	newDevs, seenDevs, movedDevs, err := h.store.MergeDevicesWithMoves(result.Devices)
 	if err != nil {
 		h.error(w, http.StatusInternalServerError, "failed to save devices")
 		return
 	}
-	h.dispatchNotifications(cidr, newDevs, seenDevs)
+	h.dispatchNotificationsWithMoves(cidr, newDevs, seenDevs, movedDevs)
 
 	// Update last scan time
 	h.store.SetLastScan(cidr, time.Now())
@@ -874,7 +874,7 @@ func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResu
 	h.notifyRemoteScannerSuccess(cidr, cidr)
 	h.store.ClearNetworkScanError(cidr)
 
-	newDevs, seenDevs, err := h.store.MergeDevices(result.Devices)
+	newDevs, seenDevs, movedDevs, err := h.store.MergeDevicesWithMoves(result.Devices)
 	if err != nil {
 		return nil, errors.New("failed to save devices")
 	}
@@ -894,7 +894,7 @@ func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResu
 		}
 		activeJob.accumulate(newIPs, seenIPs)
 	} else {
-		h.dispatchNotifications(cidr, newDevs, seenDevs)
+		h.dispatchNotificationsWithMoves(cidr, newDevs, seenDevs, movedDevs)
 	}
 
 	h.store.SetLastScan(cidr, time.Now())
@@ -1238,7 +1238,11 @@ func (h *Handler) handleSettingsNotificationsTest(w http.ResponseWriter, r *http
 
 // dispatchNotifications posts a consolidated network sweep report to Slack
 func (h *Handler) dispatchNotifications(cidr string, newDevices []types.Device, seenDevices []types.Device) {
-	if len(newDevices) == 0 && len(seenDevices) == 0 {
+	h.dispatchNotificationsWithMoves(cidr, newDevices, seenDevices, nil)
+}
+
+func (h *Handler) dispatchNotificationsWithMoves(cidr string, newDevices []types.Device, seenDevices []types.Device, movedDevices []types.DeviceMoveEvent) {
+	if len(newDevices) == 0 && len(seenDevices) == 0 && len(movedDevices) == 0 {
 		return
 	}
 
@@ -1254,7 +1258,7 @@ func (h *Handler) dispatchNotifications(cidr string, newDevices []types.Device, 
 		networkName = name
 	}
 
-	text := notification.FormatConsolidatedSlackMessage(networkName, cidr, newDevices, seenDevices)
+	text := notification.FormatConsolidatedSlackMessageWithMoves(networkName, cidr, newDevices, seenDevices, movedDevices)
 
 	// Post to Slack asynchronously
 	go func() {

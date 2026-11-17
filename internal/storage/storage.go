@@ -1318,6 +1318,10 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 }
 
 func (s *Storage) attachIP(d *types.Device, ip, networkName string) {
+	s.attachIPWithTime(d, ip, networkName, time.Time{})
+}
+
+func (s *Storage) attachIPWithTime(d *types.Device, ip, networkName string, seen time.Time) {
 	if ip == "" {
 		return
 	}
@@ -1325,25 +1329,33 @@ func (s *Storage) attachIP(d *types.Device, ip, networkName string) {
 		networkName = resolveNetworkName(ip, s.networkNames)
 	}
 	if len(d.IPs) == 0 && d.IP != "" {
-		d.IPs = []types.IPAttachment{{IP: d.IP, NetworkName: d.NetworkName}}
+		d.IPs = []types.IPAttachment{{IP: d.IP, NetworkName: d.NetworkName, LastSeen: d.LastSeen, IsActive: true}}
 	}
 	for i, att := range d.IPs {
 		if att.IP == ip {
 			if networkName != "" && att.NetworkName != networkName {
 				d.IPs[i].NetworkName = networkName
 			}
+			if !seen.IsZero() {
+				d.IPs[i].LastSeen = seen
+				d.IPs[i].MissedSweeps = 0
+				d.IPs[i].IsActive = true
+			}
 			return
 		}
 	}
-	d.IPs = append(d.IPs, types.IPAttachment{
+	newAtt := types.IPAttachment{
 		IP:          ip,
 		NetworkName: networkName,
-	})
+		LastSeen:    seen,
+		IsActive:    !seen.IsZero(),
+	}
+	d.IPs = append(d.IPs, newAtt)
 }
 
 func (s *Storage) syncAttachments(d *types.Device) {
 	if len(d.IPs) == 0 && d.IP != "" {
-		d.IPs = []types.IPAttachment{{IP: d.IP, NetworkName: d.NetworkName}}
+		d.IPs = []types.IPAttachment{{IP: d.IP, NetworkName: d.NetworkName, LastSeen: d.LastSeen, IsActive: true}}
 		return
 	}
 	foundPrimary := false
@@ -1354,7 +1366,7 @@ func (s *Storage) syncAttachments(d *types.Device) {
 		}
 	}
 	if !foundPrimary && d.IP != "" {
-		d.IPs = append([]types.IPAttachment{{IP: d.IP, NetworkName: d.NetworkName}}, d.IPs...)
+		d.IPs = append([]types.IPAttachment{{IP: d.IP, NetworkName: d.NetworkName, LastSeen: d.LastSeen, IsActive: true}}, d.IPs...)
 	}
 }
 
@@ -1547,6 +1559,35 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 
 	// Check if this IP is already attached to an existing device (e.g. VIP or multi-network attachment)
 	if d.IP != "" {
+		// If another device had d.IP in its attached IPs, prune it immediately (e.g. DHCP churn / address reassignment)
+		pruneRows, pErr := tx.Query(`SELECT ip, ips FROM devices WHERE ip != ? AND instr(ips, '"' || ? || '"') > 0`, d.IP, d.IP)
+		if pErr == nil {
+			type toPrune struct {
+				primaryIP string
+				ips       []types.IPAttachment
+			}
+			var prunes []toPrune
+			for pruneRows.Next() {
+				var pIP, ipsJSON string
+				if err := pruneRows.Scan(&pIP, &ipsJSON); err == nil {
+					var atts []types.IPAttachment
+					_ = json.Unmarshal([]byte(ipsJSON), &atts)
+					var updated []types.IPAttachment
+					for _, a := range atts {
+						if a.IP != d.IP {
+							updated = append(updated, a)
+						}
+					}
+					prunes = append(prunes, toPrune{primaryIP: pIP, ips: updated})
+				}
+			}
+			pruneRows.Close()
+			for _, p := range prunes {
+				upJSON, _ := json.Marshal(p.ips)
+				_, _ = tx.Exec("UPDATE devices SET ips = ? WHERE ip = ?", string(upJSON), p.primaryIP)
+			}
+		}
+
 		row := tx.QueryRow(`
 			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed, detected_ssh_port, ssh_override, ssh_override_port,
@@ -1624,12 +1665,27 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			// If oldIP and d.IP are in the same subnet, and oldIP did NOT answer the sweep (activeIPs != nil && !activeIPs[oldIP]):
 			// then the device moved on the local subnet!
 			isRelocation := false
-			if s.inSameSubnetLocked(d.IP, oldIP) && activeIPs != nil && !activeIPs[oldIP] {
-				isRelocation = true
+			if activeIPs != nil {
+				// Sweep batch context:
+				// If oldIP and d.IP are in the same subnet and oldIP didn't answer -> moved on the local subnet!
+				// If on different subnets: if oldIP was already marked offline in DB, it definitely moved.
+				// If oldIP is still online on another subnet, it is a multi-network device until proven otherwise by sweep.
+				if s.inSameSubnetLocked(d.IP, oldIP) {
+					if !activeIPs[oldIP] {
+						isRelocation = true
+					}
+				} else {
+					if !old.IsOnline() {
+						isRelocation = true
+					}
+				}
+			} else {
+				// No active sweep context: check if oldIP is offline in DB
+				isRelocation = !old.IsOnline()
 			}
 
 			if isRelocation {
-				// Relocation on same subnet: retire oldIP to address history, promote d.IP
+				// Relocation (same or cross subnet): retire oldIP to address history, promote d.IP
 				d.AddressHistory = appendAddressChange(old.AddressHistory, oldIP, now)
 				s.mergeDuplicateDevice(d, old, now)
 				var newIPs []types.IPAttachment
@@ -1639,7 +1695,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 					}
 				}
 				d.IPs = newIPs
-				s.attachIP(d, d.IP, d.NetworkName)
+				s.attachIPWithTime(d, d.IP, d.NetworkName, now)
 				s.syncAttachments(d)
 
 				_, _ = tx.Exec("UPDATE device_presence_history SET ip = ? WHERE ip = ?", d.IP, oldIP)
@@ -1649,7 +1705,8 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 			} else {
 				// Multi-IP unified device attachment (VIP or multi-network): both are active
 				s.mergeDuplicateDevice(d, old, now)
-				s.attachIP(d, old.IP, old.NetworkName)
+				s.attachIPWithTime(d, old.IP, old.NetworkName, old.LastSeen)
+				s.attachIPWithTime(d, d.IP, d.NetworkName, now)
 				s.syncAttachments(d)
 				*old = *d
 
@@ -1886,12 +1943,18 @@ func (s *Storage) SetSetting(key, value string) error {
 
 // MergeDevices merges discovered devices with existing data
 func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []types.Device, error) {
+	newDevs, seenDevs, _, err := s.MergeDevicesWithMoves(discovered)
+	return newDevs, seenDevs, err
+}
+
+// MergeDevicesWithMoves merges discovered devices and tracks devices that moved IPs/networks
+func (s *Storage) MergeDevicesWithMoves(discovered []types.Device) ([]types.Device, []types.Device, []types.DeviceMoveEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	tx, err := s.db.Begin()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer tx.Rollback()
 
@@ -1904,9 +1967,11 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 
 	var newDevices []types.Device
 	var seenDevices []types.Device
+	var movedDevices []types.DeviceMoveEvent
 
 	now := time.Now()
 	for _, d := range discovered {
+		// Check if this IP is already known in the database (either as primary IP or attached IP)
 		row := tx.QueryRow(`
 			SELECT ip, mac, hostname, vendor, type, web_ui, risks, label, notes, "group",
 			       custom_hostname, custom_web_url, custom_type, web_port, web_scheme, probed,
@@ -1931,8 +1996,35 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 		)
 
 		if err == nil {
+			// If d has a different MAC than existing, and existing was holding d.IP only as an attachment,
+			// this is DHCP churn / IP reassignment: prune d.IP from existing and let d be added!
+			if d.MAC != "" && existing.MAC != "" && existing.MAC != d.MAC && existing.IP != d.IP {
+				var updatedAtts []types.IPAttachment
+				for _, a := range existing.IPs {
+					if a.IP != d.IP {
+						updatedAtts = append(updatedAtts, a)
+					}
+				}
+				upJSON, _ := json.Marshal(updatedAtts)
+				_, _ = tx.Exec("UPDATE devices SET ips = ? WHERE ip = ?", string(upJSON), existing.IP)
+				// Fall through to add d as a new device
+				dev := d
+				dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
+				isCompletelyNew, err := s.addNewDeviceLocked(tx, &dev, now, activeIPs)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+				if isCompletelyNew {
+					newDevices = append(newDevices, dev)
+				}
+				continue
+			}
+
 			if existing.IP != d.IP {
-				// d.IP is an attached secondary IP of existing; remove any obsolete standalone row for d.IP
+				// d.IP is an attached secondary IP of existing:
+				// If existing.MAC != "" and d.MAC != "" and existing.MAC != d.MAC, it was handled above.
+				// Otherwise (same MAC or no MAC on d): keep existing device row, update its attachment for d.IP,
+				// and ensure no separate row for d.IP exists.
 				_, _ = tx.Exec("DELETE FROM devices WHERE ip = ?", d.IP)
 			}
 			existing.WebUI = webUIVal != 0
@@ -1946,7 +2038,7 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 			_ = json.Unmarshal([]byte(risksStr), &existing.Risks)
 			_ = json.Unmarshal([]byte(addressHistoryStr), &existing.AddressHistory)
 			_ = json.Unmarshal([]byte(ipsStr), &existing.IPs)
-			s.attachIP(&existing, d.IP, d.NetworkName)
+			s.attachIPWithTime(&existing, d.IP, d.NetworkName, now)
 			s.syncAttachments(&existing)
 
 			if d.MAC != "" {
@@ -1994,7 +2086,7 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 					VALUES (?, ?, ?, 'return', ?, ?)
 				`, existing.IP, existing.MAC, existing.Hostname, offlineDur, now)
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				isOnlineVal = 1
 				lastPresenceChange = now
@@ -2005,7 +2097,7 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 			} else {
 				_, err = tx.Exec("UPDATE devices SET missed_sweeps = 0 WHERE ip = ?", existing.IP)
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 			}
 
@@ -2016,14 +2108,14 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 
 			_, err = tx.Exec(`
 				UPDATE devices SET
-					mac = ?, hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
+					ip = ?, mac = ?, hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
 					label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
 					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, assignment = ?,
 					network_name = ?, first_seen = ?, last_seen = ?, response_time = ?,
 					address_history = ?, is_online = ?, last_presence_change = ?,
 					ips = ?
 				WHERE ip = ?
-			`, existing.MAC, existing.Hostname, existing.Vendor, existing.Type, boolToInt(existing.WebUI), string(risksJSON),
+			`, existing.IP, existing.MAC, existing.Hostname, existing.Vendor, existing.Type, boolToInt(existing.WebUI), string(risksJSON),
 				existing.Label, existing.Notes, existing.Group, existing.CustomHostname, existing.CustomWebURL,
 				existing.CustomType, existing.WebPort, existing.WebScheme, boolToInt(existing.Probed), existing.Assignment,
 				existing.NetworkName, existing.FirstSeen, existing.LastSeen, existing.ResponseTime,
@@ -2031,25 +2123,47 @@ func (s *Storage) MergeDevices(discovered []types.Device) ([]types.Device, []typ
 				string(ipsJSON),
 				existing.IP)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 		} else {
 			dev := d
 			dev.NetworkName = resolveNetworkName(d.IP, s.networkNames)
+
+			// Check if this MAC already existed (to track move events)
+			var oldRecord *types.Device
+			if dev.MAC != "" {
+				_, oldFound, _ := s.findByMACLocked(tx, dev.MAC, dev.IP)
+				if oldFound != nil {
+					oldRecord = oldFound
+				}
+			}
+
 			isCompletelyNew, err := s.addNewDeviceLocked(tx, &dev, now, activeIPs)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			if isCompletelyNew {
 				newDevices = append(newDevices, dev)
+			} else if oldRecord != nil && oldRecord.IP != dev.IP {
+				// Record moved event if device changed IP
+				movedDevices = append(movedDevices, types.DeviceMoveEvent{
+					MAC:            dev.MAC,
+					Hostname:       dev.Hostname,
+					Label:          dev.Label,
+					OldIP:          oldRecord.IP,
+					OldNetworkName: oldRecord.NetworkName,
+					NewIP:          dev.IP,
+					NewNetworkName: dev.NetworkName,
+					MovedAt:        now,
+				})
 			}
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return newDevices, seenDevices, nil
+	return newDevices, seenDevices, movedDevices, nil
 }
 
 // MergeSupplemental folds in devices from secondary sources
@@ -2384,6 +2498,132 @@ func (s *Storage) ProcessMissingDevices(scannedNetworks []string, activeIPs []st
 			if err != nil {
 				return 0, err
 			}
+		}
+	}
+
+	// Also check secondary attachments across all devices for any IP belonging to the scanned networks
+	attRows, err := tx.Query(`SELECT ip, mac, hostname, COALESCE(address_history, '[]'), COALESCE(ips, '[]') FROM devices WHERE instr(ips, '[') > 0`)
+	if err == nil {
+		type devAttachmentUpdate struct {
+			primaryIP      string
+			mac            string
+			hostname       string
+			addressHistory []types.AddressChange
+			ips            []types.IPAttachment
+			needsUpdate    bool
+		}
+		var updates []devAttachmentUpdate
+
+		for attRows.Next() {
+			var pIP, mac, hostname, ahJSON, ipsJSON string
+			if sErr := attRows.Scan(&pIP, &mac, &hostname, &ahJSON, &ipsJSON); sErr == nil {
+				var ah []types.AddressChange
+				var atts []types.IPAttachment
+				_ = json.Unmarshal([]byte(ahJSON), &ah)
+				_ = json.Unmarshal([]byte(ipsJSON), &atts)
+
+				changed := false
+				var surviving []types.IPAttachment
+
+				for _, att := range atts {
+					if att.IP == "" {
+						continue
+					}
+					// Only check attachments in the scanned networks
+					attIP := net.ParseIP(att.IP)
+					if attIP == nil {
+						surviving = append(surviving, att)
+						continue
+					}
+					belongs := false
+					for _, ipNet := range nets {
+						if ipNet.Contains(attIP) {
+							belongs = true
+							break
+						}
+					}
+
+					if !belongs {
+						// Not part of this sweep: keep as is
+						surviving = append(surviving, att)
+						continue
+					}
+
+					if activeMap[att.IP] {
+						// Active in this sweep!
+						att.MissedSweeps = 0
+						att.IsActive = true
+						att.LastSeen = now
+						surviving = append(surviving, att)
+						changed = true
+					} else {
+						// Missed this sweep
+						att.MissedSweeps++
+						if att.MissedSweeps >= 2 {
+							// Prune after 2 missed sweeps! Retire to address history if not already recorded
+							changed = true
+							alreadyInHistory := false
+							for _, h := range ah {
+								if h.IP == att.IP {
+									alreadyInHistory = true
+									break
+								}
+							}
+							if !alreadyInHistory {
+								ah = appendAddressChange(ah, att.IP, now)
+							}
+							// Dropped from surviving attachments
+						} else {
+							att.IsActive = false
+							surviving = append(surviving, att)
+							changed = true
+						}
+					}
+				}
+
+				if changed {
+					// If the primary IP was pruned, promote the most active remaining IP
+					newPrimaryIP := pIP
+					newNetworkName := ""
+					if len(surviving) > 0 {
+						primaryFound := false
+						for _, a := range surviving {
+							if a.IP == pIP {
+								primaryFound = true
+								break
+							}
+						}
+						if !primaryFound {
+							// Promote best surviving attachment
+							newPrimaryIP = surviving[0].IP
+							newNetworkName = surviving[0].NetworkName
+						}
+					}
+
+					updates = append(updates, devAttachmentUpdate{
+						primaryIP:      newPrimaryIP,
+						mac:            mac,
+						hostname:       hostname,
+						addressHistory: ah,
+						ips:            surviving,
+						needsUpdate:    true,
+					})
+					if newPrimaryIP != pIP {
+						// Primary changed: update devices table primary key and related tables
+						_, _ = tx.Exec(`UPDATE devices SET ip = ?, network_name = ? WHERE ip = ?`, newPrimaryIP, newNetworkName, pIP)
+						_, _ = tx.Exec(`UPDATE device_presence_history SET ip = ? WHERE ip = ?`, newPrimaryIP, pIP)
+						_, _ = tx.Exec(`UPDATE OR IGNORE device_open_ports SET ip = ? WHERE ip = ?`, newPrimaryIP, pIP)
+						_, _ = tx.Exec(`DELETE FROM device_open_ports WHERE ip = ?`, pIP)
+					}
+				}
+			}
+		}
+		attRows.Close()
+
+		for _, u := range updates {
+			newIPSJSON, _ := json.Marshal(u.ips)
+			newAHJSON, _ := json.Marshal(u.addressHistory)
+			_, _ = tx.Exec(`UPDATE devices SET ips = ?, address_history = ? WHERE ip = ?`, string(newIPSJSON), string(newAHJSON), u.primaryIP)
 		}
 	}
 

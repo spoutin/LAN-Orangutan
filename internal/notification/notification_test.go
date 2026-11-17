@@ -3,6 +3,8 @@ package notification
 import (
 	"strings"
 	"testing"
+
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
 func TestFormatDeepScanCutoffSlackMessage(t *testing.T) {
@@ -81,6 +83,39 @@ func TestFormatRouterAPIFailureAndRecoverySlackMessage(t *testing.T) {
 	} {
 		if !strings.Contains(recovery, want) {
 			t.Errorf("recovery msg %q does not contain %q", recovery, want)
+		}
+	}
+}
+
+func TestFormatConsolidatedSlackMessageWithMoves(t *testing.T) {
+	newDevs := []types.Device{
+		{IP: "10.0.0.15", MAC: "aa:bb:cc:11:22:33", Hostname: "printer", Vendor: "HP"},
+	}
+	movedDevs := []types.DeviceMoveEvent{
+		{
+			MAC:            "aa:bb:cc:44:55:66",
+			Hostname:       "laptop-roam",
+			Label:          "Personal Laptop",
+			OldIP:          "192.168.1.50",
+			OldNetworkName: "Home LAN",
+			NewIP:          "172.16.0.22",
+			NewNetworkName: "Guest",
+		},
+	}
+	msg := FormatConsolidatedSlackMessageWithMoves("Guest", "172.16.0.0/24", newDevs, nil, movedDevs)
+
+	for _, want := range []string{
+		"1 New Device(s) Discovered",
+		"printer",
+		"1 Device(s) Moved / Relocated",
+		"Personal Laptop",
+		"Home LAN",
+		"192.168.1.50",
+		"Guest",
+		"172.16.0.22",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q does not contain %q", msg, want)
 		}
 	}
 }

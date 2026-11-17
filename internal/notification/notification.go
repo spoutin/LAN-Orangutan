@@ -94,6 +94,83 @@ func FormatConsolidatedSlackMessage(networkName, networkCIDR string, newDevices 
 	return sb.String()
 }
 
+// FormatConsolidatedSlackMessageWithMoves creates a beautiful mrkdwn Slack post for network scans including device moves
+func FormatConsolidatedSlackMessageWithMoves(networkName, networkCIDR string, newDevices []types.Device, seenDevices []types.Device, movedDevices []types.DeviceMoveEvent) string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("🔔 *LAN-Orangutan: Network Sweep Report [%s]* (`%s`)\n", networkName, networkCIDR))
+	sb.WriteString(fmt.Sprintf("_Scan completed at %s_\n\n", time.Now().Format("2006-01-02 15:04:05")))
+
+	if len(newDevices) > 0 {
+		sb.WriteString(fmt.Sprintf("🆕 *%d New Device(s) Discovered:*\n", len(newDevices)))
+		for _, d := range newDevices {
+			name := d.Label
+			if name == "" {
+				name = d.CustomHostname
+			}
+			if name == "" {
+				name = d.Hostname
+			}
+			if name == "" {
+				name = "Unknown Device"
+			}
+			vendor := d.Vendor
+			if vendor == "" {
+				vendor = "Unknown"
+			}
+			sb.WriteString(fmt.Sprintf("• *%s* (%s) — _MAC:_ `%s` | _Vendor:_ %s\n", name, d.IP, d.MAC, vendor))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(movedDevices) > 0 {
+		sb.WriteString(fmt.Sprintf("🔄 *%d Device(s) Moved / Relocated:*\n", len(movedDevices)))
+		for _, m := range movedDevices {
+			name := m.Label
+			if name == "" {
+				name = m.Hostname
+			}
+			if name == "" {
+				name = "Device"
+			}
+			oldNet := m.OldNetworkName
+			if oldNet == "" {
+				oldNet = "Previous Network"
+			}
+			newNet := m.NewNetworkName
+			if newNet == "" {
+				newNet = "New Network"
+			}
+			sb.WriteString(fmt.Sprintf("• *%s* moved from %s (`%s`) ➔ %s (`%s`) — _MAC:_ `%s`\n", name, oldNet, m.OldIP, newNet, m.NewIP, m.MAC))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(seenDevices) > 0 {
+		sb.WriteString(fmt.Sprintf("🟢 *%d Tracked Device(s) Online:*\n", len(seenDevices)))
+		for _, d := range seenDevices {
+			name := d.Label
+			if name == "" {
+				name = d.CustomHostname
+			}
+			if name == "" {
+				name = d.Hostname
+			}
+			if name == "" {
+				name = "Unknown Device"
+			}
+			vendor := d.Vendor
+			if vendor == "" {
+				vendor = "Unknown"
+			}
+			sb.WriteString(fmt.Sprintf("• *%s* (%s) — _MAC:_ `%s` | _Vendor:_ %s\n", name, d.IP, d.MAC, vendor))
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
 // FormatDeepScanCutoffSlackMessage reports targets left unscanned when the
 // nightly maintenance window ends. It deliberately includes aggregate counts
 // only, not endpoint or service details.

@@ -16,8 +16,23 @@ type OpenService struct {
 
 // IPAttachment represents a network attachment (IP and its associated network name)
 type IPAttachment struct {
-	IP          string `json:"ip"`
-	NetworkName string `json:"network_name,omitempty"`
+	IP           string    `json:"ip"`
+	NetworkName  string    `json:"network_name,omitempty"`
+	LastSeen     time.Time `json:"last_seen,omitempty"`
+	MissedSweeps int       `json:"missed_sweeps,omitempty"`
+	IsActive     bool      `json:"is_active,omitempty"`
+}
+
+// DeviceMoveEvent records a device relocating between IP addresses / networks
+type DeviceMoveEvent struct {
+	MAC            string    `json:"mac"`
+	Hostname       string    `json:"hostname"`
+	Label          string    `json:"label"`
+	OldIP          string    `json:"old_ip"`
+	OldNetworkName string    `json:"old_network_name"`
+	NewIP          string    `json:"new_ip"`
+	NewNetworkName string    `json:"new_network_name"`
+	MovedAt        time.Time `json:"moved_at"`
 }
 
 // IPToLong converts an IPv4 address to a sortable integer
@@ -53,6 +68,35 @@ func (d *Device) LowestIP() string {
 		}
 	}
 	return best
+}
+
+// MostActiveIP returns the IP with the most recent LastSeen (falling back to LowestIP)
+func (d *Device) MostActiveIP() string {
+	var bestIP string
+	var bestTime time.Time
+	for _, att := range d.IPs {
+		if att.IP != "" && att.IsActive {
+			if bestIP == "" || att.LastSeen.After(bestTime) {
+				bestIP = att.IP
+				bestTime = att.LastSeen
+			}
+		}
+	}
+	if bestIP != "" {
+		return bestIP
+	}
+	for _, att := range d.IPs {
+		if att.IP != "" {
+			if bestIP == "" || att.LastSeen.After(bestTime) {
+				bestIP = att.IP
+				bestTime = att.LastSeen
+			}
+		}
+	}
+	if bestIP != "" {
+		return bestIP
+	}
+	return d.LowestIP()
 }
 
 // Device represents a discovered network device
