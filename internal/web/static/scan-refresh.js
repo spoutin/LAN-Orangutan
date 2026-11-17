@@ -193,9 +193,25 @@
         return isMin;
     }
 
-    function shouldDeferTableRefreshDuringScan(progress) {
+    // Max duration a scan is allowed to hold off table refreshes before timing out as stuck/abandoned (15 minutes)
+    const MAX_SCAN_DEFER_SECONDS = 900;
+
+    function shouldDeferTableRefreshDuringScan(progress, nowMs = Date.now()) {
         if (!progress) return false;
-        return progress.status === 'running';
+        if (progress.status !== 'running') return false;
+
+        // If a start timestamp is available, guard against scans that got stuck/failed to report completion
+        const startSec = progress.started_at_unix || (progress.started_at ? Math.floor(new Date(progress.started_at).getTime() / 1000) : 0);
+        if (startSec > 0) {
+            const elapsed = Math.floor(nowMs / 1000) - startSec;
+            if (elapsed > MAX_SCAN_DEFER_SECONDS) {
+                return false; // Timed out: do not defer refresh anymore
+            }
+        } else if (typeof progress.elapsed === 'number' && progress.elapsed > MAX_SCAN_DEFER_SECONDS) {
+            return false;
+        }
+
+        return true;
     }
 
     return {

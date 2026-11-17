@@ -120,6 +120,8 @@ type scanProgress struct {
 	DeepNetworks     []deepNetworkProgress `json:"deep_networks"`
 	TargetedDeepScan bool                  `json:"targeted_deep_scan"`
 	TargetedDeviceIP string                `json:"targeted_device_ip,omitempty"`
+	StartedAt        time.Time             `json:"started_at,omitempty"`
+	StartedAtUnix    int64                 `json:"started_at_unix,omitempty"`
 
 	// Stage 2 port scanning progress fields
 	PortScanActive   bool `json:"port_scan_active"`
@@ -153,6 +155,8 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 		PortScanComplete: j.portScanComplete,
 		DeepNetworks:     append([]deepNetworkProgress(nil), j.deepNetworkProgress...),
 		TargetedDeepScan: len(j.deepDevices) == 1,
+		StartedAt:        j.startedAt,
+		StartedAtUnix:    j.startedAt.Unix(),
 	}
 
 	scannedNetCount := 0

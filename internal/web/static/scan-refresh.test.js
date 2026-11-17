@@ -16,11 +16,21 @@ test('completed network keys include completed quick scan results', () => {
     }), ['quick:10.0.0.0/24:scanned']);
 });
 
-test('shouldDeferTableRefreshDuringScan defers refresh while scan status is running', () => {
-    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'running' }), true);
-    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'done' }), false);
-    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'cancelled' }), false);
+test('shouldDeferTableRefreshDuringScan defers refresh while scan status is running and start time is fresh', () => {
+    const nowSec = 1700000000;
+    const nowMs = nowSec * 1000;
+
+    // Running and recently started
+    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'running', started_at_unix: nowSec - 60 }, nowMs), true);
+
+    // Done or cancelled
+    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'done', started_at_unix: nowSec - 60 }, nowMs), false);
+    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'cancelled', started_at_unix: nowSec - 60 }, nowMs), false);
     assert.equal(shouldDeferTableRefreshDuringScan(null), false);
+
+    // Running but stuck beyond max defer duration (e.g. 1000s > 900s) -> unblocks refresh!
+    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'running', started_at_unix: nowSec - 1000 }, nowMs), false);
+    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'running', elapsed: 1000 }, nowMs), false);
 });
 
 test('completed network keys wait for all deep probes in a network', () => {
