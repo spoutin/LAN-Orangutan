@@ -421,6 +421,12 @@ const scanCoordinator = {
                 return;
             }
 
+            // While the scan is running across scheduled networks, keep the table frozen on
+            // pre-scan data and defer table replacement until the entire scan is complete.
+            if (window.scanRefresh?.shouldDeferTableRefreshDuringScan && window.scanRefresh.shouldDeferTableRefreshDuringScan(progress)) {
+                return;
+            }
+
             const completedNetworks = window.scanRefresh?.completedNetworkKeys
                 ? window.scanRefresh.completedNetworkKeys(progress)
                 : [];
@@ -2923,6 +2929,12 @@ async function refreshInPlace() {
 function startAutoRefresh() {
     if (autoRefreshInterval) return;
     autoRefreshInterval = setInterval(async () => {
+        // While a scan job is running, avoid polling/replacing the table midway through to prevent
+        // partial-scan flicker and premature device separation.
+        if (scanCoordinator?.activeProgress?.status === 'running') {
+            return;
+        }
+
         // If the refresh could not be applied the session has probably ended.
         // Reload so the user is taken to the login page rather than left
         // looking at a table that has quietly stopped updating.

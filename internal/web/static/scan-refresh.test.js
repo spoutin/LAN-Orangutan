@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
     completedNetworkKeys,
+    shouldDeferTableRefreshDuringScan,
     automaticScanFailureMessage,
     scannedSubnetCount,
     formatScanCompletionSummary,
@@ -13,6 +14,13 @@ test('completed network keys include completed quick scan results', () => {
     assert.deepEqual(completedNetworkKeys({
         networks: [{ network: '10.0.0.0/24', status: 'scanned' }]
     }), ['quick:10.0.0.0/24:scanned']);
+});
+
+test('shouldDeferTableRefreshDuringScan defers refresh while scan status is running', () => {
+    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'running' }), true);
+    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'done' }), false);
+    assert.equal(shouldDeferTableRefreshDuringScan({ status: 'cancelled' }), false);
+    assert.equal(shouldDeferTableRefreshDuringScan(null), false);
 });
 
 test('completed network keys wait for all deep probes in a network', () => {

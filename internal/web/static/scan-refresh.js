@@ -193,8 +193,14 @@
         return isMin;
     }
 
+    function shouldDeferTableRefreshDuringScan(progress) {
+        if (!progress) return false;
+        return progress.status === 'running';
+    }
+
     return {
         completedNetworkKeys,
+        shouldDeferTableRefreshDuringScan,
         automaticScanFailureMessage,
         scannedSubnetCount,
         formatScanCompletionSummary,
