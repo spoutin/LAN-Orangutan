@@ -271,6 +271,53 @@ func TestDevice_POST_FactsEndpoint(t *testing.T) {
 		t.Errorf("PUT CustomOS = %q / %q / %q, want Debian / 12.5 / Linux",
 			updatedPut.CustomOS, updatedPut.CustomOSVersion, updatedPut.CustomOSFamily)
 	}
+
+	// 5. Post facts with hostname updates blank hostname but does not overwrite existing hostname
+	devBlankHost := types.Device{
+		IP:       "192.168.1.105",
+		MAC:      "aa:bb:cc:dd:ee:05",
+		Hostname: "",
+	}
+	if err := store.UpdateDevice(&devBlankHost); err != nil {
+		t.Fatalf("UpdateDevice devBlankHost: %v", err)
+	}
+
+	factsWithHost, _ := json.Marshal(map[string]interface{}{
+		"hostname":   "my-web-server",
+		"os":         "Debian",
+		"os_version": "12",
+		"os_family":  "Linux",
+	})
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/devices/aa-bb-cc-dd-ee-05/facts", bytes.NewReader(factsWithHost))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/devices/{mac}/facts status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	updatedWithHost := store.GetDevice("192.168.1.105")
+	if updatedWithHost == nil || updatedWithHost.Hostname != "my-web-server" {
+		t.Fatalf("expected Hostname 'my-web-server', got %+v", updatedWithHost)
+	}
+
+	// Posting again with another hostname must NOT overwrite the existing hostname
+	factsNewHost, _ := json.Marshal(map[string]interface{}{
+		"hostname": "another-server-name",
+	})
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/devices/aa-bb-cc-dd-ee-05/facts", bytes.NewReader(factsNewHost))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/devices/{mac}/facts second status = %d: %s", rec.Code, rec.Body.String())
+	}
+	updatedPreservedHost := store.GetDevice("192.168.1.105")
+	if updatedPreservedHost == nil || updatedPreservedHost.Hostname != "my-web-server" {
+		t.Fatalf("expected Hostname to remain 'my-web-server', got %+v", updatedPreservedHost)
+	}
 }
 
 func TestAPITokensEndpoints(t *testing.T) {

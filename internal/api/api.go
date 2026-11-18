@@ -244,6 +244,7 @@ func (h *Handler) handleDeviceFacts(w http.ResponseWriter, r *http.Request, targ
 
 	var req struct {
 		MAC       string `json:"mac"`
+		Hostname  string `json:"hostname"`
 		OS        string `json:"os"`
 		OSVersion string `json:"os_version"`
 		OSFamily  string `json:"os_family"`
@@ -281,6 +282,11 @@ func (h *Handler) handleDeviceFacts(w http.ResponseWriter, r *http.Request, targ
 			vendor := scanner.GetMACVendor(newMAC)
 			_ = h.store.UpdateDeviceMAC(dev.IP, newMAC, vendor)
 		}
+	}
+
+	// Update hostname if blank
+	if req.Hostname != "" {
+		_ = h.store.UpdateDeviceHostnameIfBlank(trimmedTarget, req.Hostname, isIP)
 	}
 
 	// Update custom OS facts
