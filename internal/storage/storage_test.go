@@ -2006,3 +2006,65 @@ func TestRecordTrafficSamples_OpenWrtWAN(t *testing.T) {
 		t.Errorf("expected 1 traffic_sample with source='opnsense' for %s, got %d", dev3.MAC, opnSampleCount)
 	}
 }
+
+func TestUpdateDeviceHostnameIfBlank(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Case 1: Device with blank hostname updated by MAC
+	dev1 := &types.Device{
+		IP:       "192.168.1.51",
+		MAC:      "00:11:22:33:44:55",
+		Hostname: "",
+	}
+	if err := s.UpdateDevice(dev1); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	if err := s.UpdateDeviceHostnameIfBlank("00:11:22:33:44:55", "web01", false); err != nil {
+		t.Fatalf("UpdateDeviceHostnameIfBlank failed: %v", err)
+	}
+	res1 := s.GetDevice("192.168.1.51")
+	if res1 == nil || res1.Hostname != "web01" {
+		t.Fatalf("expected Hostname to be 'web01', got %+v", res1)
+	}
+	if res1.CustomHostname != "" {
+		t.Fatalf("expected CustomHostname to remain empty, got %q", res1.CustomHostname)
+	}
+
+	// Case 2: Device with existing hostname is NOT overwritten
+	dev2 := &types.Device{
+		IP:       "192.168.1.52",
+		MAC:      "00:11:22:33:44:56",
+		Hostname: "scanned-box",
+	}
+	if err := s.UpdateDevice(dev2); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	if err := s.UpdateDeviceHostnameIfBlank("00:11:22:33:44:56", "web02", false); err != nil {
+		t.Fatalf("UpdateDeviceHostnameIfBlank failed: %v", err)
+	}
+	res2 := s.GetDevice("192.168.1.52")
+	if res2 == nil || res2.Hostname != "scanned-box" {
+		t.Fatalf("expected Hostname to remain 'scanned-box', got %+v", res2)
+	}
+
+	// Case 3: Device with blank hostname updated by IP fallback
+	dev3 := &types.Device{
+		IP:       "192.168.1.53",
+		MAC:      "",
+		Hostname: "",
+	}
+	if err := s.UpdateDevice(dev3); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	if err := s.UpdateDeviceHostnameIfBlank("192.168.1.53", "db01", true); err != nil {
+		t.Fatalf("UpdateDeviceHostnameIfBlank by IP failed: %v", err)
+	}
+	res3 := s.GetDevice("192.168.1.53")
+	if res3 == nil || res3.Hostname != "db01" {
+		t.Fatalf("expected Hostname to be 'db01', got %+v", res3)
+	}
+}
+

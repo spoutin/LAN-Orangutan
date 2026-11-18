@@ -4543,3 +4543,36 @@ func (s *Storage) UpdateDeviceMAC(ip, mac, vendor string) error {
 	}
 	return err
 }
+
+// UpdateDeviceHostnameIfBlank updates the device's hostname only if it is currently empty.
+func (s *Storage) UpdateDeviceHostnameIfBlank(target, hostname string, isIP bool) error {
+	trimmed := strings.TrimSpace(hostname)
+	if trimmed == "" {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if isIP {
+		ip := strings.TrimSpace(target)
+		_, err := s.db.Exec(`
+			UPDATE devices
+			SET hostname = ?
+			WHERE ip = ? AND (hostname IS NULL OR hostname = '')
+		`, trimmed, ip)
+		return err
+	}
+
+	norm := NormalizeMAC(target)
+	if norm == "" {
+		return fmt.Errorf("mac cannot be empty")
+	}
+	_, err := s.db.Exec(`
+		UPDATE devices
+		SET hostname = ?
+		WHERE LOWER(REPLACE(mac, '-', ':')) = ? AND (hostname IS NULL OR hostname = '')
+	`, trimmed, norm)
+	return err
+}
+
