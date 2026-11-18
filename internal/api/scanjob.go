@@ -734,6 +734,11 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			fmt.Printf("[DEBUG] ProcessMissingDevices error: %v\n", err)
 		}
 
+		// Reconcile and unify any multi-IP or shared-MAC devices that were scanned across different subnets
+		if dedupErr := h.store.DeduplicateMACs(); dedupErr != nil {
+			fmt.Printf("[DEBUG] DeduplicateMACs error: %v\n", dedupErr)
+		}
+
 		// Dispatch deferred notifications using fully complete, enriched database entries
 		j.dispatchDeferredNotifications(h)
 
@@ -1505,6 +1510,10 @@ func (j *scanJob) dispatchDeferredNotifications(h *Handler) {
 	for _, ip := range newIPs {
 		d := h.store.GetDevice(ip)
 		if d != nil {
+			// If d was first seen well before this job started (or has multiple attachments), it is an existing device!
+			if !d.FirstSeen.IsZero() && d.FirstSeen.Before(j.startedAt) {
+				continue
+			}
 			cidr := findSubnetForIP(d.IP, j.networks)
 			if cidr != "" {
 				newByNetwork[cidr] = append(newByNetwork[cidr], *d)

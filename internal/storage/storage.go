@@ -906,14 +906,19 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		if device.WanTxBytes == 0 {
 			device.WanTxBytes = existing.WanTxBytes
 		}
+		if len(device.IPs) == 0 && len(existing.IPs) > 0 {
+			device.IPs = existing.IPs
+		}
 	}
 
 	if device.FirstSeen.IsZero() {
 		device.FirstSeen = time.Now()
 	}
 
+	s.syncAttachments(device)
 	risksJSON, _ := json.Marshal(device.Risks)
 	historyJSON, _ := json.Marshal(device.AddressHistory)
+	ipsJSON, _ := json.Marshal(device.IPs)
 	isOnline := 0
 	if device.IsOnline() {
 		isOnline = 1
@@ -940,7 +945,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			router_source, router_interface, lease_expires, lease_lifetime, router_notes,
 			switch_name, switch_host, switch_port, switch_vlan, switch_link_state, switch_link_speed, switch_duplex, switch_poe_watts, switch_updated_at,
 			traffic_source, rx_rate_bps, tx_rate_bps,
-			wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes
+			wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+			ips
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -952,7 +958,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?,
-			?, ?, ?, ?
+			?, ?, ?, ?,
+			?
 		)
 		ON CONFLICT(ip) DO UPDATE SET
 			mac = excluded.mac,
@@ -1022,7 +1029,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 			wan_rx_rate_bps = excluded.wan_rx_rate_bps,
 			wan_tx_rate_bps = excluded.wan_tx_rate_bps,
 			wan_rx_bytes = excluded.wan_rx_bytes,
-			wan_tx_bytes = excluded.wan_tx_bytes
+			wan_tx_bytes = excluded.wan_tx_bytes,
+			ips = CASE WHEN excluded.ips != '[]' AND excluded.ips != '' THEN excluded.ips ELSE devices.ips END
 	`, device.IP, device.MAC, device.Hostname, device.Vendor, device.Type, boolToInt(device.WebUI), string(risksJSON),
 		device.Label, device.Notes, device.Group, device.CustomHostname, device.CustomWebURL, device.CustomType,
 		device.WebPort, device.WebScheme, boolToInt(device.Probed), device.DetectedSSHPort, device.SSHOverride, device.SSHOverridePort, device.Assignment, device.NetworkName,
@@ -1034,7 +1042,8 @@ func (s *Storage) UpdateDevice(device *types.Device) error {
 		device.RouterSource, device.RouterInterface, leaseExpiresVal, device.LeaseLifetime, device.RouterNotes,
 		device.SwitchName, device.SwitchHost, device.SwitchPort, device.SwitchVLAN, device.SwitchLinkState, device.SwitchLinkSpeed, device.SwitchDuplex, device.SwitchPoEWatts, switchUpdatedAtVal,
 		device.TrafficSource, device.RxRateBps, device.TxRateBps,
-		device.WanRxRateBps, device.WanTxRateBps, device.WanRxBytes, device.WanTxBytes)
+		device.WanRxRateBps, device.WanTxRateBps, device.WanRxBytes, device.WanTxBytes,
+		string(ipsJSON))
 	return err
 }
 
@@ -1270,6 +1279,7 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 		       COALESCE(ips, '[]') AS ips
 		FROM devices
 		WHERE mac = ? AND ip != ?
+		ORDER BY is_online DESC, last_seen DESC, first_seen ASC
 	`, mac, excludeIP)
 	if err != nil {
 		return "", nil, err
@@ -1305,6 +1315,7 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 		       COALESCE(ips, '[]') AS ips
 		FROM devices
 		WHERE mac = ?
+		ORDER BY is_online DESC, last_seen DESC, first_seen ASC
 		LIMIT 1
 	`, mac)
 	d, err := s.scanDevice(row)
