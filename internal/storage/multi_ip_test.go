@@ -311,10 +311,10 @@ func TestMultiIPAttachedSecondaryIPsNotDuplicated(t *testing.T) {
 	}
 
 	// 3. What if a separate standalone row for 10.0.1.1 existed in SQLite?
-	// Seed standalone row for 10.0.1.1 directly in DB
+	// Seed standalone row for 10.0.1.1 directly in DB with a custom label
 	_, err := s.db.Exec(`
-		INSERT INTO devices (ip, mac, hostname, first_seen, last_seen, is_online, last_presence_change)
-		VALUES ('10.0.1.1', '', 'old-standalone', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, CURRENT_TIMESTAMP)
+		INSERT INTO devices (ip, mac, hostname, label, first_seen, last_seen, is_online, last_presence_change)
+		VALUES ('10.0.1.1', '', 'old-standalone', 'Special Gateway', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, CURRENT_TIMESTAMP)
 	`)
 	if err != nil {
 		t.Fatalf("failed to seed standalone row: %v", err)
@@ -328,5 +328,25 @@ func TestMultiIPAttachedSecondaryIPsNotDuplicated(t *testing.T) {
 	devicesAfterDedup := s.GetDevices()
 	if len(devicesAfterDedup) != 1 {
 		t.Fatalf("expected 1 unified router device after dedup, got %d: %+v", len(devicesAfterDedup), devicesAfterDedup)
+	}
+
+	router := s.GetDevice("10.0.4.1")
+	if router == nil {
+		t.Fatalf("expected router at 10.0.4.1")
+	}
+	// Check that target has persisted all attached IPs in database
+	hasAttached10_0_1_1 := false
+	for _, att := range router.IPs {
+		if att.IP == "10.0.1.1" {
+			hasAttached10_0_1_1 = true
+			break
+		}
+	}
+	if !hasAttached10_0_1_1 {
+		t.Fatalf("expected router.IPs to retain 10.0.1.1 after dedup, got: %+v", router.IPs)
+	}
+	// Verify that the merged metadata from the standalone duplicate was preserved and SAVED on the target in the database
+	if router.Label != "Special Gateway" {
+		t.Errorf("expected router label 'Special Gateway', got '%s'", router.Label)
 	}
 }

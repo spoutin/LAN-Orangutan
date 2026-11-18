@@ -603,6 +603,9 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 	h.notifyRemoteScannerSuccess(cidr, cidr)
 	h.store.ClearNetworkScanError(cidr)
 
+	// Enrich any self-scanned gateway host (which remote Nmap returns with no MAC)
+	h.enrichGatewayMACs(cidr, result.Devices)
+
 	// Merge devices into storage
 	newDevs, seenDevs, movedDevs, err := h.store.MergeDevicesWithMoves(result.Devices)
 	if err != nil {
@@ -874,6 +877,9 @@ func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResu
 	h.notifyRemoteScannerSuccess(cidr, cidr)
 	h.store.ClearNetworkScanError(cidr)
 
+	// Enrich any self-scanned gateway host (which remote Nmap returns with no MAC)
+	h.enrichGatewayMACs(cidr, result.Devices)
+
 	newDevs, seenDevs, movedDevs, err := h.store.MergeDevicesWithMoves(result.Devices)
 	if err != nil {
 		return nil, errors.New("failed to save devices")
@@ -903,6 +909,41 @@ func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResu
 	h.store.SetLastDuration(cidr, result.Duration)
 
 	return result, nil
+}
+
+// enrichGatewayMACs populates known gateway MAC addresses for self-scanned edge router hosts
+// that report no MAC address because local ARP does not produce Ethernet frames for self-traffic.
+func (h *Handler) enrichGatewayMACs(cidr string, devices []types.Device) {
+	if h.cfg == nil || len(devices) == 0 {
+		return
+	}
+	var gwHost string
+	if sc, ok := h.cfg.RemoteScanners.FindScannerForCIDR(cidr); ok && sc != nil && sc.Host != "" {
+		gwHost = sc.Host
+	}
+
+	for i := range devices {
+		if devices[i].MAC != "" {
+			continue
+		}
+		// Check if this device IP matches the remote scanner's host IP
+		if gwHost != "" && devices[i].IP == gwHost {
+			if existing := h.store.GetDevice(gwHost); existing != nil && existing.MAC != "" {
+				devices[i].MAC = existing.MAC
+				if devices[i].Vendor == "" {
+					devices[i].Vendor = existing.Vendor
+				}
+				continue
+			}
+		}
+		// Also check if any existing device record in store holds devices[i].IP in its ips attachments
+		if existing := h.store.GetDevice(devices[i].IP); existing != nil && existing.MAC != "" {
+			devices[i].MAC = existing.MAC
+			if devices[i].Vendor == "" {
+				devices[i].Vendor = existing.Vendor
+			}
+		}
+	}
 }
 
 // handleTailscale handles GET /api/tailscale

@@ -1279,7 +1279,7 @@ func (s *Storage) findByMACLocked(tx *sql.Tx, mac, excludeIP string) (string, *t
 		       COALESCE(ips, '[]') AS ips
 		FROM devices
 		WHERE mac = ? AND ip != ?
-		ORDER BY is_online DESC, last_seen DESC, first_seen ASC
+		ORDER BY is_online DESC, length(ip) ASC, ip ASC, last_seen DESC, first_seen ASC
 	`, mac, excludeIP)
 	if err != nil {
 		return "", nil, err
@@ -1315,7 +1315,7 @@ func (s *Storage) findAnyByMACLocked(tx *sql.Tx, mac string) (*types.Device, err
 		       COALESCE(ips, '[]') AS ips
 		FROM devices
 		WHERE mac = ?
-		ORDER BY is_online DESC, last_seen DESC, first_seen ASC
+		ORDER BY is_online DESC, length(ip) ASC, ip ASC, last_seen DESC, first_seen ASC
 		LIMIT 1
 	`, mac)
 	d, err := s.scanDevice(row)
@@ -1638,13 +1638,14 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, detected_ssh_port = ?,
 					ssh_override = ?, ssh_override_port = ?, assignment = ?, network_name = ?,
 					first_seen = ?, last_seen = ?, response_time = ?, address_history = ?,
+					is_online = 1,
 					linked_mac = ?, notify_on_seen = ?, ansible_managed = ?,
 					os = ?, os_version = ?, os_family = ?, custom_os = ?, custom_os_version = ?, custom_os_family = ?,
 					ssid = ?, ap_name = ?, radio_band = ?, channel = ?, wifi_standard = ?, signal = ?, signal_quality = ?,
 					rx_rate = ?, tx_rate = ?, rx_bytes = ?, tx_bytes = ?, association_uptime = ?, unifi_model = ?, vlan = ?, unifi_name = ?,
 					router_source = ?, router_interface = ?, lease_expires = ?, lease_lifetime = ?, router_notes = ?,
 					switch_name = ?, switch_host = ?, switch_port = ?, switch_vlan = ?, switch_link_state = ?, switch_link_speed = ?, switch_duplex = ?, switch_poe_watts = ?, switch_updated_at = ?,
-					traffic_source = ?, rx_rate_bps, tx_rate_bps, wan_rx_rate_bps, wan_tx_rate_bps, wan_rx_bytes, wan_tx_bytes,
+					traffic_source = ?, rx_rate_bps = ?, tx_rate_bps = ?, wan_rx_rate_bps = ?, wan_tx_rate_bps = ?, wan_rx_bytes = ?, wan_tx_bytes = ?,
 					ips = ?
 				WHERE ip = ?
 			`, old.Hostname, old.Vendor, old.Type, boolToInt(old.WebUI), string(risksJSON),
@@ -1697,6 +1698,23 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 
 			if isRelocation {
 				// Relocation (same or cross subnet): retire oldIP to address history, promote d.IP
+				// If old device was marked as a multi-IP gateway/unified record, check if oldIP was only one of its attachments
+				hasRemainingAttachments := false
+				for _, att := range old.IPs {
+					if att.IP != oldIP && att.IP != "" {
+						hasRemainingAttachments = true
+						break
+					}
+				}
+				if hasRemainingAttachments {
+					// Don't treat a multi-IP device as relocated just because one IP didn't answer in a sweep!
+					// Keep old device, attach d.IP, and merge.
+					isRelocation = false
+				}
+			}
+
+			if isRelocation {
+				// Relocation (same or cross subnet): retire oldIP to address history, promote d.IP
 				d.AddressHistory = appendAddressChange(old.AddressHistory, oldIP, now)
 				s.mergeDuplicateDevice(d, old, now)
 				var newIPs []types.IPAttachment
@@ -1720,6 +1738,9 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 				s.attachIPWithTime(d, d.IP, d.NetworkName, now)
 				s.syncAttachments(d)
 				*old = *d
+				if old.LastSeen.Before(now) {
+					old.LastSeen = now
+				}
 
 				// Record presence event for d.IP
 				_, _ = tx.Exec(`
@@ -1747,6 +1768,7 @@ func (s *Storage) addNewDeviceLocked(tx *sql.Tx, d *types.Device, now time.Time,
 						custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, detected_ssh_port = ?,
 						ssh_override = ?, ssh_override_port = ?, assignment = ?, network_name = ?,
 						first_seen = ?, last_seen = ?, response_time = ?, address_history = ?,
+						is_online = 1,
 						linked_mac = ?, notify_on_seen = ?, ansible_managed = ?,
 						os = ?, os_version = ?, os_family = ?, custom_os = ?, custom_os_version = ?, custom_os_family = ?,
 						ssid = ?, ap_name = ?, radio_band = ?, channel = ?, wifi_standard = ?, signal = ?, signal_quality = ?,
@@ -3707,10 +3729,15 @@ func (s *Storage) DeduplicateMACs() error {
 				continue
 			}
 
-			// Sort newest/active first: online first, then newest LastSeen, then newest FirstSeen
+			// Sort newest/active first: online first, then lowest IP (to pick a stable canonical primary IP like 10.0.0.1 over 10.0.0.5 or 192.168.111.1), then newest LastSeen
 			sort.Slice(list, func(i, j int) bool {
 				if list[i].IsOnline() != list[j].IsOnline() {
 					return list[i].IsOnline()
+				}
+				iLong := types.IPToLong(list[i].LowestIP())
+				jLong := types.IPToLong(list[j].LowestIP())
+				if iLong != jLong {
+					return iLong < jLong
 				}
 				if !list[i].LastSeen.Equal(list[j].LastSeen) {
 					return list[i].LastSeen.After(list[j].LastSeen)
@@ -3751,6 +3778,7 @@ func (s *Storage) DeduplicateMACs() error {
 					custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, detected_ssh_port = ?,
 					ssh_override = ?, ssh_override_port = ?, assignment = ?, network_name = ?,
 					first_seen = ?, last_seen = ?, response_time = ?, address_history = ?,
+					is_online = 1,
 					linked_mac = ?, notify_on_seen = ?, ansible_managed = ?,
 					os = ?, os_version = ?, os_family = ?, custom_os = ?, custom_os_version = ?, custom_os_family = ?,
 					ssid = ?, ap_name = ?, radio_band = ?, channel = ?, wifi_standard = ?, signal = ?, signal_quality = ?,
@@ -3803,6 +3831,7 @@ func (s *Storage) DeduplicateMACs() error {
 		attRows.Close()
 
 		for _, target := range multiIPDevices {
+			targetUpdated := false
 			for _, att := range target.IPs {
 				if att.IP != "" && att.IP != target.IP {
 					row := tx.QueryRow(`
@@ -3825,8 +3854,54 @@ func (s *Storage) DeduplicateMACs() error {
 						_, _ = tx.Exec("UPDATE OR IGNORE device_open_ports SET ip = ? WHERE ip = ?", target.IP, duplicate.IP)
 						_, _ = tx.Exec("DELETE FROM device_open_ports WHERE ip = ?", duplicate.IP)
 						_, _ = tx.Exec("DELETE FROM devices WHERE ip = ?", duplicate.IP)
+						targetUpdated = true
 					}
 				}
+			}
+			if targetUpdated {
+				s.syncAttachments(target)
+				risksJSON, _ := json.Marshal(target.Risks)
+				historyJSON, _ := json.Marshal(target.AddressHistory)
+				ipsJSON, _ := json.Marshal(target.IPs)
+				var leaseExpiresVal interface{}
+				if !target.LeaseExpires.IsZero() {
+					leaseExpiresVal = target.LeaseExpires
+				}
+				var switchUpdatedAtVal interface{}
+				if !target.SwitchUpdatedAt.IsZero() {
+					switchUpdatedAtVal = target.SwitchUpdatedAt
+				}
+
+				_, _ = tx.Exec(`
+					UPDATE devices SET
+						hostname = ?, vendor = ?, type = ?, web_ui = ?, risks = ?,
+						label = ?, notes = ?, "group" = ?, custom_hostname = ?, custom_web_url = ?,
+						custom_type = ?, web_port = ?, web_scheme = ?, probed = ?, detected_ssh_port = ?,
+						ssh_override = ?, ssh_override_port = ?, assignment = ?, network_name = ?,
+						first_seen = ?, last_seen = ?, response_time = ?, address_history = ?,
+						linked_mac = ?, notify_on_seen = ?, ansible_managed = ?,
+						os = ?, os_version = ?, os_family = ?, custom_os = ?, custom_os_version = ?, custom_os_family = ?,
+						ssid = ?, ap_name = ?, radio_band = ?, channel = ?, wifi_standard = ?, signal = ?, signal_quality = ?,
+						rx_rate = ?, tx_rate = ?, rx_bytes = ?, tx_bytes = ?, association_uptime = ?, unifi_model = ?, vlan = ?, unifi_name = ?,
+						router_source = ?, router_interface = ?, lease_expires = ?, lease_lifetime = ?, router_notes = ?,
+						switch_name = ?, switch_host = ?, switch_port = ?, switch_vlan = ?, switch_link_state = ?, switch_link_speed = ?, switch_duplex = ?, switch_poe_watts = ?, switch_updated_at = ?,
+						traffic_source = ?, rx_rate_bps = ?, tx_rate_bps = ?, wan_rx_rate_bps = ?, wan_tx_rate_bps = ?, wan_rx_bytes = ?, wan_tx_bytes = ?,
+						ips = ?
+					WHERE ip = ?
+				`, target.Hostname, target.Vendor, target.Type, boolToInt(target.WebUI), string(risksJSON),
+					target.Label, target.Notes, target.Group, target.CustomHostname, target.CustomWebURL,
+					target.CustomType, target.WebPort, target.WebScheme, boolToInt(target.Probed), target.DetectedSSHPort,
+					target.SSHOverride, target.SSHOverridePort, target.Assignment, target.NetworkName,
+					target.FirstSeen, target.LastSeen, target.ResponseTime, string(historyJSON),
+					target.LinkedMAC, boolToInt(target.NotifyOnSeen), boolToInt(target.AnsibleManaged),
+					target.OS, target.OSVersion, target.OSFamily, target.CustomOS, target.CustomOSVersion, target.CustomOSFamily,
+					target.SSID, target.APName, target.RadioBand, target.Channel, target.WiFiStandard, target.Signal, target.SignalQuality,
+					target.RxRate, target.TxRate, target.RxBytes, target.TxBytes, target.AssociationUptime, target.UniFiModel, target.VLAN, target.UniFiName,
+					target.RouterSource, target.RouterInterface, leaseExpiresVal, target.LeaseLifetime, target.RouterNotes,
+					target.SwitchName, target.SwitchHost, target.SwitchPort, target.SwitchVLAN, target.SwitchLinkState, target.SwitchLinkSpeed, target.SwitchDuplex, target.SwitchPoEWatts, switchUpdatedAtVal,
+					target.TrafficSource, target.RxRateBps, target.TxRateBps, target.WanRxRateBps, target.WanTxRateBps, target.WanRxBytes, target.WanTxBytes,
+					string(ipsJSON),
+					target.IP)
 			}
 		}
 	}
