@@ -19,6 +19,7 @@ import (
 
 	"github.com/spoutin/LAN-Orangutan/internal/api"
 	"github.com/spoutin/LAN-Orangutan/internal/auth"
+	"github.com/spoutin/LAN-Orangutan/internal/config"
 	"github.com/spoutin/LAN-Orangutan/internal/logging"
 	"github.com/spoutin/LAN-Orangutan/internal/network"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
@@ -246,6 +247,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, warning := range insecureSSLWarnings(cfg) {
+		log.Printf("WARNING: %s", warning)
+	}
+
 	fmt.Println("Press Ctrl+C to stop")
 
 	if err := server.Serve(listener); err != http.ErrServerClosed {
@@ -261,6 +266,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 // because something else already holds it.
 func isAddrInUse(err error) bool {
 	return errors.Is(err, syscall.EADDRINUSE)
+}
+
+// insecureSSLWarnings returns startup warnings for enabled integrations that
+// have TLS certificate verification disabled (verify_ssl = false).
+func insecureSSLWarnings(c *config.Config) []string {
+	if c == nil {
+		return nil
+	}
+	var warnings []string
+	if c.OPNsense.Enable && !c.OPNsense.VerifySSL {
+		warnings = append(warnings, "opnsense integration has verify_ssl = false; TLS certificate verification is disabled (set verify_ssl = true when using a trusted certificate)")
+	}
+	for _, wrt := range c.AllOpenWrts() {
+		if !wrt.Enable || wrt.VerifySSL {
+			continue
+		}
+		name := "openwrt"
+		if wrt.ID != "" && wrt.ID != "openwrt" {
+			name = "openwrt." + wrt.ID
+		}
+		warnings = append(warnings, fmt.Sprintf("%s integration has verify_ssl = false; TLS certificate verification is disabled (set verify_ssl = true when using a trusted certificate)", name))
+	}
+	if c.UniFi.Enable && !c.UniFi.VerifySSL {
+		warnings = append(warnings, "unifi integration has verify_ssl = false; TLS certificate verification is disabled (set verify_ssl = true when using a trusted certificate)")
+	}
+	return warnings
 }
 
 // guardHost rejects requests whose Host header is not a loopback identifier,

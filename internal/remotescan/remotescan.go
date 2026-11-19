@@ -3,8 +3,11 @@ package remotescan
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // Runner manages remote scanner dispatch and execution over SSH
@@ -42,12 +46,20 @@ func (e *RemoteScannerError) Unwrap() error {
 	return e.Err
 }
 
+type dialCall struct {
+	done   chan struct{}
+	client *ssh.Client
+	err    error
+}
+
 // SSHRunner implements Runner using SSH connections
 type SSHRunner struct {
 	cfg            config.RemoteScannersConfig
 	clients        map[string]*ssh.Client
 	clientKeyFiles map[string]string
 	clientModTimes map[string]time.Time
+	inflight       map[string]*dialCall
+	closed         bool
 	mu             sync.Mutex
 }
 
@@ -74,6 +86,7 @@ func NewRunner(cfg config.RemoteScannersConfig) Runner {
 		clients:        make(map[string]*ssh.Client),
 		clientKeyFiles: make(map[string]string),
 		clientModTimes: make(map[string]time.Time),
+		inflight:       make(map[string]*dialCall),
 	}
 }
 
@@ -190,74 +203,211 @@ func (r *SSHRunner) getAuthMethods(sc config.RemoteScannerConfig) ([]ssh.AuthMet
 	return nil, nil, fmt.Errorf("no SSH authentication configured for gateway %q (specify ssh_key_file, ssh_key, or ssh_password)", sc.ID)
 }
 
-func (r *SSHRunner) getClient(sc config.RemoteScannerConfig) (*ssh.Client, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	addr := fmt.Sprintf("%s:%d", sc.Host, sc.Port)
-	keyFile := r.getKeyFileForScanner(sc)
-
-	// If key file is configured, check if file on disk was modified since connection established
-	if keyFile != "" {
-		if fi, err := os.Stat(keyFile); err == nil {
-			if lastMod, ok := r.clientModTimes[addr]; ok && !fi.ModTime().Equal(lastMod) {
-				// Key on disk changed! Close and recycle client.
-				if c, ok := r.clients[addr]; ok {
-					_ = c.Close()
-					delete(r.clients, addr)
-					delete(r.clientKeyFiles, addr)
-					delete(r.clientModTimes, addr)
-				}
-			}
-		}
-	}
-
-	if client, ok := r.clients[addr]; ok {
-		return client, nil
-	}
-
+func (r *SSHRunner) clientPoolKey(sc config.RemoteScannerConfig) string {
 	user := sc.User
 	if user == "" {
 		user = "root"
 	}
+	h := sha256.New()
+	writeField := func(v string) {
+		_, _ = fmt.Fprintf(h, "%d:%s\n", len(v), v)
+	}
+	writeField(sc.SSHKey)
+	writeField(sc.SSHKeyFile)
+	writeField(sc.SSHPassword)
+	writeField(sc.SSHHostKey)
+	writeField(sc.SSHKnownHostsFile)
+	writeField(fmt.Sprintf("%t:%t", sc.SSHInsecureHostKey, sc.SSHInsecureHostKeySet))
+	writeField(r.cfg.SSHKey)
+	writeField(r.cfg.SSHKeyFile)
+	writeField(r.cfg.SSHPassword)
+	writeField(r.cfg.SSHKnownHostsFile)
+	writeField(fmt.Sprintf("%t", r.cfg.SSHInsecureHostKey))
+	fp := hex.EncodeToString(h.Sum(nil))[:16]
+	return fmt.Sprintf("%s:%d:%s:%s", sc.Host, sc.Port, user, fp)
+}
 
-	authMethods, authDescs, err := r.getAuthMethods(sc)
+func dialSSHClient(ctx context.Context, addr string, clientConfig *ssh.ClientConfig) (*ssh.Client, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	rawConn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	descStr := strings.Join(authDescs, ", ")
 
-	clientConfig := &ssh.ClientConfig{
-		User:            user,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         10 * time.Second,
-	}
-
-	conn, err := ssh.Dial("tcp", addr, clientConfig)
-	if err != nil {
-		return nil, fmt.Errorf("ssh dial to %s as user %q using %s failed: %w", addr, user, descStr, err)
-	}
-
-	log.Printf("[remotescan] gateway %q: connected to %s as user %q using %s", sc.ID, addr, user, descStr)
-	r.clients[addr] = conn
-	if keyFile != "" {
-		if fi, err := os.Stat(keyFile); err == nil {
-			r.clientKeyFiles[addr] = keyFile
-			r.clientModTimes[addr] = fi.ModTime()
+	handshakeDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = rawConn.Close()
+		case <-handshakeDone:
 		}
+	}()
+
+	sshConn, chans, reqs, err := ssh.NewClientConn(rawConn, addr, clientConfig)
+	close(handshakeDone)
+	if err != nil {
+		_ = rawConn.Close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, err
 	}
-	return conn, nil
+	return ssh.NewClient(sshConn, chans, reqs), nil
 }
 
-func (r *SSHRunner) removeClient(addr string) {
+func (r *SSHRunner) getClient(ctx context.Context, sc config.RemoteScannerConfig) (*ssh.Client, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	addr := fmt.Sprintf("%s:%d", sc.Host, sc.Port)
+	key := r.clientPoolKey(sc)
+	keyFile := r.getKeyFileForScanner(sc)
+
+	for {
+		r.mu.Lock()
+		if r.closed {
+			r.mu.Unlock()
+			return nil, fmt.Errorf("ssh runner is closed")
+		}
+
+		// If key file is configured, check if file on disk was modified since connection established
+		if keyFile != "" {
+			if fi, err := os.Stat(keyFile); err == nil {
+				if lastMod, ok := r.clientModTimes[key]; ok && !fi.ModTime().Equal(lastMod) {
+					// Key on disk changed! Close and recycle client.
+					if c, ok := r.clients[key]; ok {
+						_ = c.Close()
+						delete(r.clients, key)
+						delete(r.clientKeyFiles, key)
+						delete(r.clientModTimes, key)
+					}
+				}
+			}
+		}
+
+		if client, ok := r.clients[key]; ok {
+			r.mu.Unlock()
+			return client, nil
+		}
+
+		if call, ok := r.inflight[key]; ok {
+			r.mu.Unlock()
+			select {
+			case <-call.done:
+				if call.err != nil {
+					return nil, call.err
+				}
+				return call.client, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		call := &dialCall{done: make(chan struct{})}
+		if r.inflight == nil {
+			r.inflight = make(map[string]*dialCall)
+		}
+		r.inflight[key] = call
+		r.mu.Unlock()
+
+		user := sc.User
+		if user == "" {
+			user = "root"
+		}
+
+		var conn *ssh.Client
+		var dialErr error
+
+		authMethods, authDescs, err := r.getAuthMethods(sc)
+		if err != nil {
+			dialErr = err
+		} else {
+			descStr := strings.Join(authDescs, ", ")
+			hostKeyCallback, hkErr := r.getHostKeyCallback(sc)
+			if hkErr != nil {
+				dialErr = hkErr
+			} else {
+				clientConfig := &ssh.ClientConfig{
+					User:            user,
+					Auth:            authMethods,
+					HostKeyCallback: hostKeyCallback,
+					Timeout:         10 * time.Second,
+				}
+				conn, dialErr = dialSSHClient(ctx, addr, clientConfig)
+				if dialErr != nil {
+					dialErr = fmt.Errorf("ssh dial to %s as user %q using %s failed: %w", addr, user, descStr, dialErr)
+				} else {
+					log.Printf("[remotescan] gateway %q: connected to %s as user %q using %s", sc.ID, addr, user, descStr)
+				}
+			}
+		}
+
+		r.mu.Lock()
+		delete(r.inflight, key)
+		if dialErr == nil {
+			if r.closed {
+				_ = conn.Close()
+				conn = nil
+				dialErr = fmt.Errorf("ssh runner is closed")
+			} else {
+				r.clients[key] = conn
+				if keyFile != "" {
+					if fi, err := os.Stat(keyFile); err == nil {
+						r.clientKeyFiles[key] = keyFile
+						r.clientModTimes[key] = fi.ModTime()
+					}
+				}
+			}
+		}
+		call.client = conn
+		call.err = dialErr
+		close(call.done)
+		r.mu.Unlock()
+
+		return conn, dialErr
+	}
+}
+
+func (r *SSHRunner) getHostKeyCallback(sc config.RemoteScannerConfig) (ssh.HostKeyCallback, error) {
+	if hostKeyStr := strings.TrimSpace(sc.SSHHostKey); hostKeyStr != "" {
+		pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(hostKeyStr))
+		if err != nil {
+			return nil, fmt.Errorf("invalid ssh_host_key for gateway %q: %w", sc.ID, err)
+		}
+		return ssh.FixedHostKey(pubKey), nil
+	}
+
+	knownHostsFile := strings.TrimSpace(sc.SSHKnownHostsFile)
+	if knownHostsFile == "" {
+		knownHostsFile = strings.TrimSpace(r.cfg.SSHKnownHostsFile)
+	}
+	if knownHostsFile != "" {
+		cb, err := knownhosts.New(knownHostsFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed loading ssh_known_hosts_file %q for gateway %q: %w", knownHostsFile, sc.ID, err)
+		}
+		return cb, nil
+	}
+
+	if sc.SSHInsecureHostKey || (r.cfg.SSHInsecureHostKey && !sc.SSHInsecureHostKeySet) {
+		log.Printf("[remotescan] WARNING: gateway %q: SSH host key verification disabled (ssh_insecure_host_key=true)", sc.ID)
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+
+	return nil, fmt.Errorf("SSH host key verification not configured for gateway %q: set ssh_known_hosts_file, ssh_host_key, or ssh_insecure_host_key=true", sc.ID)
+}
+
+func (r *SSHRunner) removeClient(key string, failedClient *ssh.Client) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if c, ok := r.clients[addr]; ok {
+	if c, ok := r.clients[key]; ok && (failedClient == nil || c == failedClient) {
 		_ = c.Close()
-		delete(r.clients, addr)
-		delete(r.clientKeyFiles, addr)
-		delete(r.clientModTimes, addr)
+		delete(r.clients, key)
+		delete(r.clientKeyFiles, key)
+		delete(r.clientModTimes, key)
 	}
 }
 
@@ -277,9 +427,19 @@ func (r *SSHRunner) RunScan(ctx context.Context, target string, args []string) (
 		return nil, fmt.Errorf("no remote scanner configured for target %s", target)
 	}
 	gatewayName := fmt.Sprintf("%s (%s)", sc.ID, sc.Host)
-	addr := fmt.Sprintf("%s:%d", sc.Host, sc.Port)
 
-	client, err := r.getClient(*sc)
+	quotedArgs := make([]string, len(args))
+	for i, arg := range args {
+		q, err := shellQuote(arg)
+		if err != nil {
+			return nil, &RemoteScannerError{Gateway: gatewayName, Target: target, Err: err}
+		}
+		quotedArgs[i] = q
+	}
+
+	poolKey := r.clientPoolKey(*sc)
+
+	client, err := r.getClient(ctx, *sc)
 	if err != nil {
 		return nil, &RemoteScannerError{Gateway: gatewayName, Target: target, Err: err}
 	}
@@ -287,8 +447,8 @@ func (r *SSHRunner) RunScan(ctx context.Context, target string, args []string) (
 	session, err := client.NewSession()
 	if err != nil {
 		// Connection might be stale, retry once
-		r.removeClient(addr)
-		client, err = r.getClient(*sc)
+		r.removeClient(poolKey, client)
+		client, err = r.getClient(ctx, *sc)
 		if err != nil {
 			return nil, &RemoteScannerError{Gateway: gatewayName, Target: target, Err: err}
 		}
@@ -315,7 +475,10 @@ func (r *SSHRunner) RunScan(ctx context.Context, target string, args []string) (
 	if sc.Sudo {
 		prefix = "sudo -n nmap"
 	}
-	cmd := fmt.Sprintf("%s %s", prefix, strings.Join(args, " "))
+	cmd := prefix
+	if len(quotedArgs) > 0 {
+		cmd = fmt.Sprintf("%s %s", prefix, strings.Join(quotedArgs, " "))
+	}
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
 	session.Stderr = &stderr
@@ -354,9 +517,19 @@ func (r *SSHRunner) RunScan(ctx context.Context, target string, args []string) (
 func (r *SSHRunner) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for addr, client := range r.clients {
+	r.closed = true
+	for key, client := range r.clients {
 		_ = client.Close()
-		delete(r.clients, addr)
+		delete(r.clients, key)
 	}
+	clear(r.clientKeyFiles)
+	clear(r.clientModTimes)
 	return nil
+}
+
+func shellQuote(arg string) (string, error) {
+	if strings.ContainsRune(arg, '\x00') {
+		return "", fmt.Errorf("invalid argument containing NUL byte")
+	}
+	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'", nil
 }

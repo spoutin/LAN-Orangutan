@@ -65,7 +65,7 @@ orangutan export out.csv</code></pre>
             <a href="/scans" class="nav-link">Scans</a>
             <a href="/settings" class="nav-link active">Settings</a>
             <button type="button" class="nav-link" onclick="openLogsModal()" title="View System &amp; Scan Logs">Logs</button>
-            {{if .AuthEnabled}}<a href="/logout" class="nav-link">Sign out</a>{{end}}
+            {{if .AuthEnabled}}<form method="post" action="/logout" style="display:inline;margin:0;"><button type="submit" class="nav-link">Sign out</button></form>{{end}}
             <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">◐</button>
         </nav>
     </header>
@@ -156,12 +156,12 @@ orangutan export out.csv</code></pre>
                         <div style="font-weight: 600; margin-bottom: 0.75rem; display: flex; align-items: center; justify-content: space-between;">
                             <span>{{if .FriendlyName}}{{.FriendlyName}}{{else}}Local Subnet{{end}} ({{.CIDR}})</span>
                             <label class="switch" style="display: flex; align-items: center; gap: 0.5rem; font-weight: 500; font-size: 0.85rem; cursor: pointer; user-select: none;">
-                                <input type="checkbox" id="notify-enabled-{{.CIDR}}" onchange="saveNotification('{{.CIDR}}')" {{if .NotifyEnabled}}checked{{end}} style="width: auto; margin: 0; cursor: pointer;"> Enabled
+                                <input type="checkbox" id="notify-enabled-{{.CIDR}}" class="js-notify-enabled" data-cidr="{{.CIDR}}" {{if .NotifyEnabled}}checked{{end}} style="width: auto; margin: 0; cursor: pointer;"> Enabled
                             </label>
                         </div>
                         <div style="display: flex; gap: 0.75rem; align-items: center;">
-                            <input type="text" id="notify-webhook-{{.CIDR}}" class="input" placeholder="https://hooks.slack.com/services/..." value="{{.SlackWebhook}}" style="flex: 1;" onblur="saveNotification('{{.CIDR}}')">
-                            <button class="btn" style="padding: 0.5rem 1rem;" onclick="testNotification('{{.CIDR}}')">Test</button>
+                            <input type="text" id="notify-webhook-{{.CIDR}}" class="input js-notify-webhook" data-cidr="{{.CIDR}}" placeholder="https://hooks.slack.com/services/..." value="{{.SlackWebhook}}" style="flex: 1;">
+                            <button type="button" class="btn js-test-notification" data-cidr="{{.CIDR}}" style="padding: 0.5rem 1rem;">Test</button>
                         </div>
                     </div>
                     {{end}}{{end}}
@@ -209,7 +209,9 @@ orangutan export out.csv</code></pre>
                     <span class="status-value online">✓ Enabled</span>
                 </div>
                 <div class="form-group" style="margin-top: 1rem;">
-                    <a href="/logout" class="btn btn-primary">Sign out</a>
+                    <form method="post" action="/logout" style="display:inline;margin:0;">
+                        <button type="submit" class="btn btn-primary">Sign out</button>
+                    </form>
                     <p class="form-help">Ends this session on this browser.</p>
                 </div>
             </div>
@@ -396,7 +398,8 @@ orangutan export out.csv</code></pre>
         <p>LAN Orangutan by <a href="https://291group.com" target="_blank">291 Group</a></p>
     </footer>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/html-utils.js?v={{.Version}}"></script>
+    <script src="/static/app.js?v={{.Version}}"></script>
     <script>
         function setTheme(theme) {
             // Shared with the header toggle so the radios also switch without the
@@ -479,17 +482,13 @@ orangutan export out.csv</code></pre>
                 tbody.innerHTML = tokens.map(t => {
                     const createdDate = new Date(t.created_at).toLocaleDateString();
                     const lastUsed = t.last_used_at ? new Date(t.last_used_at).toLocaleString() : 'Never';
-                    return `
-                        <tr style="border-bottom: 1px solid var(--border);">
-                            <td style="padding: 0.75rem 0.5rem; font-weight: 500;">${escapeHtml(t.name)}</td>
-                            <td style="padding: 0.75rem 0.5rem;"><code style="background: var(--bg-main); padding: 0.2rem 0.4rem; border-radius: 4px; font-size: 0.85rem;">${escapeHtml(t.token_prefix)}…</code></td>
-                            <td style="padding: 0.75rem 0.5rem; color: var(--text-muted); font-size: 0.85rem;">${createdDate}</td>
-                            <td style="padding: 0.75rem 0.5rem; color: var(--text-muted); font-size: 0.85rem;">${lastUsed}</td>
-                            <td style="padding: 0.75rem 0.5rem; text-align: right;">
-                                <button class="btn btn-danger btn-sm" onclick="deleteToken(${t.id}, '${escapeHtml(t.name)}')">Revoke</button>
-                            </td>
-                        </tr>
-                    `;
+                    return renderTokenRowHtml({
+                        id: t.id,
+                        name: t.name,
+                        token_prefix: t.token_prefix,
+                        createdDate,
+                        lastUsed
+                    });
                 }).join('');
             } catch (e) {
                 tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">Failed to load tokens</td></tr>';
@@ -579,9 +578,39 @@ orangutan export out.csv</code></pre>
             }
         }
 
-        // Initialize tokens table on page load
+        // Initialize tokens table and delegated handlers on page load
         document.addEventListener('DOMContentLoaded', () => {
             fetchAndRenderTokens();
+
+            const tokensBody = document.getElementById('tokens-table-body');
+            if (tokensBody) {
+                tokensBody.addEventListener('click', (e) => {
+                    const btn = e.target.closest('.js-delete-token');
+                    if (!btn) return;
+                    deleteToken(btn.dataset.tokenId, btn.dataset.tokenName || '');
+                });
+            }
+
+            document.addEventListener('change', (e) => {
+                const checkbox = e.target.closest('.js-notify-enabled');
+                if (checkbox && checkbox.dataset.cidr) {
+                    saveNotification(checkbox.dataset.cidr);
+                }
+            });
+
+            document.addEventListener('focusout', (e) => {
+                const input = e.target.closest('.js-notify-webhook');
+                if (input && input.dataset.cidr) {
+                    saveNotification(input.dataset.cidr);
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                const btn = e.target.closest('.js-test-notification');
+                if (btn && btn.dataset.cidr) {
+                    testNotification(btn.dataset.cidr);
+                }
+            });
         });
     </script>
 </body>

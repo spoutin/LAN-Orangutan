@@ -2,7 +2,9 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -76,11 +78,26 @@ func fetchSwitchConnections(ctx context.Context, cfg config.SwitchConfig, vlanBy
 		return nil, switchWalkError(cfg.ID, "forwarding table")
 	}
 
-	operStatus, _ := walkIntTable(ctx, w, switchIfOperStatusOID)
-	highSpeed, _ := walkIntTable(ctx, w, switchIfHighSpeedOID)
-	duplex, _ := walkIntTable(ctx, w, switchIfDuplexOID)
-	hcInOctets, _ := walkUint64Table(ctx, w, switchIfHCInOctetsOID)
-	hcOutOctets, _ := walkUint64Table(ctx, w, switchIfHCOutOctetsOID)
+	operStatus, err := walkIntTable(ctx, w, switchIfOperStatusOID)
+	if isFatalSwitchWalkErr(ctx, err) {
+		return nil, switchWalkError(cfg.ID, "interface status")
+	}
+	highSpeed, err := walkIntTable(ctx, w, switchIfHighSpeedOID)
+	if isFatalSwitchWalkErr(ctx, err) {
+		return nil, switchWalkError(cfg.ID, "interface speed")
+	}
+	duplex, err := walkIntTable(ctx, w, switchIfDuplexOID)
+	if isFatalSwitchWalkErr(ctx, err) {
+		return nil, switchWalkError(cfg.ID, "interface duplex")
+	}
+	hcInOctets, err := walkUint64Table(ctx, w, switchIfHCInOctetsOID)
+	if isFatalSwitchWalkErr(ctx, err) {
+		return nil, switchWalkError(cfg.ID, "interface in octets")
+	}
+	hcOutOctets, err := walkUint64Table(ctx, w, switchIfHCOutOctetsOID)
+	if isFatalSwitchWalkErr(ctx, err) {
+		return nil, switchWalkError(cfg.ID, "interface out octets")
+	}
 	requestedVLAN := make(map[string]int, len(vlanByMAC))
 	for mac, vlan := range vlanByMAC {
 		requestedVLAN[normalizeSwitchMAC(mac)] = vlan
@@ -258,11 +275,32 @@ func walkFDBTable(ctx context.Context, w switchWalker, oid string, vlanAware boo
 	return result, nil
 }
 
+func isFatalSwitchWalkErr(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
 func oidIndex(name, root string, count int) ([]int, bool) {
 	name = strings.TrimPrefix(name, ".")
 	root = strings.TrimPrefix(root, ".")
-	parts := strings.Split(strings.TrimPrefix(strings.TrimPrefix(name, root), "."), ".")
-	if len(parts) != count || strings.Join(parts, ".") == name {
+	if !strings.HasPrefix(name, root+".") {
+		return nil, false
+	}
+	suffix := strings.TrimPrefix(name, root+".")
+	if suffix == "" {
+		return nil, false
+	}
+	parts := strings.Split(suffix, ".")
+	if len(parts) != count {
 		return nil, false
 	}
 	index := make([]int, count)

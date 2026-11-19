@@ -87,13 +87,32 @@ func parseNodeStatusName(resp []byte) (string, error) {
 		return "", errors.New("no answer records")
 	}
 
-	// Skip the answer record's name, which is either a literal length-prefixed
-	// name or a compression pointer (top two bits set).
+	// Skip the answer record's name, which is a sequence of length-prefixed
+	// labels terminated by a zero byte or a compression pointer (top two bits set).
 	pos := 12
-	if resp[pos]&0xC0 == 0xC0 {
-		pos += 2
-	} else {
-		pos += 1 + int(resp[pos]) + 1 // length byte + encoded name + terminator
+	for {
+		if pos >= len(resp) {
+			return "", errors.New("truncated answer name")
+		}
+		length := int(resp[pos])
+		if length == 0 {
+			pos++
+			break
+		}
+		if length&0xC0 == 0xC0 {
+			if pos+2 > len(resp) {
+				return "", errors.New("truncated compression pointer")
+			}
+			pos += 2
+			break
+		}
+		if length&0xC0 != 0 {
+			return "", errors.New("invalid label length")
+		}
+		if pos+1+length >= len(resp) {
+			return "", errors.New("truncated answer label")
+		}
+		pos += 1 + length
 	}
 	// Skip type(2) + class(2) + ttl(4) + rdlength(2).
 	pos += 10
@@ -146,7 +165,19 @@ func sanitizeNetBIOSName(raw []byte) string {
 // It always runs, not only under service detection: it is name resolution, the
 // same category as the reverse DNS lookup the scan already does, and it only
 // touches devices that have no name yet.
+func (s *Scanner) fillWindowsNames(ctx context.Context, devices []types.Device) {
+	lookup := netbiosName
+	if s.hooks.NetBIOSName != nil {
+		lookup = s.hooks.NetBIOSName
+	}
+	fillWindowsNamesWithLookup(ctx, devices, lookup)
+}
+
 func fillWindowsNames(ctx context.Context, devices []types.Device) {
+	fillWindowsNamesWithLookup(ctx, devices, netbiosName)
+}
+
+func fillWindowsNamesWithLookup(ctx context.Context, devices []types.Device, lookup func(context.Context, string) string) {
 	sem := make(chan struct{}, serviceProbeConcurrency)
 	var wg sync.WaitGroup
 
@@ -160,7 +191,7 @@ func fillWindowsNames(ctx context.Context, devices []types.Device) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			name := netbiosName(ctx, d.IP)
+			name := lookup(ctx, d.IP)
 			if name == "" {
 				return
 			}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -13,6 +14,12 @@ import (
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 )
 
+var (
+	lookPathFunc           = exec.LookPath
+	getToolVersionFunc     = getToolVersion
+	getTailscaleStatusFunc = network.GetTailscaleStatus
+)
+
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show system and service status",
@@ -20,42 +27,43 @@ var statusCmd = &cobra.Command{
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	fmt.Println("=== LAN Orangutan Status ===")
-	fmt.Println()
+	out := cmdOut(cmd)
+	fmt.Fprintln(out, "=== LAN Orangutan Status ===")
+	fmt.Fprintln(out)
 
 	// System info
-	fmt.Println("System:")
-	fmt.Printf("  Go Version: %s\n", runtime.Version())
-	fmt.Printf("  OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Fprintln(out, "System:")
+	fmt.Fprintf(out, "  Go Version: %s\n", runtime.Version())
+	fmt.Fprintf(out, "  OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 
 	// Check tools
-	fmt.Println()
-	fmt.Println("Tools:")
-	checkTool("nmap")
-	checkTool("arp-scan")
-	checkTool("tailscale")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Tools:")
+	checkTool(out, "nmap")
+	checkTool(out, "arp-scan")
+	checkTool(out, "tailscale")
 
 	// Storage
-	fmt.Println()
-	fmt.Println("Storage:")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Storage:")
 	store, err := storage.New(cfg.DevicesFile(), cfg.StateFile())
 	if err != nil {
-		fmt.Printf("  Error: %v\n", err)
+		fmt.Fprintf(out, "  Error: %v\n", err)
 	} else {
+		defer store.Close()
 		store.SetScanInterval(cfg.Scanning.ScanInterval)
 		store.SetNetworkNames(cfg.Scanning.NetworkNames)
 		stats := store.GetStats()
-		fmt.Printf("  Devices: %d total (%d online, %d offline)\n", stats.Total, stats.Online, stats.Offline)
-		fmt.Printf("  Data directory: %s\n", cfg.Storage.DataDir)
+		fmt.Fprintf(out, "  Devices: %d total (%d online, %d offline)\n", stats.Total, stats.Online, stats.Offline)
+		fmt.Fprintf(out, "  Data directory: %s\n", cfg.Storage.DataDir)
 	}
 
 	// Networks
-	fmt.Println()
-	fmt.Println("Networks:")
-	networks, err := network.DetectNetworks()
-	networks = network.WithConfigured(networks, network.Filter{Configured: cfg.Scanning.Networks, Excluded: cfg.Scanning.ExcludeNetworks, OnlyConfigured: cfg.Scanning.OnlyConfiguredNetworks})
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Networks:")
+	networks, err := resolveConfiguredNetworks(network.Filter{Configured: cfg.Scanning.Networks, Excluded: cfg.Scanning.ExcludeNetworks, OnlyConfigured: cfg.Scanning.OnlyConfiguredNetworks})
 	if err != nil {
-		fmt.Printf("  Error detecting: %v\n", err)
+		fmt.Fprintf(out, "  Error detecting: %v\n", err)
 	} else {
 		for _, n := range networks {
 			flags := []string{}
@@ -69,50 +77,50 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			if len(flags) > 0 {
 				flagStr = " [" + strings.Join(flags, ", ") + "]"
 			}
-			fmt.Printf("  %s (%s)%s\n", n.CIDR, n.Interface, flagStr)
+			fmt.Fprintf(out, "  %s (%s)%s\n", n.CIDR, n.Interface, flagStr)
 		}
 	}
 
 	// Tailscale
-	fmt.Println()
-	fmt.Println("Tailscale:")
-	ts := network.GetTailscaleStatus()
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Tailscale:")
+	ts := getTailscaleStatusFunc()
 	if !ts.Installed {
-		fmt.Println("  Not installed")
+		fmt.Fprintln(out, "  Not installed")
 	} else if !ts.Running {
-		fmt.Println("  Installed but not running")
+		fmt.Fprintln(out, "  Installed but not running")
 	} else {
-		fmt.Printf("  Status: %s\n", ts.StatusLabel())
+		fmt.Fprintf(out, "  Status: %s\n", ts.StatusLabel())
 		// The IP and peer count are cached from the last session and go stale
 		// once Tailscale stops, so only report them while connected.
 		if ts.Connected {
-			fmt.Printf("  IP: %s\n", ts.SelfIP)
-			fmt.Printf("  Hostname: %s\n", ts.SelfHostname)
-			fmt.Printf("  Peers: %d\n", ts.PeerCount)
+			fmt.Fprintf(out, "  IP: %s\n", ts.SelfIP)
+			fmt.Fprintf(out, "  Hostname: %s\n", ts.SelfHostname)
+			fmt.Fprintf(out, "  Peers: %d\n", ts.PeerCount)
 		}
 	}
 
 	// Server config
-	fmt.Println()
-	fmt.Println("Server:")
-	fmt.Printf("  Port: %d\n", cfg.Server.Port)
-	fmt.Printf("  Bind: %s\n", cfg.Server.BindAddress)
-	fmt.Printf("  API enabled: %v\n", cfg.Server.EnableAPI)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Server:")
+	fmt.Fprintf(out, "  Port: %d\n", cfg.Server.Port)
+	fmt.Fprintf(out, "  Bind: %s\n", cfg.Server.BindAddress)
+	fmt.Fprintf(out, "  API enabled: %v\n", cfg.Server.EnableAPI)
 
 	return nil
 }
 
-func checkTool(name string) {
-	path, err := exec.LookPath(name)
+func checkTool(out io.Writer, name string) {
+	path, err := lookPathFunc(name)
 	if err != nil {
-		fmt.Printf("  %s: not found\n", name)
+		fmt.Fprintf(out, "  %s: not found\n", name)
 	} else {
 		// Get version
-		version := getToolVersion(name)
+		version := getToolVersionFunc(name)
 		if version != "" {
-			fmt.Printf("  %s: %s (%s)\n", name, version, path)
+			fmt.Fprintf(out, "  %s: %s (%s)\n", name, version, path)
 		} else {
-			fmt.Printf("  %s: %s\n", name, path)
+			fmt.Fprintf(out, "  %s: %s\n", name, path)
 		}
 	}
 }

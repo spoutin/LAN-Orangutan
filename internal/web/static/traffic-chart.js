@@ -71,30 +71,49 @@ function renderTrafficChartSVG(series, { width = 700, height = 240, margin = { t
     let txLine = '';
     let rxArea = `M ${margin.left} ${margin.top + plotH}`;
     let txArea = `M ${margin.left} ${margin.top + plotH}`;
+    let singleMarkers = '';
 
-    series.forEach((pt, i) => {
-        const x = margin.left + i * xStep;
+    if (count === 1) {
+        const pt = series[0];
         const rxVal = Number(pt.rx_rate) || 0;
         const txVal = Number(pt.tx_rate) || 0;
         const rxY = margin.top + plotH - (rxVal / maxRate) * plotH;
         const txY = margin.top + plotH - (txVal / maxRate) * plotH;
+        const endX = margin.left + plotW;
+        const midX = margin.left + plotW / 2;
 
-        if (i === 0) {
-            rxLine += `M ${x} ${rxY}`;
-            txLine += `M ${x} ${txY}`;
-            rxArea += ` L ${x} ${rxY}`;
-            txArea += ` L ${x} ${txY}`;
-        } else {
-            rxLine += ` L ${x} ${rxY}`;
-            txLine += ` L ${x} ${txY}`;
-            rxArea += ` L ${x} ${rxY}`;
-            txArea += ` L ${x} ${txY}`;
-        }
-    });
+        rxLine = `M ${margin.left} ${rxY} L ${endX} ${rxY}`;
+        txLine = `M ${margin.left} ${txY} L ${endX} ${txY}`;
+        rxArea += ` L ${margin.left} ${rxY} L ${endX} ${rxY} L ${endX} ${margin.top + plotH} Z`;
+        txArea += ` L ${margin.left} ${txY} L ${endX} ${txY} L ${endX} ${margin.top + plotH} Z`;
+        singleMarkers = `
+        <circle cx="${midX}" cy="${rxY}" r="4" fill="#10b981"/>
+        <circle cx="${midX}" cy="${txY}" r="4" fill="#3b82f6"/>`;
+    } else {
+        series.forEach((pt, i) => {
+            const x = margin.left + i * xStep;
+            const rxVal = Number(pt.rx_rate) || 0;
+            const txVal = Number(pt.tx_rate) || 0;
+            const rxY = margin.top + plotH - (rxVal / maxRate) * plotH;
+            const txY = margin.top + plotH - (txVal / maxRate) * plotH;
 
-    const lastX = margin.left + (count - 1) * xStep;
-    rxArea += ` L ${lastX} ${margin.top + plotH} Z`;
-    txArea += ` L ${lastX} ${margin.top + plotH} Z`;
+            if (i === 0) {
+                rxLine += `M ${x} ${rxY}`;
+                txLine += `M ${x} ${txY}`;
+                rxArea += ` L ${x} ${rxY}`;
+                txArea += ` L ${x} ${txY}`;
+            } else {
+                rxLine += ` L ${x} ${rxY}`;
+                txLine += ` L ${x} ${txY}`;
+                rxArea += ` L ${x} ${rxY}`;
+                txArea += ` L ${x} ${txY}`;
+            }
+        });
+
+        const lastX = margin.left + (count - 1) * xStep;
+        rxArea += ` L ${lastX} ${margin.top + plotH} Z`;
+        txArea += ` L ${lastX} ${margin.top + plotH} Z`;
+    }
 
     // Gridlines and labels
     const gridY1 = margin.top;
@@ -106,6 +125,10 @@ function renderTrafficChartSVG(series, { width = 700, height = 240, margin = { t
 
     const firstTime = series[0] && series[0].timestamp ? new Date(series[0].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
     const lastTime = series[count - 1] && series[count - 1].timestamp ? new Date(series[count - 1].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    const xAxisLabels = count === 1
+        ? `<text x="${margin.left + plotW / 2}" y="${height - 8}" fill="var(--text-muted, #888)" text-anchor="middle" font-size="11">${firstTime}</text>`
+        : `<text x="${margin.left}" y="${height - 8}" fill="var(--text-muted, #888)" text-anchor="start" font-size="11">${firstTime}</text>
+        <text x="${margin.left + plotW}" y="${height - 8}" fill="var(--text-muted, #888)" text-anchor="end" font-size="11">${lastTime}</text>`;
 
     return `<svg viewBox="0 0 ${width} ${height}" class="traffic-svg" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -135,11 +158,10 @@ function renderTrafficChartSVG(series, { width = 700, height = 240, margin = { t
 
         <!-- Lines -->
         <path d="${rxLine}" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="${txLine}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="${txLine}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>${singleMarkers}
 
         <!-- X Axis Labels -->
-        <text x="${margin.left}" y="${height - 8}" fill="var(--text-muted, #888)" text-anchor="start" font-size="11">${firstTime}</text>
-        <text x="${margin.left + plotW}" y="${height - 8}" fill="var(--text-muted, #888)" text-anchor="end" font-size="11">${lastTime}</text>
+        ${xAxisLabels}
     </svg>`;
 }
 

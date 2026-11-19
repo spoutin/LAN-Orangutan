@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"mime"
 	"net"
 	"net/http"
 	"sort"
@@ -32,11 +34,17 @@ type Handler struct {
 	store   *storage.Storage
 	cfg     *config.Config
 	scanner *scanner.Scanner
-	// fetchSwitchConnections is injectable so scan-pipeline tests do not need
-	// an SNMP device.
+	// fetchSwitchConnections and sibling discovery/router hooks are injectable so
+	// scan-pipeline tests do not hit live networks, SNMP devices, or routers.
 	fetchSwitchConnections func(context.Context, config.SwitchConfig, map[string]int) ([]scanner.SwitchConnection, error)
 	fetchUniFiClients      func(context.Context, config.UniFiConfig) ([]types.Device, error)
 	fetchOPNsenseNetFlow   func(context.Context, config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error)
+	fetchOpenWrtNlbwmon    func(context.Context, config.OpenWrtConfig) (map[string]*types.NetFlowDeviceStats, error)
+	fetchOpenWrtDHCP       func(context.Context, config.OpenWrtConfig) ([]types.Device, []types.Device, error)
+	fetchOPNsenseDHCP      func(context.Context, config.OPNsenseConfig) ([]types.Device, []types.Device, []types.Device, error)
+	discoverIPv6           func(context.Context) []types.Device
+	discoverMDNS           func(context.Context) []types.Device
+	enrichWithServices     func(context.Context, []types.Device)
 	sendSlackNotification  func(string, string) error
 	trafficCollector       *TrafficCollector
 
@@ -47,15 +55,22 @@ type Handler struct {
 
 	// scanCtx is the parent of every scan job's context, so cancelling it at
 	// shutdown stops any scan in flight. scanWG tracks the running scan
-	// goroutines so shutdown can wait for them to unwind rather than abandon a
-	// scan mid-write.
-	scanCtx context.Context
-	scanWG  sync.WaitGroup
-	now     func() time.Time
+	// goroutines and bgWG tracks background loops and async notifications so
+	// shutdown can drain everything cleanly before closing storage.
+	closeOnce   sync.Once
+	closeCtx    context.Context
+	closeCancel context.CancelFunc
+	scanCtx     context.Context
+	scanWG      sync.WaitGroup
+	bgWG        sync.WaitGroup
+	nightlyMu   sync.Mutex
+	now         func() time.Time
 
 	alertMu        sync.Mutex
-	alertCache     map[string]time.Time
 	failedGateways map[string]bool
+
+	muxOnce sync.Once
+	mux     *http.ServeMux
 }
 
 // NewHandler creates a new API handler
@@ -64,40 +79,90 @@ func NewHandler(store *storage.Storage, cfg *config.Config) *Handler {
 	if cfg.RemoteScanners.Enable {
 		s.SetRemoteRunner(remotescan.NewRunner(cfg.RemoteScanners))
 	}
-	return &Handler{
+	closeCtx, closeCancel := context.WithCancel(context.Background())
+	h := &Handler{
 		store:                  store,
 		cfg:                    cfg,
 		scanner:                s,
-		scanCtx:                context.Background(),
+		closeCtx:               closeCtx,
+		closeCancel:            closeCancel,
+		scanCtx:                closeCtx,
 		fetchSwitchConnections: scanner.FetchSwitchConnections,
 		fetchUniFiClients:      scanner.FetchUniFiClients,
 		fetchOPNsenseNetFlow:   scanner.FetchOPNsenseNetFlow,
+		fetchOpenWrtNlbwmon:    scanner.FetchOpenWrtNlbwmon,
+		fetchOpenWrtDHCP:       scanner.FetchOpenWrtDHCP,
+		fetchOPNsenseDHCP:      scanner.FetchOPNsenseDHCP,
+		discoverIPv6:           s.DiscoverIPv6,
+		discoverMDNS:           s.DiscoverMDNS,
+		enrichWithServices:     scanner.EnrichWithServices,
 		sendSlackNotification:  notification.SendSlackNotification,
 		now:                    time.Now,
-		alertCache:             make(map[string]time.Time),
 		failedGateways:         make(map[string]bool),
 		trafficCollector:       NewTrafficCollector(store, cfg),
 	}
+	h.mux = h.routes()
+	return h
 }
 
 // SetScanContext sets the parent context for all scan jobs. Cancelling it stops
 // any scan in flight, so call it with the server's shutdown context before
 // starting the server.
-func (h *Handler) SetScanContext(ctx context.Context) { h.scanCtx = ctx }
+func (h *Handler) SetScanContext(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if h.closeCtx == nil {
+		h.scanCtx = ctx
+		return
+	}
+	mergedCtx, cancel := context.WithCancel(ctx)
+	context.AfterFunc(h.closeCtx, cancel)
+	h.scanCtx = mergedCtx
+}
 
-// WaitForScans blocks until any running scan goroutine has returned. Call it at
-// shutdown, after the scan context has been cancelled, so a scan is not left
-// half-written.
-func (h *Handler) WaitForScans() { h.scanWG.Wait() }
-
-// Close closes any background resources, such as remote SSH connections
-func (h *Handler) Close() error {
-	if r := h.scanner.GetRemoteRunner(); r != nil {
-		if closer, ok := r.(interface{ Close() error }); ok {
-			return closer.Close()
+// bgContext derives a context for background loops that cancels when either ctx
+// or Handler.Close() fires.
+func (h *Handler) bgContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	if h.closeCtx != nil {
+		stop := context.AfterFunc(h.closeCtx, cancel)
+		return runCtx, func() {
+			stop()
+			cancel()
 		}
 	}
-	return nil
+	return runCtx, cancel
+}
+
+// WaitForScans blocks until any running scan or background goroutine has
+// returned. Call it at shutdown, after the scan context has been cancelled, so
+// a scan or background loop is not left half-written before closing storage.
+func (h *Handler) WaitForScans() {
+	h.scanWG.Wait()
+	h.bgWG.Wait()
+}
+
+// Close cancels background loops, closes any remote SSH connections, and waits
+// for scan and background goroutines to drain cleanly.
+func (h *Handler) Close() error {
+	h.closeOnce.Do(func() {
+		if h.closeCancel != nil {
+			h.closeCancel()
+		}
+	})
+	var closeErr error
+	if r := h.scanner.GetRemoteRunner(); r != nil {
+		if closer, ok := r.(interface{ Close() error }); ok {
+			closeErr = closer.Close()
+		}
+	}
+	h.scanWG.Wait()
+	h.bgWG.Wait()
+	return closeErr
 }
 
 // gatewayForTarget returns the remote gateway name responsible for target, or "local" if not offloaded.
@@ -106,6 +171,95 @@ func (h *Handler) gatewayForTarget(target string) string {
 		return r.GetGatewayForTarget(target)
 	}
 	return "local"
+}
+
+const (
+	maxJSONBodyBytes = 1 << 20 // 1 MiB
+	maxLogsLimit     = 1000
+)
+
+// decodeJSONBody enforces a strict size limit on JSON request bodies and
+// writes a 413 or 400 error response if decoding fails.
+func (h *Handler) decodeJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			h.error(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return false
+		}
+		h.error(w, http.StatusBadRequest, "invalid JSON")
+		return false
+	}
+	return true
+}
+
+type statusProbeWriter struct {
+	header http.Header
+	code   int
+}
+
+func (p *statusProbeWriter) Header() http.Header         { return p.header }
+func (p *statusProbeWriter) WriteHeader(statusCode int)  { p.code = statusCode }
+func (p *statusProbeWriter) Write(b []byte) (int, error) { return len(b), nil }
+
+func (h *Handler) ensureMux() *http.ServeMux {
+	h.muxOnce.Do(func() {
+		if h.mux == nil {
+			h.mux = h.routes()
+		}
+	})
+	return h.mux
+}
+
+func (h *Handler) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/devices", h.handleDevices)
+	mux.HandleFunc("POST /api/devices/clear", h.handleDevicesClear)
+	mux.HandleFunc("GET /api/devices/clear", h.handleMethodNotAllowed)
+	mux.HandleFunc("PUT /api/devices/clear", h.handleMethodNotAllowed)
+	mux.HandleFunc("DELETE /api/devices/clear", h.handleMethodNotAllowed)
+	mux.HandleFunc("GET /api/devices/{ip}/traffic", h.handleDeviceTraffic)
+	mux.HandleFunc("POST /api/devices/{ip}/facts", h.handleDeviceFacts)
+	mux.HandleFunc("PUT /api/devices/{ip}/facts", h.handleDeviceFacts)
+	mux.HandleFunc("POST /api/devices/{ip}/deep-scan", h.handleDeviceDeepScan)
+	mux.HandleFunc("GET /api/devices/{ip}", h.handleDevice)
+	mux.HandleFunc("POST /api/devices/{ip}", h.handleDevice)
+	mux.HandleFunc("PUT /api/devices/{ip}", h.handleDevice)
+	mux.HandleFunc("DELETE /api/devices/{ip}", h.handleDevice)
+	mux.HandleFunc("GET /api/device", h.handleDevice)
+	mux.HandleFunc("POST /api/device", h.handleDevice)
+	mux.HandleFunc("PUT /api/device", h.handleDevice)
+	mux.HandleFunc("DELETE /api/device", h.handleDevice)
+	mux.HandleFunc("GET /api/networks", h.handleNetworks)
+	mux.HandleFunc("POST /api/scan", h.handleScan)
+	mux.HandleFunc("POST /api/scan/start", h.handleScanStart)
+	mux.HandleFunc("GET /api/scan/progress", h.handleScanProgress)
+	mux.HandleFunc("POST /api/scan/cancel", h.handleScanCancel)
+	mux.HandleFunc("GET /api/scan/continuous", h.handleScanContinuous)
+	mux.HandleFunc("POST /api/scan/continuous", h.handleScanContinuous)
+	mux.HandleFunc("GET /api/tailscale", h.handleTailscale)
+	mux.HandleFunc("POST /api/tailscale/connect", h.handleTailscaleConnect)
+	mux.HandleFunc("POST /api/tailscale/disconnect", h.handleTailscaleDisconnect)
+	mux.HandleFunc("GET /api/stats", h.handleStats)
+	mux.HandleFunc("GET /api/status", h.handleStatus)
+	mux.HandleFunc("GET /api/settings", h.handleSettings)
+	mux.HandleFunc("POST /api/settings", h.handleSettings)
+	mux.HandleFunc("GET /api/settings/notifications", h.handleSettingsNotifications)
+	mux.HandleFunc("POST /api/settings/notifications", h.handleSettingsNotifications)
+	mux.HandleFunc("POST /api/settings/notifications/test", h.handleSettingsNotificationsTest)
+	mux.HandleFunc("GET /api/scans/history", h.handleScansHistory)
+	mux.HandleFunc("GET /api/scans/events", h.handleScansEvents)
+	mux.HandleFunc("GET /api/logs", h.handleLogs)
+	mux.HandleFunc("GET /api/tokens", h.handleTokens)
+	mux.HandleFunc("POST /api/tokens", h.handleTokens)
+	mux.HandleFunc("DELETE /api/tokens/{id}", h.handleTokenDelete)
+	mux.HandleFunc("POST /api/tokens/{id}", h.handleTokenDelete)
+	return mux
+}
+
+func (h *Handler) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	h.error(w, http.StatusMethodNotAllowed, "method not allowed")
 }
 
 // ServeHTTP implements http.Handler
@@ -118,89 +272,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get("Content-Type")
 		xRequestedWith := r.Header.Get("X-Requested-With")
 
-		if !strings.Contains(contentType, "application/json") && xRequestedWith != "XMLHttpRequest" {
+		mediaType, _, err := mime.ParseMediaType(contentType)
+		isJSON := err == nil && mediaType == "application/json"
+		if !isJSON && xRequestedWith != "XMLHttpRequest" {
 			h.error(w, http.StatusForbidden, "CSRF protection: requires Content-Type: application/json or X-Requested-With header")
 			return
 		}
 	}
 
-	// Route to handler
-	path := strings.TrimPrefix(r.URL.Path, "/api/")
-	path = strings.TrimSuffix(path, "/")
-
-	switch {
-	case path == "devices":
-		h.handleDevices(w, r)
-	case path == "devices/clear":
-		h.handleDevicesClear(w, r)
-	case strings.HasPrefix(path, "devices/"):
-		sub := strings.TrimPrefix(path, "devices/")
-		if strings.HasSuffix(sub, "/traffic") {
-			target := strings.TrimSuffix(sub, "/traffic")
-			h.handleDeviceTraffic(w, r, target)
-			return
-		}
-		if strings.HasSuffix(sub, "/facts") {
-			target := strings.TrimSuffix(sub, "/facts")
-			h.handleDeviceFacts(w, r, target)
-			return
-		}
-		if strings.HasSuffix(sub, "/deep-scan") {
-			r.URL.RawPath = ""
-			r.URL.Path = strings.TrimSuffix(sub, "/deep-scan")
-			h.handleDeviceDeepScan(w, r)
-			return
-		}
-		q := r.URL.Query()
-		if q.Get("ip") == "" {
-			q.Set("ip", sub)
-			r.URL.RawQuery = q.Encode()
-		}
-		h.handleDevice(w, r)
-	case path == "device":
-		h.handleDevice(w, r)
-	case path == "networks":
-		h.handleNetworks(w, r)
-	case path == "scan":
-		h.handleScan(w, r)
-	case path == "scan/start":
-		h.handleScanStart(w, r)
-	case path == "scan/progress":
-		h.handleScanProgress(w, r)
-	case path == "scan/cancel":
-		h.handleScanCancel(w, r)
-	case path == "scan/continuous":
-		h.handleScanContinuous(w, r)
-	case path == "tailscale":
-		h.handleTailscale(w, r)
-	case path == "tailscale/connect":
-		h.handleTailscaleConnect(w, r)
-	case path == "tailscale/disconnect":
-		h.handleTailscaleDisconnect(w, r)
-	case path == "stats":
-		h.handleStats(w, r)
-	case path == "status":
-		h.handleStatus(w, r)
-	case path == "settings":
-		h.handleSettings(w, r)
-	case path == "settings/notifications":
-		h.handleSettingsNotifications(w, r)
-	case path == "settings/notifications/test":
-		h.handleSettingsNotificationsTest(w, r)
-	case path == "scans/history":
-		h.handleScansHistory(w, r)
-	case path == "scans/events":
-		h.handleScansEvents(w, r)
-	case path == "logs":
-		h.handleLogs(w, r)
-	case path == "tokens":
-		h.handleTokens(w, r)
-	case strings.HasPrefix(path, "tokens/"):
-		idStr := strings.TrimPrefix(path, "tokens/")
-		h.handleTokenDelete(w, r, idStr)
-	default:
-		h.error(w, http.StatusNotFound, "endpoint not found")
+	req := r
+	if len(r.URL.Path) > len("/api/") && strings.HasSuffix(r.URL.Path, "/") {
+		rCopy := *r
+		urlCopy := *r.URL
+		urlCopy.Path = strings.TrimSuffix(urlCopy.Path, "/")
+		rCopy.URL = &urlCopy
+		req = &rCopy
 	}
+
+	mux := h.ensureMux()
+	handler, pattern := mux.Handler(req)
+	if pattern == "" {
+		probe := &statusProbeWriter{header: make(http.Header)}
+		handler.ServeHTTP(probe, req)
+		if probe.code == http.StatusMethodNotAllowed {
+			if allow := probe.header.Get("Allow"); allow != "" {
+				w.Header().Set("Allow", allow)
+			}
+			h.error(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.error(w, http.StatusNotFound, "endpoint not found")
+		return
+	}
+	mux.ServeHTTP(w, req)
 }
 
 func (h *Handler) handleDeviceDeepScan(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +312,7 @@ func (h *Handler) handleDeviceDeepScan(w http.ResponseWriter, r *http.Request) {
 		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	ip := r.URL.Path
+	ip := r.PathValue("ip")
 	device := h.store.GetDevice(ip)
 	if device == nil {
 		h.error(w, http.StatusNotFound, "device not found")
@@ -236,11 +340,12 @@ func (h *Handler) handleDeviceDeepScan(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeviceFacts updates device OS, version, and optional MAC facts by MAC or IP address
-func (h *Handler) handleDeviceFacts(w http.ResponseWriter, r *http.Request, target string) {
+func (h *Handler) handleDeviceFacts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost && r.Method != http.MethodPut {
 		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	target := r.PathValue("ip")
 
 	var req struct {
 		MAC       string `json:"mac"`
@@ -249,8 +354,7 @@ func (h *Handler) handleDeviceFacts(w http.ResponseWriter, r *http.Request, targ
 		OSVersion string `json:"os_version"`
 		OSFamily  string `json:"os_family"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.error(w, http.StatusBadRequest, "invalid JSON")
+	if !h.decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -325,8 +429,7 @@ func (h *Handler) handleTokens(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Name string `json:"name"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			h.error(w, http.StatusBadRequest, "invalid JSON")
+		if !h.decodeJSONBody(w, r, &req) {
 			return
 		}
 		name := strings.TrimSpace(req.Name)
@@ -362,11 +465,12 @@ func (h *Handler) handleTokens(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleTokenDelete handles DELETE /api/tokens/{id}
-func (h *Handler) handleTokenDelete(w http.ResponseWriter, r *http.Request, idStr string) {
+func (h *Handler) handleTokenDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
 		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		h.error(w, http.StatusBadRequest, "invalid token ID")
@@ -425,20 +529,24 @@ func (h *Handler) writeDevicesCSV(w http.ResponseWriter, devices map[string]*typ
 		if d.IsOnline(scanInterval) {
 			status = "online"
 		}
-		_ = cw.Write([]string{
+		_ = cw.Write(types.SanitizeCSVRow([]string{
 			d.IP, d.MAC, d.Hostname, scanner.ResolveVendor(d.Vendor, d.MAC), d.Label, d.Notes, d.Group,
 			d.FirstSeen.Format("2006-01-02 15:04:05"),
 			d.LastSeen.Format("2006-01-02 15:04:05"),
 			status,
-		})
+		}))
 	}
 }
 
 // handleDevice handles GET/POST/DELETE /api/device
 func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
+	pathIP := r.PathValue("ip")
 	switch r.Method {
 	case http.MethodGet:
 		ip := r.URL.Query().Get("ip")
+		if ip == "" {
+			ip = pathIP
+		}
 		if ip == "" {
 			h.error(w, http.StatusBadRequest, "ip parameter required")
 			return
@@ -469,15 +577,17 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 			CustomOSVersion *string `json:"custom_os_version"`
 			CustomOSFamily  *string `json:"custom_os_family"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			h.error(w, http.StatusBadRequest, "invalid JSON")
+		if !h.decodeJSONBody(w, r, &req) {
 			return
 		}
 
-		// Get IP from query if not in body
+		// Get IP from query or path if not in body
 		ip := req.IP
 		if ip == "" {
 			ip = r.URL.Query().Get("ip")
+		}
+		if ip == "" {
+			ip = pathIP
 		}
 		if ip == "" {
 			h.error(w, http.StatusBadRequest, "ip required")
@@ -515,6 +625,9 @@ func (h *Handler) handleDevice(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		ip := r.URL.Query().Get("ip")
+		if ip == "" {
+			ip = pathIP
+		}
 		if ip == "" {
 			h.error(w, http.StatusBadRequest, "ip parameter required")
 			return
@@ -555,9 +668,16 @@ func (h *Handler) handleNetworks(w http.ResponseWriter, r *http.Request) {
 	h.success(w, compiled)
 }
 
-// handleScan handles GET /api/scan
+// extendWriteDeadline widens the per-request HTTP write deadline for long-running
+// synchronous endpoints without relaxing the server's default WriteTimeout.
+func extendWriteDeadline(w http.ResponseWriter, d time.Duration) {
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Now().Add(d))
+}
+
+// handleScan handles POST /api/scan
 func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodPost {
 		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
@@ -569,6 +689,7 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 	// "all" scans every detected network, matching the CLI's behaviour
 	if strings.EqualFold(cidr, "all") {
+		extendWriteDeadline(w, 15*time.Minute)
 		h.scanAllNetworks(w, r)
 		return
 	}
@@ -588,40 +709,13 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Perform scan
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
+	extendWriteDeadline(w, 6*time.Minute)
 
-	result, err := h.scanner.Scan(ctx, cidr)
+	result, err := h.executeNetworkSweep(r.Context(), cidr)
 	if err != nil {
-		h.notifyRemoteScannerFailure(cidr, cidr, err)
-		h.store.SetNetworkScanError(cidr, err.Error())
 		h.error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	if !result.Success {
-		h.notifyRemoteScannerFailure(cidr, cidr, errors.New(result.Error))
-		h.store.SetNetworkScanError(cidr, result.Error)
-		h.error(w, http.StatusInternalServerError, result.Error)
-		return
-	}
-	h.notifyRemoteScannerSuccess(cidr, cidr)
-	h.store.ClearNetworkScanError(cidr)
-
-	// Enrich any self-scanned gateway host (which remote Nmap returns with no MAC)
-	h.enrichGatewayMACs(cidr, result.Devices)
-
-	// Merge devices into storage
-	newDevs, seenDevs, movedDevs, err := h.store.MergeDevicesWithMoves(result.Devices)
-	if err != nil {
-		h.error(w, http.StatusInternalServerError, "failed to save devices")
-		return
-	}
-	h.dispatchNotificationsWithMoves(cidr, newDevs, seenDevs, movedDevs)
-
-	// Update last scan time
-	h.store.SetLastScan(cidr, time.Now())
 
 	h.success(w, result)
 }
@@ -680,7 +774,7 @@ func (h *Handler) scanAllNetworks(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		scan, err := h.scanNetwork(r.Context(), n.CIDR)
+		scan, err := h.executeNetworkSweep(r.Context(), n.CIDR)
 		if err != nil {
 			summary.Status = "failed"
 			summary.Error = err.Error()
@@ -700,18 +794,30 @@ func (h *Handler) scanAllNetworks(w http.ResponseWriter, r *http.Request) {
 	// subnet cannot be swept) enrich devices by MAC rather than being listed per
 	// address, so they go through MergeIPv6Neighbors. mDNS announcements merge as
 	// an ordinary secondary source.
-	if ipv6 := h.scanner.DiscoverIPv6(r.Context()); len(ipv6) > 0 {
-		if err := h.store.MergeIPv6Neighbors(ipv6); err == nil {
-			result.Networks = append(result.Networks, networkScanSummary{
-				Network: "IPv6 neighbors", Status: "scanned", DeviceCount: len(ipv6), IsSupplemental: true,
-			})
+	discoverIPv6 := h.discoverIPv6
+	if discoverIPv6 == nil && h.scanner != nil {
+		discoverIPv6 = h.scanner.DiscoverIPv6
+	}
+	if discoverIPv6 != nil {
+		if ipv6 := discoverIPv6(r.Context()); len(ipv6) > 0 {
+			if err := h.store.MergeIPv6Neighbors(ipv6); err == nil {
+				result.Networks = append(result.Networks, networkScanSummary{
+					Network: "IPv6 neighbors", Status: "scanned", DeviceCount: len(ipv6), IsSupplemental: true,
+				})
+			}
 		}
 	}
-	if mdns := h.scanner.DiscoverMDNS(r.Context()); len(mdns) > 0 {
-		if err := h.store.MergeSupplemental(mdns); err == nil {
-			result.Networks = append(result.Networks, networkScanSummary{
-				Network: "mDNS", Status: "scanned", DeviceCount: len(mdns), IsSupplemental: true,
-			})
+	discoverMDNS := h.discoverMDNS
+	if discoverMDNS == nil && h.scanner != nil {
+		discoverMDNS = h.scanner.DiscoverMDNS
+	}
+	if discoverMDNS != nil {
+		if mdns := discoverMDNS(r.Context()); len(mdns) > 0 {
+			if err := h.store.MergeSupplemental(mdns); err == nil {
+				result.Networks = append(result.Networks, networkScanSummary{
+					Network: "mDNS", Status: "scanned", DeviceCount: len(mdns), IsSupplemental: true,
+				})
+			}
 		}
 	}
 
@@ -843,8 +949,7 @@ func (h *Handler) handleScanContinuous(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Enabled bool `json:"enabled"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			h.error(w, http.StatusBadRequest, "invalid request body")
+		if !h.decodeJSONBody(w, r, &body) {
 			return
 		}
 		if err := h.store.SetContinuousScan(body.Enabled); err != nil {
@@ -856,7 +961,14 @@ func (h *Handler) handleScanContinuous(w http.ResponseWriter, r *http.Request) {
 		// Runs in the background; the one-scan-at-a-time guard and the
 		// per-network rate limit keep it from piling up or hammering.
 		if body.Enabled {
-			go h.runBackgroundScan()
+			h.bgWG.Add(1)
+			go func() {
+				defer h.bgWG.Done()
+				if h.scanCtx != nil && h.scanCtx.Err() != nil {
+					return
+				}
+				h.runBackgroundScan()
+			}()
 		}
 		h.success(w, map[string]bool{"enabled": body.Enabled})
 	default:
@@ -864,8 +976,10 @@ func (h *Handler) handleScanContinuous(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// scanNetwork scans a single network and merges the results into storage.
-func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResult, error) {
+// executeNetworkSweep runs a single-CIDR discovery sweep, updates error/alert
+// state, enriches gateway MACs, merges devices, handles notifications (or
+// accumulates onto an active scan job), and records scan timing metadata.
+func (h *Handler) executeNetworkSweep(ctx context.Context, cidr string) (*types.ScanResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
@@ -915,6 +1029,11 @@ func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResu
 	h.store.SetLastDuration(cidr, result.Duration)
 
 	return result, nil
+}
+
+// scanNetwork scans a single network and merges the results into storage.
+func (h *Handler) scanNetwork(ctx context.Context, cidr string) (*types.ScanResult, error) {
+	return h.executeNetworkSweep(ctx, cidr)
 }
 
 // enrichGatewayMACs populates known gateway MAC addresses for self-scanned edge router hosts
@@ -1107,13 +1226,13 @@ func (h *Handler) handleScansEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeviceTraffic handles GET /api/devices/{mac_or_ip}/traffic
-func (h *Handler) handleDeviceTraffic(w http.ResponseWriter, r *http.Request, identifier string) {
+func (h *Handler) handleDeviceTraffic(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.error(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	identifier = strings.TrimSpace(identifier)
+	identifier := strings.TrimSpace(r.PathValue("ip"))
 	if identifier == "" {
 		h.error(w, http.StatusBadRequest, "device identifier required")
 		return
@@ -1186,6 +1305,9 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	limit := 100
 	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
 		limit = l
+		if limit > maxLogsLimit {
+			limit = maxLogsLimit
+		}
 	}
 	entries := logging.GlobalBuffer.GetEntries(q, level, limit)
 	h.success(w, entries)
@@ -1201,8 +1323,7 @@ func (h *Handler) handleDevicesClear(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Network string `json:"network"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.error(w, http.StatusBadRequest, "invalid JSON")
+	if !h.decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -1235,13 +1356,18 @@ func (h *Handler) handleSettingsNotifications(w http.ResponseWriter, r *http.Req
 			SlackWebhook string `json:"slack_webhook"`
 			Enabled      bool   `json:"enabled"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			h.error(w, http.StatusBadRequest, "invalid JSON")
+		if !h.decodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.NetworkCIDR == "" {
 			h.error(w, http.StatusBadRequest, "network_cidr required")
 			return
+		}
+		if req.SlackWebhook != "" {
+			if err := notification.ValidateWebhookURL(req.SlackWebhook); err != nil {
+				h.error(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 
 		if err := h.store.SaveNetworkNotification(req.NetworkCIDR, req.SlackWebhook, req.Enabled); err != nil {
@@ -1265,18 +1391,26 @@ func (h *Handler) handleSettingsNotificationsTest(w http.ResponseWriter, r *http
 	var req struct {
 		SlackWebhook string `json:"slack_webhook"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.error(w, http.StatusBadRequest, "invalid JSON")
+	if !h.decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.SlackWebhook == "" {
 		h.error(w, http.StatusBadRequest, "slack_webhook required")
 		return
 	}
+	if err := notification.ValidateWebhookURL(req.SlackWebhook); err != nil {
+		h.error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-	err := notification.SendSlackNotification(req.SlackWebhook, "🔔 *LAN-Orangutan Webhook Test!* Webhook verified successfully.")
+	err := h.sendSlackNotification(req.SlackWebhook, "🔔 *LAN-Orangutan Webhook Test!* Webhook verified successfully.")
 	if err != nil {
-		h.error(w, http.StatusInternalServerError, "failed to send test notification: "+err.Error())
+		if errors.Is(err, notification.ErrInvalidWebhookURL) {
+			h.error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Printf("webhook test notification failed: %v", err)
+		h.error(w, http.StatusBadGateway, "failed to send test notification")
 		return
 	}
 
@@ -1308,9 +1442,15 @@ func (h *Handler) dispatchNotificationsWithMoves(cidr string, newDevices []types
 	text := notification.FormatConsolidatedSlackMessageWithMoves(networkName, cidr, newDevices, seenDevices, movedDevices)
 
 	// Post to Slack asynchronously
-	go func() {
-		_ = notification.SendSlackNotification(n.SlackWebhook, text)
-	}()
+	sendFn := h.sendSlackNotification
+	if sendFn == nil {
+		sendFn = notification.SendSlackNotification
+	}
+	h.bgWG.Add(1)
+	go func(webhook, msg string) {
+		defer h.bgWG.Done()
+		_ = sendFn(webhook, msg)
+	}(n.SlackWebhook, text)
 }
 
 func (h *Handler) getEffectiveSlackWebhook(networkCIDR string) string {

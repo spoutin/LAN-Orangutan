@@ -3,12 +3,27 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
 )
+
+func cmdOut(cmd *cobra.Command) io.Writer {
+	if cmd != nil {
+		return cmd.OutOrStdout()
+	}
+	return os.Stdout
+}
+
+func cmdErr(cmd *cobra.Command) io.Writer {
+	if cmd != nil {
+		return cmd.ErrOrStderr()
+	}
+	return os.Stderr
+}
 
 var (
 	cfgFile string
@@ -31,8 +46,12 @@ a web interface for viewing and managing discovered devices.`,
 	// is a runtime problem rather than a usage mistake. Silencing usage now
 	// keeps a real error visible instead of burying it under the flag listing,
 	// while a genuine flag mistake still gets the full help.
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
+		if cmd.Name() == "version" || cmd.Name() == "help" {
+			return nil
+		}
+		return loadConfig()
 	},
 }
 
@@ -45,8 +64,6 @@ func Execute() {
 }
 
 func init() {
-	cobra.OnInitialize(initConfig)
-
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", config.GetDefaultConfigFile(), "config file path")
 
 	// Add subcommands
@@ -60,18 +77,17 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 }
 
-func initConfig() {
+func loadConfig() error {
 	var err error
 	cfg, err = config.Load(cfgFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error loading config: %w", err)
 	}
 
 	// Environment variables override the file, so containers can be configured
 	// without mounting one.
 	if err := cfg.ApplyEnv(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error applying environment configuration: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error applying environment configuration: %w", err)
 	}
+	return nil
 }

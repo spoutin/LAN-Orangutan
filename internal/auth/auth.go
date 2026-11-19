@@ -44,10 +44,33 @@ const (
 
 	// maxAttempts is how many failed logins an address may make within
 	// attemptWindow before it is locked out for the rest of the window.
-	maxAttempts    = 5
-	attemptWindow  = 15 * time.Minute
-	sessionIDBytes = 32
+	maxAttempts       = 5
+	attemptWindow     = 15 * time.Minute
+	sessionIDBytes    = 32
+	defaultSessionTTL = 7 * 24 * time.Hour
 )
+
+// Option configures optional behavior on Authenticator.
+type Option func(*Authenticator)
+
+// WithBcryptCost overrides the bcrypt cost factor used when hashing passwords.
+// Primarily useful in tests to avoid slow default-cost hashing.
+func WithBcryptCost(cost int) Option {
+	return func(a *Authenticator) {
+		if cost >= bcrypt.MinCost && cost <= bcrypt.MaxCost {
+			a.bcryptCost = cost
+		}
+	}
+}
+
+// WithClock overrides the clock function used for session expiry and lockouts.
+func WithClock(now func() time.Time) Option {
+	return func(a *Authenticator) {
+		if now != nil {
+			a.now = now
+		}
+	}
+}
 
 // Authenticator guards HTTP handlers with a password.
 //
@@ -57,7 +80,8 @@ type Authenticator struct {
 
 	// hash is the bcrypt hash of the current password. Empty means no password
 	// has been set yet.
-	hash []byte
+	hash    []byte
+	hashGen uint64
 
 	// setupRequired means that, with no password set, visitors should be sent
 	// to the setup page rather than let straight through.
@@ -65,6 +89,10 @@ type Authenticator struct {
 
 	// sessionTTL is how long a session stays valid after login.
 	sessionTTL time.Duration
+
+	bcryptCost      int
+	comparePassword func(hash, password []byte) error
+	now             func() time.Time
 
 	sessions map[string]time.Time // token -> expiry
 	attempts map[string]*attemptRecord
@@ -84,18 +112,29 @@ type attemptRecord struct {
 // password may be either a plaintext password or an existing bcrypt hash, so
 // callers can pass a stored hash straight through. An empty password leaves the
 // Authenticator unconfigured, ready for either setup or open access.
-func New(password string, sessionTTL time.Duration) (*Authenticator, error) {
+func New(password string, sessionTTL time.Duration, opts ...Option) (*Authenticator, error) {
+	if sessionTTL <= 0 {
+		sessionTTL = defaultSessionTTL
+	}
 	a := &Authenticator{
-		sessionTTL: sessionTTL,
-		sessions:   make(map[string]time.Time),
-		attempts:   make(map[string]*attemptRecord),
+		sessionTTL:      sessionTTL,
+		bcryptCost:      bcrypt.DefaultCost,
+		comparePassword: bcrypt.CompareHashAndPassword,
+		now:             time.Now,
+		sessions:        make(map[string]time.Time),
+		attempts:        make(map[string]*attemptRecord),
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(a)
+		}
 	}
 
 	if password == "" {
 		return a, nil
 	}
 
-	hash, err := hashOrPassthrough(password)
+	hash, err := hashOrPassthrough(password, a.bcryptCost)
 	if err != nil {
 		return nil, err
 	}
@@ -105,11 +144,14 @@ func New(password string, sessionTTL time.Duration) (*Authenticator, error) {
 
 // hashOrPassthrough returns password unchanged if it is already a bcrypt hash,
 // and otherwise hashes it.
-func hashOrPassthrough(password string) ([]byte, error) {
+func hashOrPassthrough(password string, cost int) ([]byte, error) {
 	if isBcryptHash(password) {
 		return []byte(password), nil
 	}
-	return bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if cost < bcrypt.MinCost || cost > bcrypt.MaxCost {
+		cost = bcrypt.DefaultCost
+	}
+	return bcrypt.GenerateFromPassword([]byte(password), cost)
 }
 
 // isBcryptHash reports whether s looks like a bcrypt hash rather than a
@@ -149,7 +191,14 @@ func (a *Authenticator) SetPassword(plaintext string) (string, error) {
 		return "", err
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(plaintext), bcrypt.DefaultCost)
+	a.mu.Lock()
+	cost := a.bcryptCost
+	a.mu.Unlock()
+	if cost < bcrypt.MinCost || cost > bcrypt.MaxCost {
+		cost = bcrypt.DefaultCost
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(plaintext), cost)
 	if err != nil {
 		return "", err
 	}
@@ -157,6 +206,7 @@ func (a *Authenticator) SetPassword(plaintext string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.hash = hash
+	a.hashGen++
 	// Any session issued while there was no password predates this one and
 	// should not survive it.
 	a.sessions = make(map[string]time.Time)
@@ -192,7 +242,9 @@ func extractToken(r *http.Request) string {
 	if authHeader != "" {
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-			return strings.TrimSpace(parts[1])
+			if tok := strings.TrimSpace(parts[1]); tok != "" {
+				return tok
+			}
 		}
 	}
 	apiKey := r.Header.Get("X-API-Key")
@@ -219,6 +271,8 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
+			a.reject(w, r, LoginPath, "invalid API token")
+			return
 		}
 
 		switch {
@@ -254,6 +308,13 @@ func (a *Authenticator) reject(w http.ResponseWriter, r *http.Request, redirectT
 	http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 }
 
+func (a *Authenticator) currentTime() time.Time {
+	if a.now != nil {
+		return a.now()
+	}
+	return time.Now()
+}
+
 // authenticated reports whether r carries a valid, unexpired session cookie.
 func (a *Authenticator) authenticated(r *http.Request) bool {
 	cookie, err := r.Cookie(SessionCookie)
@@ -268,7 +329,7 @@ func (a *Authenticator) authenticated(r *http.Request) bool {
 	if !ok {
 		return false
 	}
-	if time.Now().After(expiry) {
+	if a.currentTime().After(expiry) {
 		delete(a.sessions, cookie.Value)
 		return false
 	}
@@ -278,34 +339,45 @@ func (a *Authenticator) authenticated(r *http.Request) bool {
 // Login verifies password and, on success, returns a new session token.
 // The bool reports whether the attempt succeeded.
 func (a *Authenticator) Login(remoteAddr, password string) (string, bool) {
-	if !a.Enabled() {
-		return "", false
-	}
-
 	key := clientKey(remoteAddr)
-	if a.lockedOut(key) {
-		return "", false
-	}
 
 	a.mu.Lock()
-	hash := append([]byte(nil), a.hash...)
-	a.mu.Unlock()
-
-	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil {
-		a.recordFailure(key)
+	if len(a.hash) == 0 || a.lockedOutLocked(key) {
+		a.mu.Unlock()
 		return "", false
 	}
+	hash := append([]byte(nil), a.hash...)
+	gen := a.hashGen
+	compareFn := a.comparePassword
+	a.mu.Unlock()
+
+	if compareFn == nil {
+		compareFn = bcrypt.CompareHashAndPassword
+	}
+	compareErr := compareFn(hash, []byte(password))
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.lockedOutLocked(key) {
+		return "", false
+	}
+	if compareErr != nil {
+		a.recordFailureLocked(key)
+		return "", false
+	}
+	if len(a.hash) == 0 || a.hashGen != gen {
+		return "", false
+	}
+
 	delete(a.attempts, key)
 	a.pruneSessionsLocked()
+	a.pruneAttemptsLocked()
 
 	token, err := newToken()
 	if err != nil {
 		return "", false
 	}
-	a.sessions[token] = time.Now().Add(a.sessionTTL)
+	a.sessions[token] = a.currentTime().Add(a.sessionTTL)
 	return token, true
 }
 
@@ -321,7 +393,7 @@ func (a *Authenticator) StartSession() (string, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.pruneSessionsLocked()
-	a.sessions[token] = time.Now().Add(a.sessionTTL)
+	a.sessions[token] = a.currentTime().Add(a.sessionTTL)
 	return token, true
 }
 
@@ -336,6 +408,23 @@ func (a *Authenticator) Logout(r *http.Request) {
 	delete(a.sessions, cookie.Value)
 }
 
+// isSecureRequest reports whether r arrived over HTTPS directly or via a TLS-terminating proxy.
+func isSecureRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	if xfp := r.Header.Get("X-Forwarded-Proto"); xfp != "" {
+		first := strings.TrimSpace(strings.Split(xfp, ",")[0])
+		if strings.EqualFold(first, "https") {
+			return true
+		}
+	}
+	return false
+}
+
 // SetCookie writes the session cookie for token onto w.
 func (a *Authenticator) SetCookie(w http.ResponseWriter, r *http.Request, token string) {
 	http.SetCookie(w, &http.Cookie{
@@ -344,7 +433,7 @@ func (a *Authenticator) SetCookie(w http.ResponseWriter, r *http.Request, token 
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		Secure:   isSecureRequest(r),
 		MaxAge:   int(a.sessionTTL.Seconds()),
 	})
 }
@@ -357,7 +446,7 @@ func (a *Authenticator) ClearCookie(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		Secure:   isSecureRequest(r),
 		MaxAge:   -1,
 	})
 }
@@ -371,23 +460,24 @@ func (a *Authenticator) LockedOut(remoteAddr string) bool {
 func (a *Authenticator) lockedOut(key string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.lockedOutLocked(key)
+}
 
+func (a *Authenticator) lockedOutLocked(key string) bool {
 	rec, ok := a.attempts[key]
 	if !ok {
 		return false
 	}
-	if time.Now().After(rec.resets) {
+	if a.currentTime().After(rec.resets) {
 		delete(a.attempts, key)
 		return false
 	}
 	return rec.count >= maxAttempts
 }
 
-func (a *Authenticator) recordFailure(key string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	now := time.Now()
+func (a *Authenticator) recordFailureLocked(key string) {
+	now := a.currentTime()
+	a.pruneAttemptsLocked()
 	rec, ok := a.attempts[key]
 	if !ok || now.After(rec.resets) {
 		a.attempts[key] = &attemptRecord{count: 1, resets: now.Add(attemptWindow)}
@@ -396,10 +486,21 @@ func (a *Authenticator) recordFailure(key string) {
 	rec.count++
 }
 
+// pruneAttemptsLocked drops expired lockout entries so the map does not grow
+// without bound on a long-running server. Callers must hold a.mu.
+func (a *Authenticator) pruneAttemptsLocked() {
+	now := a.currentTime()
+	for k, rec := range a.attempts {
+		if now.After(rec.resets) {
+			delete(a.attempts, k)
+		}
+	}
+}
+
 // pruneSessionsLocked drops expired sessions so the map does not grow without
 // bound on a long-running server. Callers must hold a.mu.
 func (a *Authenticator) pruneSessionsLocked() {
-	now := time.Now()
+	now := a.currentTime()
 	for token, expiry := range a.sessions {
 		if now.After(expiry) {
 			delete(a.sessions, token)
@@ -429,6 +530,9 @@ func newToken() (string, error) {
 // HashPassword returns a bcrypt hash of password, for users who would rather
 // not store plaintext in their config file.
 func HashPassword(password string) (string, error) {
+	if err := ValidatePassword(password); err != nil {
+		return "", err
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(hash), err
 }

@@ -4,9 +4,11 @@ package web
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -130,14 +132,21 @@ func NewHandler(store *storage.Storage, cfg *config.Config, authn *auth.Authenti
 	funcMap := template.FuncMap{
 		"timeAgo":  timeAgo,
 		"lower":    strings.ToLower,
+		"toJSON":   toJSON,
 		"typeIcon": typeIcon,
 		"osIcon":   osIcon,
 		"formatOS": formatDeviceOS,
 		"hasSSH": func(device *types.Device) bool {
+			if device == nil {
+				return false
+			}
 			_, available := device.EffectiveSSH()
 			return available
 		},
 		"sshPort": func(device *types.Device) int {
+			if device == nil {
+				return 0
+			}
 			port, _ := device.EffectiveSSH()
 			return port
 		},
@@ -181,7 +190,10 @@ func NewHandler(store *storage.Storage, cfg *config.Config, authn *auth.Authenti
 	tmpl := template.Must(template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html"))
 
 	// Create static file server
-	staticSub, _ := staticSubFS()
+	staticSub, err := staticSubFS()
+	if err != nil {
+		panic(fmt.Errorf("failed to initialize embedded static assets: %w", err))
+	}
 	staticHandler := newStaticHandler(staticSub)
 
 	return &Handler{
@@ -192,6 +204,21 @@ func NewHandler(store *storage.Storage, cfg *config.Config, authn *auth.Authenti
 		templates: tmpl,
 		staticFS:  staticHandler,
 	}
+}
+
+func toJSON(v any) string {
+	if v == nil {
+		return "[]"
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice && rv.IsNil() {
+		return "[]"
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
 // StaticHandler serves the embedded static assets.
@@ -330,6 +357,10 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 // HandleLogout ends the current session.
 func (h *Handler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	h.auth.Logout(r)
 	h.auth.ClearCookie(w, r)
 	http.Redirect(w, r, auth.LoginPath, http.StatusSeeOther)
@@ -428,6 +459,26 @@ func (h *Handler) buildNetworkViews(cycleInterval time.Duration) ([]NetworkView,
 	return networkViews, networks
 }
 
+func cloneDeviceForView(d *types.Device) *types.Device {
+	if d == nil {
+		return nil
+	}
+	copyDev := *d
+	if len(d.IPs) > 0 {
+		copyDev.IPs = append([]types.IPAttachment(nil), d.IPs...)
+	}
+	return &copyDev
+}
+
+func sortDeviceIPs(d *types.Device) {
+	if d == nil || len(d.IPs) <= 1 {
+		return
+	}
+	sort.Slice(d.IPs, func(i, j int) bool {
+		return types.IPToLong(d.IPs[i].IP) < types.IPToLong(d.IPs[j].IP)
+	})
+}
+
 // handleIndex renders the main dashboard
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// Get devices
@@ -469,22 +520,19 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		if len(d.AddressHistory) > 0 {
 			moved++
 		}
+		dev := cloneDeviceForView(d)
 		// Sort attachments numerically by IP ascending so lowest IP is first in the shared list
-		if len(d.IPs) > 1 {
-			sort.Slice(d.IPs, func(i, j int) bool {
-				return types.IPToLong(d.IPs[i].IP) < types.IPToLong(d.IPs[j].IP)
-			})
-		}
+		sortDeviceIPs(dev)
 		// Devices recorded by an older version have no vendor stored, so look it
 		// up now rather than showing "Unknown" until a rescan.
-		resolvedVendor := scanner.ResolveVendor(d.Vendor, d.MAC)
+		resolvedVendor := scanner.ResolveVendor(dev.Vendor, dev.MAC)
 
 		dv := &DeviceView{
-			Device:       d,
-			TimeAgo:      timeAgo(d.LastSeen),
-			LastSeenUnix: d.LastSeen.Unix(),
+			Device:       dev,
+			TimeAgo:      timeAgo(dev.LastSeen),
+			LastSeenUnix: dev.LastSeen.Unix(),
 			Vendor:       resolvedVendor,
-			Type:         d.Type,
+			Type:         dev.Type,
 		}
 		// Backfill a type for records that predate classification, from the same
 		// vendor and hostname the row already shows. Port evidence is not

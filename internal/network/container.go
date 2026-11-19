@@ -8,12 +8,17 @@ import (
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
+var (
+	statFileFunc = os.Stat
+	readFileFunc = os.ReadFile
+)
+
 // InContainer reports whether this process is running inside a container.
 func InContainer() bool {
-	if _, err := os.Stat("/.dockerenv"); err == nil {
+	if _, err := statFileFunc("/.dockerenv"); err == nil {
 		return true
 	}
-	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+	if data, err := readFileFunc("/proc/1/cgroup"); err == nil {
 		s := string(data)
 		if strings.Contains(s, "docker") || strings.Contains(s, "containerd") || strings.Contains(s, "kubepods") {
 			return true

@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -62,12 +61,9 @@ func FetchUniFiClients(ctx context.Context, cfg config.UniFiConfig) ([]types.Dev
 	}
 	apiKey := strings.TrimSpace(cfg.APIKey)
 
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
-	}
 	client := &http.Client{
 		Timeout:   10 * time.Second,
-		Transport: tr,
+		Transport: routerTransport(cfg.VerifySSL),
 	}
 
 	// 1. Fetch AP devices to build mac -> name map

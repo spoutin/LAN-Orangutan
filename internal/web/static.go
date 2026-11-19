@@ -56,8 +56,9 @@ func newStaticHandler(fsys fs.FS) *staticHandler {
 // ServeHTTP serves a single asset. The request path is expected to begin with
 // "/static/".
 func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	name := path.Clean(strings.TrimPrefix(r.URL.Path, "/static/"))
-	if name == "." || strings.HasPrefix(name, "..") {
+	rel := strings.TrimLeft(strings.TrimPrefix(r.URL.Path, "/static/"), "/")
+	name := path.Clean(rel)
+	if name == "." || strings.HasPrefix(name, "..") || !fs.ValidPath(name) {
 		http.NotFound(w, r)
 		return
 	}

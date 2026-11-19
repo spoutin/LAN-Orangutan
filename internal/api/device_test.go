@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
 	"github.com/spoutin/LAN-Orangutan/internal/logging"
-	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
@@ -26,7 +24,7 @@ func TestDeviceDeepScanStartsOnlyRequestedDevice(t *testing.T) {
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"192.168.1.0/24"}
 	cfg.Scanning.OnlyConfiguredNetworks = true
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/devices/192.168.1.25/deep-scan", nil)
 	req.Header.Set("Content-Type", "application/json")
@@ -48,11 +46,7 @@ func TestDeviceDeepScanStartsOnlyRequestedDevice(t *testing.T) {
 }
 
 func TestUpdateDevice_CustomOS(t *testing.T) {
-	dir := t.TempDir()
-	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatalf("storage.New: %v", err)
-	}
+	store := newScanJobTestStore(t)
 
 	dev := types.Device{
 		IP:  "192.168.1.150",
@@ -62,7 +56,7 @@ func TestUpdateDevice_CustomOS(t *testing.T) {
 		t.Fatalf("UpdateDevice: %v", err)
 	}
 
-	h := NewHandler(store, config.Default())
+	h := newTestHandler(t, store, config.Default())
 	customOS := "OpenWrt 23.05"
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"custom_os": customOS,
@@ -83,11 +77,7 @@ func TestUpdateDevice_CustomOS(t *testing.T) {
 }
 
 func TestDevice_PUT_UpdateEndpoint(t *testing.T) {
-	dir := t.TempDir()
-	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatalf("storage.New: %v", err)
-	}
+	store := newScanJobTestStore(t)
 
 	dev := types.Device{
 		IP:        "192.168.1.100",
@@ -102,7 +92,7 @@ func TestDevice_PUT_UpdateEndpoint(t *testing.T) {
 	}
 
 	cfg := config.Default()
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	// Send PUT /api/devices/192.168.1.100
 	customHost := "custom-test-box"
@@ -156,11 +146,7 @@ func TestDevice_PUT_UpdateEndpoint(t *testing.T) {
 }
 
 func TestDevice_POST_FactsEndpoint(t *testing.T) {
-	dir := t.TempDir()
-	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatalf("storage.New: %v", err)
-	}
+	store := newScanJobTestStore(t)
 
 	dev := types.Device{
 		IP:  "192.168.1.100",
@@ -170,7 +156,7 @@ func TestDevice_POST_FactsEndpoint(t *testing.T) {
 		t.Fatalf("UpdateDevice: %v", err)
 	}
 
-	h := NewHandler(store, config.Default())
+	h := newTestHandler(t, store, config.Default())
 
 	// 1. Post facts with valid MAC format
 	reqBody, _ := json.Marshal(map[string]interface{}{
@@ -321,13 +307,9 @@ func TestDevice_POST_FactsEndpoint(t *testing.T) {
 }
 
 func TestAPITokensEndpoints(t *testing.T) {
-	dir := t.TempDir()
-	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatalf("storage.New: %v", err)
-	}
+	store := newScanJobTestStore(t)
 
-	h := NewHandler(store, config.Default())
+	h := newTestHandler(t, store, config.Default())
 
 	// 1. Create a token
 	createBody, _ := json.Marshal(map[string]string{
@@ -404,13 +386,9 @@ func TestAPITokensEndpoints(t *testing.T) {
 }
 
 func TestLogs_APIEndpoint(t *testing.T) {
-	dir := t.TempDir()
-	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatalf("storage.New: %v", err)
-	}
+	store := newScanJobTestStore(t)
 	cfg := config.Default()
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	logging.GlobalBuffer.Add("info", "test normal info log")
 	logging.GlobalBuffer.Add("error", "service scan failed for 10.5.5.143: connection refused")

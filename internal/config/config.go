@@ -101,21 +101,25 @@ type Config struct {
 
 // OpenWrtConfig holds OpenWrt connection and remote scanning settings
 type OpenWrtConfig struct {
-	ID                string   `json:"id,omitempty"`
-	Enable            bool     `json:"enable"`
-	URL               string   `json:"url"`
-	APIToken          string   `json:"-"`
-	VerifySSL         bool     `json:"verify_ssl"`
-	RemoteScan        bool     `json:"remote_scan"`
-	TrafficMonitoring bool     `json:"traffic_monitoring"`
-	SSHHost           string   `json:"ssh_host,omitempty"`
-	SSHPort           int      `json:"ssh_port,omitempty"`
-	SSHUser           string   `json:"ssh_user,omitempty"`
-	SSHSudo           bool     `json:"ssh_sudo,omitempty"`
-	SSHKey            string   `json:"-"`
-	SSHKeyFile        string   `json:"ssh_key_file,omitempty"`
-	SSHPassword       string   `json:"-"`
-	Networks          []string `json:"networks,omitempty"`
+	ID                    string   `json:"id,omitempty"`
+	Enable                bool     `json:"enable"`
+	URL                   string   `json:"url"`
+	APIToken              string   `json:"-"`
+	VerifySSL             bool     `json:"verify_ssl"`
+	RemoteScan            bool     `json:"remote_scan"`
+	TrafficMonitoring     bool     `json:"traffic_monitoring"`
+	SSHHost               string   `json:"ssh_host,omitempty"`
+	SSHPort               int      `json:"ssh_port,omitempty"`
+	SSHUser               string   `json:"ssh_user,omitempty"`
+	SSHSudo               bool     `json:"ssh_sudo,omitempty"`
+	SSHKey                string   `json:"-"`
+	SSHKeyFile            string   `json:"ssh_key_file,omitempty"`
+	SSHPassword           string   `json:"-"`
+	SSHHostKey            string   `json:"ssh_host_key,omitempty"`
+	SSHKnownHostsFile     string   `json:"ssh_known_hosts_file,omitempty"`
+	SSHInsecureHostKey    bool     `json:"ssh_insecure_host_key,omitempty"`
+	SSHInsecureHostKeySet bool     `json:"-"`
+	Networks              []string `json:"networks,omitempty"`
 }
 
 // OpenWrtsConfig holds multiple configured OpenWrt routers
@@ -126,20 +130,24 @@ type OpenWrtsConfig struct {
 
 // OPNsenseConfig holds OPNsense connection and remote scanning settings
 type OPNsenseConfig struct {
-	Enable      bool     `json:"enable"`
-	URL         string   `json:"url"`
-	APIKey      string   `json:"-"`
-	APISecret   string   `json:"-"`
-	VerifySSL   bool     `json:"verify_ssl"`
-	RemoteScan  bool     `json:"remote_scan"`
-	SSHHost     string   `json:"ssh_host,omitempty"`
-	SSHPort     int      `json:"ssh_port,omitempty"`
-	SSHUser     string   `json:"ssh_user,omitempty"`
-	SSHSudo     bool     `json:"ssh_sudo,omitempty"`
-	SSHKey      string   `json:"-"`
-	SSHKeyFile  string   `json:"ssh_key_file,omitempty"`
-	SSHPassword string   `json:"-"`
-	Networks    []string `json:"networks,omitempty"`
+	Enable                bool     `json:"enable"`
+	URL                   string   `json:"url"`
+	APIKey                string   `json:"-"`
+	APISecret             string   `json:"-"`
+	VerifySSL             bool     `json:"verify_ssl"`
+	RemoteScan            bool     `json:"remote_scan"`
+	SSHHost               string   `json:"ssh_host,omitempty"`
+	SSHPort               int      `json:"ssh_port,omitempty"`
+	SSHUser               string   `json:"ssh_user,omitempty"`
+	SSHSudo               bool     `json:"ssh_sudo,omitempty"`
+	SSHKey                string   `json:"-"`
+	SSHKeyFile            string   `json:"ssh_key_file,omitempty"`
+	SSHPassword           string   `json:"-"`
+	SSHHostKey            string   `json:"ssh_host_key,omitempty"`
+	SSHKnownHostsFile     string   `json:"ssh_known_hosts_file,omitempty"`
+	SSHInsecureHostKey    bool     `json:"ssh_insecure_host_key,omitempty"`
+	SSHInsecureHostKeySet bool     `json:"-"`
+	Networks              []string `json:"networks,omitempty"`
 }
 
 // UniFiConfig holds UniFi controller connection settings
@@ -175,26 +183,32 @@ type SwitchConfig struct {
 
 // RemoteScannersConfig holds settings for offloading Nmap scans to edge firewalls over SSH.
 type RemoteScannersConfig struct {
-	Enable      bool                           `json:"enable"`
-	Sudo        bool                           `json:"sudo,omitempty"`
-	SSHKey      string                         `json:"-"` // in-memory PEM encoded private key (not serialized)
-	SSHKeyFile  string                         `json:"ssh_key_file,omitempty"`
-	SSHPassword string                         `json:"-"` // optional password (not serialized)
-	Names       []string                       `json:"names,omitempty"`
-	Configs     map[string]RemoteScannerConfig `json:"configs,omitempty"`
+	Enable             bool                           `json:"enable"`
+	Sudo               bool                           `json:"sudo,omitempty"`
+	SSHKey             string                         `json:"-"` // in-memory PEM encoded private key (not serialized)
+	SSHKeyFile         string                         `json:"ssh_key_file,omitempty"`
+	SSHPassword        string                         `json:"-"` // optional password (not serialized)
+	SSHKnownHostsFile  string                         `json:"ssh_known_hosts_file,omitempty"`
+	SSHInsecureHostKey bool                           `json:"ssh_insecure_host_key,omitempty"`
+	Names              []string                       `json:"names,omitempty"`
+	Configs            map[string]RemoteScannerConfig `json:"configs,omitempty"`
 }
 
 // RemoteScannerConfig holds settings for one remote gateway scanner.
 type RemoteScannerConfig struct {
-	ID          string   `json:"id"`
-	Host        string   `json:"host"`
-	Port        int      `json:"port"`
-	User        string   `json:"user"`
-	Sudo        bool     `json:"sudo"`
-	Networks    []string `json:"networks"`
-	SSHKey      string   `json:"-"` // per-gateway in-memory PEM key (not serialized)
-	SSHKeyFile  string   `json:"ssh_key_file,omitempty"`
-	SSHPassword string   `json:"-"` // per-gateway password (not serialized)
+	ID                    string   `json:"id"`
+	Host                  string   `json:"host"`
+	Port                  int      `json:"port"`
+	User                  string   `json:"user"`
+	Sudo                  bool     `json:"sudo"`
+	Networks              []string `json:"networks"`
+	SSHKey                string   `json:"-"` // per-gateway in-memory PEM key (not serialized)
+	SSHKeyFile            string   `json:"ssh_key_file,omitempty"`
+	SSHPassword           string   `json:"-"` // per-gateway password (not serialized)
+	SSHHostKey            string   `json:"ssh_host_key,omitempty"`
+	SSHKnownHostsFile     string   `json:"ssh_known_hosts_file,omitempty"`
+	SSHInsecureHostKey    bool     `json:"ssh_insecure_host_key,omitempty"`
+	SSHInsecureHostKeySet bool     `json:"-"`
 }
 
 // FindScannerForCIDR finds the remote scanner configured for a subnet CIDR
@@ -429,6 +443,7 @@ func Load(path string) (*Config, error) {
 	var currentSection string
 	var currentKey string
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
 	for scanner.Scan() {
 		rawLine := scanner.Text()
@@ -452,24 +467,33 @@ func Load(path string) (*Config, error) {
 			currentKey = strings.TrimSpace(strings.ToLower(parts[0]))
 			value := strings.TrimSpace(parts[1])
 			cfg.setValue(currentSection, currentKey, value)
-		} else if currentKey == "ssh_key" && currentSection == "remote_scanners" {
-			cfg.RemoteScanners.SSHKey += "\n" + line
-		} else if currentKey == "ssh_key" && strings.HasPrefix(currentSection, "remote_scanner.") {
-			id := strings.TrimPrefix(currentSection, "remote_scanner.")
-			cfg.ensureRemoteScanner(id)
-			sc := cfg.RemoteScanners.Configs[id]
-			sc.SSHKey += "\n" + line
-			cfg.RemoteScanners.Configs[id] = sc
-		} else if currentKey == "ssh_key" && currentSection == "opnsense" {
-			cfg.OPNsense.SSHKey += "\n" + line
-		} else if currentKey == "ssh_key" && currentSection == "openwrt" {
-			cfg.OpenWrt.SSHKey += "\n" + line
-		} else if currentKey == "ssh_key" && strings.HasPrefix(currentSection, "openwrt.") {
-			id := strings.TrimPrefix(currentSection, "openwrt.")
-			cfg.ensureOpenWrt(id)
-			wrt := cfg.OpenWrts.Configs[id]
-			wrt.SSHKey += "\n" + line
-			cfg.OpenWrts.Configs[id] = wrt
+		} else if currentKey == "ssh_key" || currentKey == "key" {
+			switch {
+			case currentSection == "remote_scanners":
+				cfg.RemoteScanners.SSHKey = appendPEMLine(cfg.RemoteScanners.SSHKey, line)
+			case strings.HasPrefix(currentSection, "remote_scanner."):
+				id := strings.TrimPrefix(currentSection, "remote_scanner.")
+				cfg.ensureRemoteScanner(id)
+				sc := cfg.RemoteScanners.Configs[id]
+				sc.SSHKey = appendPEMLine(sc.SSHKey, line)
+				cfg.RemoteScanners.Configs[id] = sc
+			case strings.HasPrefix(currentSection, "remote_scanners."):
+				id := strings.TrimPrefix(currentSection, "remote_scanners.")
+				cfg.ensureRemoteScanner(id)
+				sc := cfg.RemoteScanners.Configs[id]
+				sc.SSHKey = appendPEMLine(sc.SSHKey, line)
+				cfg.RemoteScanners.Configs[id] = sc
+			case currentSection == "opnsense":
+				cfg.OPNsense.SSHKey = appendPEMLine(cfg.OPNsense.SSHKey, line)
+			case currentSection == "openwrt":
+				cfg.OpenWrt.SSHKey = appendPEMLine(cfg.OpenWrt.SSHKey, line)
+			case strings.HasPrefix(currentSection, "openwrt."):
+				id := strings.TrimPrefix(currentSection, "openwrt.")
+				cfg.ensureOpenWrt(id)
+				wrt := cfg.OpenWrts.Configs[id]
+				wrt.SSHKey = appendPEMLine(wrt.SSHKey, line)
+				cfg.OpenWrts.Configs[id] = wrt
+			}
 		}
 	}
 
@@ -588,6 +612,13 @@ func (c *Config) setValue(section, key, value string) {
 			c.OpenWrt.SSHKeyFile = value
 		case "ssh_password", "password":
 			c.OpenWrt.SSHPassword = value
+		case "ssh_host_key", "host_key":
+			c.OpenWrt.SSHHostKey = value
+		case "ssh_known_hosts_file", "ssh_known_hosts", "known_hosts_file", "known_hosts":
+			c.OpenWrt.SSHKnownHostsFile = value
+		case "ssh_insecure_host_key", "insecure_host_key":
+			c.OpenWrt.SSHInsecureHostKey = parseBool(value)
+			c.OpenWrt.SSHInsecureHostKeySet = true
 		case "networks":
 			c.OpenWrt.Networks = network.ParseNetworkList(value)
 		}
@@ -626,6 +657,13 @@ func (c *Config) setValue(section, key, value string) {
 			c.OPNsense.SSHKeyFile = value
 		case "ssh_password", "password":
 			c.OPNsense.SSHPassword = value
+		case "ssh_host_key", "host_key":
+			c.OPNsense.SSHHostKey = value
+		case "ssh_known_hosts_file", "ssh_known_hosts", "known_hosts_file", "known_hosts":
+			c.OPNsense.SSHKnownHostsFile = value
+		case "ssh_insecure_host_key", "insecure_host_key":
+			c.OPNsense.SSHInsecureHostKey = parseBool(value)
+			c.OPNsense.SSHInsecureHostKeySet = true
 		case "networks":
 			c.OPNsense.Networks = network.ParseNetworkList(value)
 		}
@@ -661,6 +699,10 @@ func (c *Config) setValue(section, key, value string) {
 			c.RemoteScanners.SSHKeyFile = value
 		case "ssh_password", "password":
 			c.RemoteScanners.SSHPassword = value
+		case "ssh_known_hosts_file", "ssh_known_hosts", "known_hosts_file", "known_hosts":
+			c.RemoteScanners.SSHKnownHostsFile = value
+		case "ssh_insecure_host_key", "insecure_host_key":
+			c.RemoteScanners.SSHInsecureHostKey = parseBool(value)
 		case "names":
 			c.setRemoteScannerNames(value)
 		}
@@ -677,16 +719,48 @@ func (c *Config) setValue(section, key, value string) {
 	}
 }
 
-func (c *Config) setSwitchNames(value string) {
-	c.Switches.Names = nil
+func appendPEMLine(existing, line string) string {
+	if existing == "" {
+		return line
+	}
+	return existing + "\n" + line
+}
+
+func appendUniqueName(names []string, id string) []string {
+	for _, existing := range names {
+		if existing == id {
+			return names
+		}
+	}
+	return append(names, id)
+}
+
+func mergeConfiguredNames(existing []string, value string, ensure func(string)) []string {
+	var merged []string
 	for _, name := range strings.Split(value, ",") {
 		id := strings.ToLower(strings.TrimSpace(name))
 		if id == "" {
 			continue
 		}
-		c.Switches.Names = append(c.Switches.Names, id)
-		c.ensureSwitch(id)
+		merged = appendUniqueName(merged, id)
+		if ensure != nil {
+			ensure(id)
+		}
 	}
+	for _, id := range existing {
+		id = strings.ToLower(strings.TrimSpace(id))
+		if id == "" {
+			continue
+		}
+		merged = appendUniqueName(merged, id)
+	}
+	return merged
+}
+
+func (c *Config) setSwitchNames(value string) {
+	c.Switches.Names = mergeConfiguredNames(c.Switches.Names, value, func(id string) {
+		c.ensureSwitch(id)
+	})
 }
 
 func (c *Config) ensureSwitch(id string) *SwitchConfig {
@@ -705,6 +779,7 @@ func (c *Config) ensureSwitch(id string) *SwitchConfig {
 			PrivacyProtocol: "DES",
 			TimeoutSeconds:  5,
 		}
+		c.Switches.Configs[id] = switchCfg
 	}
 	return &switchCfg
 }
@@ -743,15 +818,9 @@ func (c *Config) setSwitchValue(id, key, value string) {
 }
 
 func (c *Config) setOpenWrtNames(value string) {
-	c.OpenWrts.Names = nil
-	for _, name := range strings.Split(value, ",") {
-		id := strings.ToLower(strings.TrimSpace(name))
-		if id == "" {
-			continue
-		}
-		c.OpenWrts.Names = append(c.OpenWrts.Names, id)
+	c.OpenWrts.Names = mergeConfiguredNames(c.OpenWrts.Names, value, func(id string) {
 		c.ensureOpenWrt(id)
-	}
+	})
 }
 
 func (c *Config) ensureOpenWrt(id string) *OpenWrtConfig {
@@ -807,6 +876,13 @@ func (c *Config) setOpenWrtValue(id, key, value string) {
 		cfg.SSHKeyFile = value
 	case "ssh_password", "password":
 		cfg.SSHPassword = value
+	case "ssh_host_key", "host_key":
+		cfg.SSHHostKey = value
+	case "ssh_known_hosts_file", "ssh_known_hosts", "known_hosts_file", "known_hosts":
+		cfg.SSHKnownHostsFile = value
+	case "ssh_insecure_host_key", "insecure_host_key":
+		cfg.SSHInsecureHostKey = parseBool(value)
+		cfg.SSHInsecureHostKeySet = true
 	case "networks":
 		cfg.Networks = network.ParseNetworkList(value)
 	}
@@ -863,15 +939,9 @@ func extractHostFromURL(rawURL string) string {
 }
 
 func (c *Config) setRemoteScannerNames(value string) {
-	c.RemoteScanners.Names = nil
-	for _, name := range strings.Split(value, ",") {
-		id := strings.ToLower(strings.TrimSpace(name))
-		if id == "" {
-			continue
-		}
-		c.RemoteScanners.Names = append(c.RemoteScanners.Names, id)
+	c.RemoteScanners.Names = mergeConfiguredNames(c.RemoteScanners.Names, value, func(id string) {
 		c.ensureRemoteScanner(id)
-	}
+	})
 }
 
 func (c *Config) ensureRemoteScanner(id string) *RemoteScannerConfig {
@@ -916,6 +986,13 @@ func (c *Config) setRemoteScannerValue(id, key, value string) {
 		cfg.SSHKeyFile = value
 	case "ssh_password", "password":
 		cfg.SSHPassword = value
+	case "ssh_host_key", "host_key":
+		cfg.SSHHostKey = value
+	case "ssh_known_hosts_file", "ssh_known_hosts", "known_hosts_file", "known_hosts":
+		cfg.SSHKnownHostsFile = value
+	case "ssh_insecure_host_key", "insecure_host_key":
+		cfg.SSHInsecureHostKey = parseBool(value)
+		cfg.SSHInsecureHostKeySet = true
 	}
 	c.RemoteScanners.Configs[id] = cfg
 	found := false
@@ -1054,6 +1131,23 @@ func (c *Config) ApplyEnv() error {
 	} else if v := os.Getenv("ORANGUTAN_OPENWRT_PASSWORD"); v != "" {
 		c.OpenWrt.SSHPassword = v
 	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_HOST_KEY"); v != "" {
+		c.OpenWrt.SSHHostKey = v
+	} else if v := os.Getenv("ORANGUTAN_OPENWRT_HOST_KEY"); v != "" {
+		c.OpenWrt.SSHHostKey = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_KNOWN_HOSTS_FILE"); v != "" {
+		c.OpenWrt.SSHKnownHostsFile = v
+	} else if v := os.Getenv("ORANGUTAN_OPENWRT_KNOWN_HOSTS_FILE"); v != "" {
+		c.OpenWrt.SSHKnownHostsFile = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPENWRT_SSH_INSECURE_HOST_KEY"); v != "" {
+		c.OpenWrt.SSHInsecureHostKey = parseBool(v)
+		c.OpenWrt.SSHInsecureHostKeySet = true
+	} else if v := os.Getenv("ORANGUTAN_OPENWRT_INSECURE_HOST_KEY"); v != "" {
+		c.OpenWrt.SSHInsecureHostKey = parseBool(v)
+		c.OpenWrt.SSHInsecureHostKeySet = true
+	}
 	if v := os.Getenv("ORANGUTAN_OPENWRT_NETWORKS"); v != "" {
 		c.OpenWrt.Networks = network.ParseNetworkList(v)
 	}
@@ -1087,6 +1181,12 @@ func (c *Config) ApplyEnv() error {
 			{"key_file", "KEY_FILE"},
 			{"ssh_password", "SSH_PASSWORD"},
 			{"password", "PASSWORD"},
+			{"ssh_host_key", "SSH_HOST_KEY"},
+			{"host_key", "HOST_KEY"},
+			{"ssh_known_hosts_file", "SSH_KNOWN_HOSTS_FILE"},
+			{"known_hosts_file", "KNOWN_HOSTS_FILE"},
+			{"ssh_insecure_host_key", "SSH_INSECURE_HOST_KEY"},
+			{"insecure_host_key", "INSECURE_HOST_KEY"},
 			{"networks", "NETWORKS"},
 		} {
 			if v := os.Getenv(prefix + setting.env); v != "" {
@@ -1154,6 +1254,23 @@ func (c *Config) ApplyEnv() error {
 	} else if v := os.Getenv("ORANGUTAN_OPNSENSE_PASSWORD"); v != "" {
 		c.OPNsense.SSHPassword = v
 	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_HOST_KEY"); v != "" {
+		c.OPNsense.SSHHostKey = v
+	} else if v := os.Getenv("ORANGUTAN_OPNSENSE_HOST_KEY"); v != "" {
+		c.OPNsense.SSHHostKey = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_KNOWN_HOSTS_FILE"); v != "" {
+		c.OPNsense.SSHKnownHostsFile = v
+	} else if v := os.Getenv("ORANGUTAN_OPNSENSE_KNOWN_HOSTS_FILE"); v != "" {
+		c.OPNsense.SSHKnownHostsFile = v
+	}
+	if v := os.Getenv("ORANGUTAN_OPNSENSE_SSH_INSECURE_HOST_KEY"); v != "" {
+		c.OPNsense.SSHInsecureHostKey = parseBool(v)
+		c.OPNsense.SSHInsecureHostKeySet = true
+	} else if v := os.Getenv("ORANGUTAN_OPNSENSE_INSECURE_HOST_KEY"); v != "" {
+		c.OPNsense.SSHInsecureHostKey = parseBool(v)
+		c.OPNsense.SSHInsecureHostKeySet = true
+	}
 	if v := os.Getenv("ORANGUTAN_OPNSENSE_NETWORKS"); v != "" {
 		c.OPNsense.Networks = network.ParseNetworkList(v)
 	}
@@ -1220,6 +1337,16 @@ func (c *Config) ApplyEnv() error {
 	if v := os.Getenv("ORANGUTAN_REMOTE_SCAN_PASSWORD"); v != "" {
 		c.RemoteScanners.SSHPassword = v
 	}
+	if v := os.Getenv("ORANGUTAN_REMOTE_SCAN_KNOWN_HOSTS_FILE"); v != "" {
+		c.RemoteScanners.SSHKnownHostsFile = v
+	} else if v := os.Getenv("ORANGUTAN_REMOTE_SCAN_SSH_KNOWN_HOSTS_FILE"); v != "" {
+		c.RemoteScanners.SSHKnownHostsFile = v
+	}
+	if v := os.Getenv("ORANGUTAN_REMOTE_SCAN_INSECURE_HOST_KEY"); v != "" {
+		c.RemoteScanners.SSHInsecureHostKey = parseBool(v)
+	} else if v := os.Getenv("ORANGUTAN_REMOTE_SCAN_SSH_INSECURE_HOST_KEY"); v != "" {
+		c.RemoteScanners.SSHInsecureHostKey = parseBool(v)
+	}
 	if v := os.Getenv("ORANGUTAN_REMOTE_SCANNERS_NAMES"); v != "" {
 		c.setRemoteScannerNames(v)
 	}
@@ -1247,6 +1374,12 @@ func (c *Config) ApplyEnv() error {
 				{"key_file", "KEY_FILE"},
 				{"ssh_password", "SSH_PASSWORD"},
 				{"password", "PASSWORD"},
+				{"ssh_host_key", "SSH_HOST_KEY"},
+				{"host_key", "HOST_KEY"},
+				{"ssh_known_hosts_file", "SSH_KNOWN_HOSTS_FILE"},
+				{"known_hosts_file", "KNOWN_HOSTS_FILE"},
+				{"ssh_insecure_host_key", "SSH_INSECURE_HOST_KEY"},
+				{"insecure_host_key", "INSECURE_HOST_KEY"},
 			} {
 				if v := os.Getenv(prefix + setting.env); v != "" {
 					c.setRemoteScannerValue(id, setting.key, v)
@@ -1332,6 +1465,15 @@ func (c *Config) Normalize() []string {
 		if c.OPNsense.SSHPassword != "" {
 			c.setRemoteScannerValue("opnsense", "ssh_password", c.OPNsense.SSHPassword)
 		}
+		if c.OPNsense.SSHHostKey != "" {
+			c.setRemoteScannerValue("opnsense", "ssh_host_key", c.OPNsense.SSHHostKey)
+		}
+		if c.OPNsense.SSHKnownHostsFile != "" {
+			c.setRemoteScannerValue("opnsense", "ssh_known_hosts_file", c.OPNsense.SSHKnownHostsFile)
+		}
+		if c.OPNsense.SSHInsecureHostKeySet {
+			c.setRemoteScannerValue("opnsense", "ssh_insecure_host_key", strconv.FormatBool(c.OPNsense.SSHInsecureHostKey))
+		}
 		c.RemoteScanners.Enable = true
 	}
 
@@ -1369,6 +1511,15 @@ func (c *Config) Normalize() []string {
 			}
 			if wrt.SSHPassword != "" {
 				c.setRemoteScannerValue(id, "ssh_password", wrt.SSHPassword)
+			}
+			if wrt.SSHHostKey != "" {
+				c.setRemoteScannerValue(id, "ssh_host_key", wrt.SSHHostKey)
+			}
+			if wrt.SSHKnownHostsFile != "" {
+				c.setRemoteScannerValue(id, "ssh_known_hosts_file", wrt.SSHKnownHostsFile)
+			}
+			if wrt.SSHInsecureHostKeySet {
+				c.setRemoteScannerValue(id, "ssh_insecure_host_key", strconv.FormatBool(wrt.SSHInsecureHostKey))
 			}
 			c.RemoteScanners.Enable = true
 		}

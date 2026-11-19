@@ -42,65 +42,110 @@ var osIcons = map[string]string{
 	"BSD":     `<path d="M12 2v20M8 5v6a4 4 0 0 0 8 0V5M5 2l3 3M19 2l-3 3M10 22h4"/>`,
 }
 
-// osIcon returns the inline SVG for an OS family, or empty when unknown.
-func osIcon(family string) template.HTML {
-	body, ok := osIcons[family]
-	if !ok {
+// osIcon returns the inline SVG for an OS family or OS name using case-insensitive
+// substring matching (matching os-presentation.js), or empty when unknown.
+func osIcon(familyOrName string) template.HTML {
+	s := strings.ToLower(strings.TrimSpace(familyOrName))
+	if s == "" {
 		return ""
 	}
+	var key string
+	switch {
+	case strings.Contains(s, "android"):
+		key = "Android"
+	case strings.Contains(s, "linux") || strings.Contains(s, "ubuntu") || strings.Contains(s, "debian") ||
+		strings.Contains(s, "alpine") || strings.Contains(s, "fedora") || strings.Contains(s, "centos") ||
+		strings.Contains(s, "arch"):
+		key = "Linux"
+	case strings.Contains(s, "windows"):
+		key = "Windows"
+	case strings.Contains(s, "apple") || strings.Contains(s, "macos") || strings.Contains(s, "darwin") ||
+		strings.Contains(s, "ios") || strings.Contains(s, "mac os"):
+		key = "Apple"
+	case strings.Contains(s, "bsd") || strings.Contains(s, "freebsd") || strings.Contains(s, "openbsd") ||
+		strings.Contains(s, "netbsd"):
+		key = "BSD"
+	default:
+		return ""
+	}
+	body := osIcons[key]
 	return template.HTML(`<svg class="os-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` + body + `</svg>`)
 }
 
 // formatDeviceOS formats a device's OS for initial HTML rendering in the table.
 func formatDeviceOS(v interface{}) template.HTML {
-	var os, osVersion, osFamily, customOS string
+	var os, osVersion, osFamily, customOS, customOSVersion, customOSFamily string
 	switch d := v.(type) {
 	case *DeviceView:
 		if d != nil && d.Device != nil {
-			os = d.OS
-			osVersion = d.OSVersion
-			osFamily = d.OSFamily
-			customOS = d.CustomOS
+			os = strings.TrimSpace(d.OS)
+			osVersion = strings.TrimSpace(d.OSVersion)
+			osFamily = strings.TrimSpace(d.OSFamily)
+			customOS = strings.TrimSpace(d.CustomOS)
+			customOSVersion = strings.TrimSpace(d.CustomOSVersion)
+			customOSFamily = strings.TrimSpace(d.CustomOSFamily)
 		}
 	case *types.Device:
 		if d != nil {
-			os = d.OS
-			osVersion = d.OSVersion
-			osFamily = d.OSFamily
-			customOS = d.CustomOS
+			os = strings.TrimSpace(d.OS)
+			osVersion = strings.TrimSpace(d.OSVersion)
+			osFamily = strings.TrimSpace(d.OSFamily)
+			customOS = strings.TrimSpace(d.CustomOS)
+			customOSVersion = strings.TrimSpace(d.CustomOSVersion)
+			customOSFamily = strings.TrimSpace(d.CustomOSFamily)
 		}
 	case types.Device:
-		os = d.OS
-		osVersion = d.OSVersion
-		osFamily = d.OSFamily
-		customOS = d.CustomOS
+		os = strings.TrimSpace(d.OS)
+		osVersion = strings.TrimSpace(d.OSVersion)
+		osFamily = strings.TrimSpace(d.OSFamily)
+		customOS = strings.TrimSpace(d.CustomOS)
+		customOSVersion = strings.TrimSpace(d.CustomOSVersion)
+		customOSFamily = strings.TrimSpace(d.CustomOSFamily)
+	}
+
+	effectiveFamily := customOSFamily
+	if effectiveFamily == "" {
+		effectiveFamily = osFamily
 	}
 
 	if customOS != "" {
-		icon := osIcon(osFamily)
+		text := customOS
+		if customOSVersion != "" && !strings.Contains(text, customOSVersion) {
+			text = text + " " + customOSVersion
+		}
+		icon := osIcon(customOSFamily)
 		if icon == "" {
 			icon = osIcon(customOS)
 		}
-		if icon != "" {
-			return template.HTML(string(icon) + ` <span>` + template.HTMLEscapeString(customOS) + `</span>`)
+		if icon == "" {
+			icon = osIcon(osFamily)
 		}
-		return template.HTML(template.HTMLEscapeString(customOS))
+		if icon != "" {
+			return template.HTML(string(icon) + ` <span>` + template.HTMLEscapeString(text) + `</span>`)
+		}
+		return template.HTML(template.HTMLEscapeString(text))
 	}
-	if os == "" && osVersion == "" {
+
+	effectiveVersion := customOSVersion
+	if effectiveVersion == "" {
+		effectiveVersion = osVersion
+	}
+
+	if os == "" && effectiveVersion == "" {
 		return template.HTML(`<span style="color:var(--text-muted)">—</span>`)
 	}
 	text := os
-	if osFamily == "Linux" {
+	if strings.EqualFold(effectiveFamily, "Linux") {
 		text = strings.TrimSuffix(strings.TrimSuffix(text, " Linux"), " linux")
 	}
-	if osVersion != "" && !strings.Contains(text, osVersion) {
+	if effectiveVersion != "" && !strings.Contains(text, effectiveVersion) {
 		if text != "" {
-			text = text + " " + osVersion
+			text = text + " " + effectiveVersion
 		} else {
-			text = osVersion
+			text = effectiveVersion
 		}
 	}
-	icon := osIcon(osFamily)
+	icon := osIcon(effectiveFamily)
 	if icon == "" {
 		icon = osIcon(os)
 	}

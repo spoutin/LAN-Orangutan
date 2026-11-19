@@ -251,3 +251,36 @@ func TestSwitchExtracts64BitPortOctetsAndSingleMAC(t *testing.T) {
 		t.Errorf("expected c2 to have SingleMAC=false (shared port), got true")
 	}
 }
+
+func TestOIDIndex_EnforcesDotBoundary(t *testing.T) {
+	// Root ending in .1 must NOT match sibling OID ending in .10
+	if idx, ok := oidIndex("1.3.6.1.2.1.31.1.1.1.10", "1.3.6.1.2.1.31.1.1.1.1", 1); ok {
+		t.Fatalf("oidIndex matched sibling OID without dot boundary: %v", idx)
+	}
+	if idx, ok := oidIndex("1.3.6.1.2.1.31.1.1.1.10.71", "1.3.6.1.2.1.31.1.1.1.1", 2); ok {
+		t.Fatalf("oidIndex matched sibling OID without dot boundary: %v", idx)
+	}
+	idx, ok := oidIndex(".1.3.6.1.2.1.31.1.1.1.1.71", ".1.3.6.1.2.1.31.1.1.1.1", 1)
+	if !ok || len(idx) != 1 || idx[0] != 71 {
+		t.Fatalf("oidIndex valid suffix = (%v, %v), want ([71], true)", idx, ok)
+	}
+}
+
+func TestFetchSwitchConnections_SurfacesContextErrorFromOptionalWalks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := fetchSwitchConnections(ctx, switchConfig(), map[string]int{"6c:4c:bc:29:e8:c1": 3}, fakeSwitchWalker{
+		tables: map[string][]gosnmp.SnmpPDU{
+			ifNameOID:            {pdu(ifNameOID+".71", "gi1/23")},
+			dot1dBasePortIfIndex: {pdu(dot1dBasePortIfIndex+".71", 71)},
+			dot1qTpFdbPort:       {pdu(dot1qTpFdbPort+".3.108.76.188.41.232.193", 71)},
+		},
+		errs: map[string]error{
+			switchIfHCInOctetsOID: context.Canceled,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected context error from optional switch walk to be surfaced")
+	}
+}

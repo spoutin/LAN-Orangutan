@@ -950,10 +950,7 @@ async function editDevice(ip) {
                 // Populate options
                 const devicesArray = Object.values(devicesDataResult.data);
                 const otherDevices = devicesArray.filter(dev => dev.ip !== ip && dev.mac && dev.mac.toLowerCase() !== deviceData.mac.toLowerCase());
-                datalist.innerHTML = otherDevices.map(dev => {
-                    const name = dev.label || dev.custom_hostname || dev.hostname || dev.mac;
-                    return `<option value="${name} [${dev.mac.toUpperCase()}]" data-mac="${dev.mac}"></option>`;
-                }).join('');
+                datalist.innerHTML = otherDevices.map(dev => htmlUtils.renderParentDeviceOptionHtml(dev)).join('');
 
                 // If currently linked, resolve search text value
                 if (deviceData.linkedMAC) {
@@ -984,19 +981,9 @@ async function editDevice(ip) {
     const childrenList = document.getElementById('detail-linked-children-list');
     if (childrenGroup && childrenList) {
         if (deviceData.linkedChildren && deviceData.linkedChildren.length > 0) {
-            childrenList.innerHTML = deviceData.linkedChildren.map(child => {
-                const ipMatch = child.match(/\(([^)]+)\)/);
-                const childIP = ipMatch ? ipMatch[1] : '';
-                return `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span style="color: var(--success); font-weight: bold;">🔗</span>
-                            <span>${child}</span>
-                        </div>
-                        ${childIP ? `<button type="button" class="btn-text danger" onclick="unlinkChildFromParent('${childIP}', '${deviceData.ip}')" style="font-size: 0.75rem; background: none; border: none; color: #ef4444; cursor: pointer; padding: 2px 6px;">Unlink Alias</button>` : ''}
-                    </div>
-                `;
-            }).join('');
+            childrenList.innerHTML = deviceData.linkedChildren
+                .map(child => htmlUtils.renderLinkedChildRowHtml(child, deviceData.ip))
+                .join('');
             childrenGroup.style.display = 'block';
         } else {
             childrenGroup.style.display = 'none';
@@ -1077,13 +1064,7 @@ async function editDevice(ip) {
                             
                             sessionBarsHTML += `
                                 <div class="presence-session-bar" style="left: ${left}%; width: ${width}%;">
-                                    <div class="presence-tooltip">
-                                        <strong style="color: var(--success); font-size: 0.8rem; display: block; margin-bottom: 4px;">🟩 ${session.isCurrent ? 'Active Online Session' : 'Completed Session'}</strong>
-                                        <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>Start:</strong> ${session.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                                        <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>End:</strong> ${session.isCurrent ? 'Present' : session.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                                        <span style="display: block; margin-bottom: 2px; font-size: 0.75rem;"><strong>Duration:</strong> ${durText}</span>
-                                        ${session.networkName ? `<span style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 4px;">Network: ${session.networkName}</span>` : ''}
-                                    </div>
+                                    ${htmlUtils.renderPresenceTooltipHtml(session, durText, d => d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), { fontSize: '0.75rem', titleSize: '0.8rem', includeIP: false, currentEndLabel: 'Present' })}
                                 </div>
                             `;
                         }
@@ -1113,27 +1094,7 @@ async function editDevice(ip) {
                 timelineEl.innerHTML = result.data.map(event => {
                     const dateVal = new Date(event.created_at);
                     const ago = relativeTime(Math.floor(dateVal.getTime() / 1000));
-                    let detailText = '';
-                    if (event.event === 'leave') {
-                        const netText = event.network_name ? ` on <strong>${event.network_name}</strong>` : '';
-                        detailText = `went offline${netText} (was connected for ${formatSeconds(event.duration)})`;
-                    } else if (event.event === 'return') {
-                        const netText = event.network_name ? ` on <strong>${event.network_name}</strong>` : '';
-                        detailText = `reconnected${netText} (was gone for ${formatSeconds(event.duration)})`;
-                    } else if (event.event === 'join') {
-                        const netText = event.network_name ? ` <strong>${event.network_name}</strong>` : '';
-                        detailText = `joined${netText} network for the first time`;
-                    }
-                    const badgeClass = event.event === 'join' ? 'join' : (event.event === 'leave' ? 'leave' : 'return');
-                    return `
-                        <div class="timeline-event-item" style="display:flex; flex-direction:column; gap:4px; padding:8px; border-bottom:1px solid var(--border); font-size:0.85rem;">
-                            <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <span class="scan-status-badge ${badgeClass}" style="padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.7rem; text-transform: uppercase;">${event.event}</span>
-                                <span style="color:var(--text-muted); font-size:0.75rem;">${ago}</span>
-                            </div>
-                            <div style="color:var(--text); margin-top:2px;">${detailText}</div>
-                        </div>
-                    `;
+                    return htmlUtils.renderTimelineEventItemHtml(event, ago, formatSeconds);
                 }).join('');
             } else {
                 timelineEl.innerHTML = '<div class="timeline-empty" style="padding:16px; color:var(--text-muted); font-size:0.85rem; text-align:center;">No logged activity events for this device.</div>';
@@ -1148,9 +1109,14 @@ async function editDevice(ip) {
     modal.style.display = 'flex';
 }
 
-function closeModal() {
-    const modal = document.getElementById('edit-modal');
-    if (modal) modal.style.display = 'none';
+function closeModal(modalEl) {
+    if (modalEl && typeof modalEl === 'object' && modalEl.style) {
+        modalEl.style.display = 'none';
+        return;
+    }
+    document.querySelectorAll('.modal').forEach(modal => {
+        modal.style.display = 'none';
+    });
 }
 
 async function saveDevice() {
@@ -1337,36 +1303,20 @@ function formatUptime(seconds) {
     return `${secs}s`;
 }
 
-function escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+function safeHttpUrl(url) {
+    if (typeof sanitizeHttpUrl === 'function') return sanitizeHttpUrl(url);
+    if (!url || typeof url !== 'string') return '';
+    const trimmed = url.trim();
+    return /^https?:\/\//i.test(trimmed) ? trimmed : '';
 }
 
 function selectDeviceRow(target) {
-    let row = null;
-    if (typeof deviceOperationState !== 'undefined' && deviceOperationState.resolveDeviceRow) {
-        row = deviceOperationState.resolveDeviceRow(target, document);
-    } else {
-        if (typeof target === 'string') {
-            row = document.querySelector(`.device-row[data-ip="${CSS.escape(target)}"]`);
-        } else if (target instanceof HTMLElement) {
-            row = target.classList.contains('device-row') 
-                ? target 
-                : (target.closest('.device-row') || target.closest('.device-subrow')?.previousElementSibling || document.querySelector(`.device-row[data-ip="${CSS.escape(target.dataset?.ip || target.closest('.device-subrow')?.dataset?.ip || '')}"]`));
-        }
-    }
+    const row = deviceOperationState.resolveDeviceRow(target, document);
     if (!row) return;
 
     document.querySelectorAll('.device-row.selected-row, .device-subrow.selected-row').forEach(r => r.classList.remove('selected-row'));
     row.classList.add('selected-row');
-    const subrow = (typeof deviceOperationState !== 'undefined' && deviceOperationState.findSubrowForDeviceRow)
-        ? deviceOperationState.findSubrowForDeviceRow(row, document)
-        : (row.nextElementSibling?.classList.contains('device-subrow') ? row.nextElementSibling : document.querySelector(`.device-subrow[data-ip="${CSS.escape(row.dataset.ip)}"]`));
+    const subrow = deviceOperationState.findSubrowForDeviceRow(row, document);
     if (subrow) subrow.classList.add('selected-row');
     openDeviceSidebar(row);
 }
@@ -1400,7 +1350,7 @@ function syncDeviceSidebarTelemetry(data) {
     // 2. Quick Actions
     const webBtn = document.getElementById('sb-webui-btn');
     if (webBtn) {
-        const webUrl = data.customWebUrlOriginal || data.webUrl || data.customWebUrl || '';
+        const webUrl = safeHttpUrl(data.customWebUrlOriginal || data.webUrl || data.customWebUrl || '');
         if (webUrl) {
             webBtn.href = webUrl;
             webBtn.style.display = '';
@@ -1788,17 +1738,16 @@ function syncDeviceSidebarTelemetry(data) {
 
 		const osEl = document.getElementById('sb-os');
 		if (osEl) {
-			const osDisp = typeof formatOSName === 'function' ? formatOSName({
+			const osPayload = {
 				os: data.osDisplay || data.os || '',
 				os_version: data.osVersion || '',
 				os_family: data.osFamily || '',
-				custom_os: data.customOsOriginal || data.customOs || ''
-			}) : (typeof formatOSDisplay === 'function' ? formatOSDisplay({
-				os: data.osDisplay || data.os || '',
-				os_version: data.osVersion || '',
-				os_family: data.osFamily || '',
-				custom_os: data.customOsOriginal || data.customOs || ''
-			}) : { html: data.customOsOriginal || data.os || '—' });
+				custom_os: data.customOsOriginal || data.customOs || '',
+				custom_os_version: data.customOsVersionOriginal || data.customOsVersion || '',
+				custom_os_family: data.customOsFamilyOriginal || data.customOsFamily || ''
+			};
+			const osDisp = typeof formatOSName === 'function' ? formatOSName(osPayload)
+				: (typeof formatOSDisplay === 'function' ? formatOSDisplay(osPayload) : { html: data.customOsOriginal || data.os || '—' });
 			osEl.innerHTML = osDisp.html;
 		}
 
@@ -1966,7 +1915,20 @@ function updateSidebarDeepScanState(ip, isRunning, error = null) {
 			: { html: '<span class="deep-scan-progress">Scanning services...</span>' };
 		lastDeepScan.innerHTML = res.html;
 	} else if (error) {
-		lastDeepScan.innerHTML = `<span style="color: var(--danger, #d9483f); cursor: pointer; font-weight: 600;" onclick="openErrorDetailsModal({ title: 'Service Rescan Failed (${escapeHtml(ip)})', target: '${escapeHtml(ip)}', error: '${escapeHtml(error)}' })" title="${escapeHtml(error)}">⚠ Scan Failed</span>`;
+		const failSpan = document.createElement('span');
+		failSpan.style.color = 'var(--danger, #d9483f)';
+		failSpan.style.cursor = 'pointer';
+		failSpan.style.fontWeight = '600';
+		failSpan.title = String(error);
+		failSpan.textContent = '⚠ Scan Failed';
+		failSpan.addEventListener('click', () => {
+			openErrorDetailsModal({
+				title: `Service Rescan Failed (${ip})`,
+				target: ip,
+				error: String(error)
+			});
+		});
+		lastDeepScan.replaceChildren(failSpan);
 	} else {
 		const row = document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`);
 		const res = window.deviceOperationState?.formatLastDeepScan
@@ -2176,7 +2138,7 @@ async function fetchAndRenderTrafficChart() {
             container.innerHTML = `<div style="color:var(--text-muted); font-size: 0.9rem;">Chart renderer unavailable</div>`;
         }
     } catch (err) {
-        container.innerHTML = `<div style="color:var(--danger, #ef4444); font-size: 0.9rem;">Failed to load traffic data: ${err.message}</div>`;
+        container.innerHTML = `<div style="color:var(--danger, #ef4444); font-size: 0.9rem;">Failed to load traffic data: ${escapeHtml(err.message)}</div>`;
     }
 }
 
@@ -2274,30 +2236,23 @@ async function saveSidebarDevice() {
 			row.dataset.sshOverridePort = String(ssh_override_port);
 
             const osCell = row.querySelector('.os-cell');
+            const osPayload = {
+                custom_os: custom_os,
+                custom_os_version: row.dataset.customOsVersionOriginal || row.dataset.customOsVersion || '',
+                custom_os_family: row.dataset.customOsFamilyOriginal || row.dataset.customOsFamily || '',
+                os: row.dataset.osDisplay || row.dataset.os || '',
+                os_version: row.dataset.osVersion || '',
+                os_family: row.dataset.osFamily || ''
+            };
             if (osCell && typeof formatOSDisplay === 'function') {
-                osCell.innerHTML = formatOSDisplay({
-                    custom_os: custom_os,
-                    os: row.dataset.osDisplay || row.dataset.os || '',
-                    os_version: row.dataset.osVersion || '',
-                    os_family: row.dataset.osFamily || ''
-                }).html;
+                osCell.innerHTML = formatOSDisplay(osPayload).html;
             }
 
             const sbOS = document.getElementById('sb-os');
             if (sbOS && typeof formatOSName === 'function') {
-                sbOS.innerHTML = formatOSName({
-                    custom_os: custom_os,
-                    os: row.dataset.osDisplay || row.dataset.os || '',
-                    os_version: row.dataset.osVersion || '',
-                    os_family: row.dataset.osFamily || ''
-                }).html;
+                sbOS.innerHTML = formatOSName(osPayload).html;
             } else if (sbOS && typeof formatOSDisplay === 'function') {
-                sbOS.innerHTML = formatOSDisplay({
-                    custom_os: custom_os,
-                    os: row.dataset.osDisplay || row.dataset.os || '',
-                    os_version: row.dataset.osVersion || '',
-                    os_family: row.dataset.osFamily || ''
-                }).html;
+                sbOS.innerHTML = formatOSDisplay(osPayload).html;
             }
 
             const sbOSVersion = document.getElementById('sb-os-version');
@@ -2356,7 +2311,7 @@ async function saveSidebarDevice() {
             }
 
             // Update Actions Web UI button if needed
-            const effectiveWebUrl = custom_web_url || row.dataset.webUrl || '';
+            const effectiveWebUrl = safeHttpUrl(custom_web_url || row.dataset.webUrl || '');
             const actionsCell = row.querySelector('.actions-cell');
             if (actionsCell) {
                 let webLink = actionsCell.querySelector('a.btn-icon');
@@ -2366,11 +2321,14 @@ async function saveSidebarDevice() {
                         webLink.href = effectiveWebUrl;
                         webLink.setAttribute('data-tip', `Open Web UI: ${effectiveWebUrl}`);
                     } else if (placeholder) {
-                        placeholder.outerHTML = `
-                            <a href="${escapeHtml(effectiveWebUrl)}" target="_blank" class="btn-icon" data-tip="Open Web UI: ${escapeHtml(effectiveWebUrl)}" aria-label="Open Web UI" onclick="event.stopPropagation()">
-                                <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                            </a>
-                        `;
+                        const a = document.createElement('a');
+                        a.href = effectiveWebUrl;
+                        a.target = '_blank';
+                        a.className = 'btn-icon';
+                        a.setAttribute('data-tip', `Open Web UI: ${effectiveWebUrl}`);
+                        a.setAttribute('aria-label', 'Open Web UI');
+                        a.innerHTML = '<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+                        placeholder.replaceWith(a);
                     }
                 } else {
                     if (webLink) {
@@ -2599,22 +2557,50 @@ async function clearDiscoveredDevices() {
 }
 
 // Dropdown toggle
+const dropdownCloseHandlers = new Map();
+
+function closeDropdownMenu(menu) {
+    if (!menu) return;
+    menu.classList.remove('show');
+    const handler = dropdownCloseHandlers.get(menu);
+    if (handler) {
+        document.removeEventListener('click', handler);
+        dropdownCloseHandlers.delete(menu);
+    }
+}
+
 function toggleDropdown(id) {
     const menu = document.getElementById(id);
-    if (menu) {
-        menu.classList.toggle('show');
-        // Close on click outside
-        if (menu.classList.contains('show')) {
-            setTimeout(() => {
-                document.addEventListener('click', function closeDropdown(e) {
-                    if (!menu.contains(e.target)) {
-                        menu.classList.remove('show');
-                        document.removeEventListener('click', closeDropdown);
-                    }
-                });
-            }, 0);
-        }
+    if (!menu) return;
+
+    const willShow = !menu.classList.contains('show');
+    document.querySelectorAll('.dropdown-menu.show').forEach(openMenu => {
+        if (openMenu !== menu) closeDropdownMenu(openMenu);
+    });
+
+    if (!willShow) {
+        closeDropdownMenu(menu);
+        return;
     }
+
+    closeDropdownMenu(menu);
+    menu.classList.add('show');
+
+    const closeDropdown = function (e) {
+        const wrapper = typeof menu.closest === 'function' ? menu.closest('.dropdown') : null;
+        if (menu.contains(e.target) || (wrapper && wrapper.contains(e.target))) {
+            return;
+        }
+        closeDropdownMenu(menu);
+    };
+    dropdownCloseHandlers.set(menu, closeDropdown);
+    setTimeout(() => {
+        if (menu.classList.contains('show') && dropdownCloseHandlers.get(menu) === closeDropdown) {
+            document.addEventListener('click', closeDropdown);
+        } else if (dropdownCloseHandlers.get(menu) === closeDropdown) {
+            dropdownCloseHandlers.delete(menu);
+        }
+    }, 0);
 }
 
 // Table sorting
@@ -3026,12 +3012,22 @@ document.addEventListener('keydown', e => {
 
 // Close modal on backdrop click
 document.addEventListener('click', e => {
-    if (e.target.classList.contains('modal')) closeModal();
+    if (e.target && e.target.classList && e.target.classList.contains('modal')) {
+        closeModal(e.target);
+    }
 });
 
 // Close modal on Escape
 document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Escape') {
+        const hasOpenModal = Array.from(document.querySelectorAll('.modal')).some(
+            m => m.style.display && m.style.display !== 'none'
+        );
+        if (hasOpenModal) {
+            e.stopImmediatePropagation?.();
+            closeModal();
+        }
+    }
 });
 
 // --- Relative times ---------------------------------------------------
@@ -3441,9 +3437,77 @@ function toggleScanFooter() {
 // form inputs, copy elements, or active text selection) selects the row and opens the
 // interactive sidebar drawer.
 (function initDeviceRowSelection() {
+    const networkMenu = document.getElementById('network-filter-menu');
+    if (networkMenu) {
+        networkMenu.addEventListener('change', function (e) {
+            const cb = e.target.closest('input[type="checkbox"]');
+            if (!cb) return;
+            toggleNetworkDropdownFilter(cb.dataset.network || cb.value);
+        });
+    }
+
+    const linkedChildrenList = document.getElementById('detail-linked-children-list');
+    if (linkedChildrenList) {
+        linkedChildrenList.addEventListener('click', function (e) {
+            const btn = e.target.closest('.js-unlink-child');
+            if (!btn) return;
+            unlinkChildFromParent(btn.dataset.childIp || '', btn.dataset.parentIp || '');
+        });
+    }
+
+    const scanHistoryBody = document.getElementById('scan-history-tbody');
+    if (scanHistoryBody) {
+        scanHistoryBody.addEventListener('click', function (e) {
+            const tr = e.target.closest('.scan-history-row');
+            if (!tr) return;
+            const scanId = Number(tr.dataset.scanId);
+            if (Number.isFinite(scanId)) {
+                openScanDetailModal(scanId);
+            }
+        });
+    }
+
+    const presenceTimeline = document.getElementById('presence-timeline');
+    if (presenceTimeline) {
+        presenceTimeline.addEventListener('click', function (e) {
+            const item = e.target.closest('.timeline-stream-item');
+            if (!item || !item.dataset.ip) return;
+            editDevice(item.dataset.ip);
+        });
+    }
+
+    const liveProgressCard = document.getElementById('live-progress-card');
+    if (liveProgressCard) {
+        liveProgressCard.addEventListener('click', function (e) {
+            const btn = e.target.closest('.js-start-selected-scan');
+            if (btn) startSelectedScan(btn);
+        });
+    }
+
     const table = document.getElementById('devices-table');
     if (!table) return;
     table.addEventListener('click', function (e) {
+        const notifyBtn = e.target.closest('.js-toggle-notify');
+        if (notifyBtn) {
+            e.stopPropagation();
+            if (notifyBtn.dataset.ip) toggleNotifyOnSeenMain(notifyBtn.dataset.ip);
+            return;
+        }
+
+        const deleteBtn = e.target.closest('.js-delete-device');
+        if (deleteBtn) {
+            e.stopPropagation();
+            if (deleteBtn.dataset.ip) deleteDevice(deleteBtn.dataset.ip);
+            return;
+        }
+
+        const trafficBadge = e.target.closest('.js-open-traffic');
+        if (trafficBadge) {
+            e.stopPropagation();
+            if (trafficBadge.dataset.mac) openTrafficModal(trafficBadge.dataset.mac);
+            return;
+        }
+
         // Prevent trigger if they click an action button, a link, or custom form control inside the table
         if (e.target.closest('.actions-cell') ||
             e.target.closest('a') ||
@@ -3460,9 +3524,7 @@ function toggleScanFooter() {
             return;
         }
 
-        const row = (typeof deviceOperationState !== 'undefined' && deviceOperationState.resolveDeviceRow)
-            ? deviceOperationState.resolveDeviceRow(e.target, document)
-            : (e.target.closest('.device-row') || e.target.closest('.device-subrow')?.previousElementSibling);
+        const row = deviceOperationState.resolveDeviceRow(e.target, document);
         if (row) {
             selectDeviceRow(row);
         }
@@ -3775,69 +3837,26 @@ function renderLiveProgressCard(progress) {
     const card = document.getElementById('live-progress-card');
     if (!card) return;
 
-    if (progress.status === 'running') {
-        const isDeep = progress.stage === 'deep';
-        const networkPct = progress.percent >= 0 ? progress.percent : null;
-        const portPct = progress.port_scan_total > 0 ? (progress.port_scan_complete / progress.port_scan_total) * 100 : 0;
-        const eta = progress.remaining != null ? formatSeconds(progress.remaining) : 'Estimating...';
-        const phaseTitle = isDeep ? 'Stage 2 · Service discovery' : 'Stage 1 · Device discovery';
-        const currentTarget = isDeep ? (progress.current_network || 'Preparing service scan') : (progress.current_network_name || progress.current_network || 'Preparing scan');
-        const activeCount = progress.active_networks?.length || 0;
-        const parallelSubtitle = !isDeep && activeCount > 1 ? `${activeCount} networks scanning in parallel · ` : '';
-        const detailText = isDeep
-            ? `${progress.port_scan_complete} of ${progress.port_scan_total} known hosts checked`
-            : `${parallelSubtitle}Network ${progress.network_index || 1} of ${progress.network_count}`;
-        const activeBadges = !isDeep && activeCount > 1 ? `<div class="scan-network-checklist">${progress.active_networks.map(net => {
-            return `<div class="scan-network-row active"><span>●</span><strong>${net}</strong><em>scanning</em></div>`;
-        }).join('')}</div>` : '';
-        const deepChecklist = isDeep && progress.deep_networks?.length ? `<div class="scan-network-checklist">${progress.deep_networks.map(network => {
-            const state = network.complete >= network.total ? 'complete' : network.active > 0 ? 'active' : 'queued';
-            const marker = state === 'complete' ? '✓' : state === 'active' ? '●' : '○';
-            const active = network.active > 0 ? ` · ${network.active} active` : '';
-            return `<div class="scan-network-row ${state}"><span>${marker}</span><strong>${network.network}</strong><em>${network.complete} / ${network.total}${active}</em></div>`;
-        }).join('')}</div>` : '';
-        let html = `
-            <div class="scan-progress-card">
-              <div class="scan-progress-topline">
-                <span class="scan-phase-badge">${phaseTitle}</span>
-                <span class="scan-eta">ETA <span id="scan-eta-live" data-seconds="${progress.remaining ?? ''}">${eta}</span></span>
-              </div>
-              <div class="scan-progress-title">${isDeep ? 'Service scan across selected networks' : 'Scanning'}${isDeep ? '' : ` <strong>${currentTarget}</strong>`}</div>
-              <div class="scan-progress-detail">${detailText}</div>
-              <div class="scan-progress-track">
-                <div class="scan-progress-fill" style="width: ${isDeep ? portPct : (networkPct ?? 0)}%"></div>
-              </div>
-              <div class="scan-progress-footer">
-                <span>${isDeep ? `${portPct.toFixed(0)}% of service scan` : networkPct == null ? 'Measuring current scan speed...' : `${networkPct.toFixed(0)}% of full scan`}</span>
-                <span><span id="scan-elapsed-live" data-seconds="${progress.elapsed}">${formatSeconds(progress.elapsed)}</span> elapsed</span>
-              </div>${deepChecklist}${activeBadges}`;
-        if (progress.last_port_scan_host?.ip) {
-            const host = progress.last_port_scan_host;
-            const ports = host.error ? host.error : host.open_ports?.length ? `Open: ${host.open_ports.join(', ')}` : 'No open ports found';
-            html += `<div class="scan-latest-result"><span>Latest result</span><strong>${host.hostname || host.ip}</strong><code>${host.ip}</code><em>${ports}</em></div>`;
-        }
-        html += `</div>`;
-
-        card.innerHTML = html;
+    card.innerHTML = htmlUtils.renderLiveProgressCardHtml(progress, { formatSeconds });
+    if (progress && progress.status === 'running') {
         card.style.display = 'block';
         startProgressClock();
     } else {
-        card.innerHTML = `
-            <div style="text-align: center; color: var(--text-muted); padding: 1.5rem 0;">
-                <p>Scanner is currently idle</p>
-                <div class="scan-control" style="margin-top: 1rem;">
-                    <select class="scan-mode-select" aria-label="Scan type"><option value="quick">Quick scan</option><option value="deep">Deep scan</option><option value="both">Both stages</option></select>
-                    <button class="btn btn-primary" data-network="all" onclick="startSelectedScan(this)">Run scan</button>
-                </div>
-            </div>
-        `;
+        stopProgressClock();
     }
 }
 
 let progressClock = null;
 
+function stopProgressClock() {
+    if (progressClock) {
+        clearInterval(progressClock);
+        progressClock = null;
+    }
+}
+
 function startProgressClock() {
-    if (progressClock) clearInterval(progressClock);
+    stopProgressClock();
     const updatedAt = Date.now();
     const elapsedEl = document.getElementById('scan-elapsed-live');
     const etaEl = document.getElementById('scan-eta-live');
@@ -3895,13 +3914,6 @@ function toggleHistoryAllDays() {
     renderScanHistory(rawScanHistory);
 }
 
-function isSameDay(d1, d2) {
-    if (!d1 || !d2) return false;
-    return d1.getFullYear() === d2.getFullYear() &&
-           d1.getMonth() === d2.getMonth() &&
-           d1.getDate() === d2.getDate();
-}
-
 function renderScanHistory(history) {
     const tbody = document.getElementById('scan-history-tbody');
     if (!tbody) return;
@@ -3955,31 +3967,7 @@ function renderScanHistory(history) {
     }
 
     // Filter by day, type, and search query
-    let filtered = (typeof filterScanHistoryRows === 'function')
-        ? filterScanHistoryRows(all, { selectedDay: historySelectedDay, showAll: historyShowAll, typeFilter, query: q })
-        : all.filter(row => {
-            const rowDate = new Date(row.timestamp);
-            if (!historyShowAll && historySelectedDay && !isSameDay(rowDate, historySelectedDay)) {
-                return false;
-            }
-            if (typeFilter === 'sweep' && row.scan_type && row.scan_type !== 'sweep') {
-                return false;
-            }
-            if (typeFilter === 'deep' && row.scan_type !== 'deep') {
-                return false;
-            }
-            if (q) {
-                const netMatch = row.network && row.network.toLowerCase().includes(q);
-                const errMatch = row.error && row.error.toLowerCase().includes(q);
-                const devMatch = row.devices_found && row.devices_found.some(d => 
-                    (d.ip && d.ip.toLowerCase().includes(q)) ||
-                    (d.hostname && d.hostname.toLowerCase().includes(q)) ||
-                    (d.mac && d.mac.toLowerCase().includes(q))
-                );
-                if (!netMatch && !errMatch && !devMatch) return false;
-            }
-            return true;
-        });
+    let filtered = filterScanHistoryRows(all, { selectedDay: historySelectedDay, showAll: historyShowAll, typeFilter, query: q });
 
     currentScanHistory = filtered;
 
@@ -4007,8 +3995,8 @@ function renderScanHistory(history) {
         }
 
         return `
-            <tr class="scan-history-row" onclick="openScanDetailModal(${row.id})" title="Click to view scan details">
-                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums;">${timeStr}</td>
+            <tr class="scan-history-row" data-scan-id="${Number(row.id)}" title="Click to view scan details">
+                <td style="padding: 0.7rem; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums;">${escapeHtml(timeStr)}</td>
                 <td style="padding: 0.7rem; border-bottom: 1px solid var(--border);"><strong>${escapeHtml(row.network)}</strong></td>
                 <td style="padding: 0.7rem; border-bottom: 1px solid var(--border);">${typeBadge}</td>
                 <td style="padding: 0.7rem; border-bottom: 1px solid var(--border);">${statusBadge}</td>
@@ -4103,23 +4091,11 @@ function renderScanModalDevices(devices) {
                 <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);"><strong>${escapeHtml(d.ip)}</strong></td>
                 <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);">${escapeHtml(d.hostname || '-')}</td>
                 <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);">${macText}${vendorText}</td>
-                <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);">${ping}</td>
-                <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);">${ports}</td>
+                <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);">${escapeHtml(ping)}</td>
+                <td style="padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);">${escapeHtml(ports)}</td>
             </tr>
         `;
     }).join('');
-}
-
-function formatRelativeTime(date) {
-    if (!date || isNaN(date.getTime())) return '';
-    const diffSec = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-    if (diffSec < 60) return 'just now';
-    const mins = Math.floor(diffSec / 60);
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
 }
 
 function renderPresenceTimeline(events) {
@@ -4153,52 +4129,26 @@ function renderPresenceTimeline(events) {
 
         if (dayTitle !== currentDayHeader) {
             currentDayHeader = dayTitle;
-            html += `<div class="timeline-day-divider">${dayTitle}</div>`;
+            html += `<div class="timeline-day-divider">${escapeHtml(dayTitle)}</div>`;
         }
 
         const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const relativeTime = formatRelativeTime(date);
-        let badgeText = '';
-        let dotClass = 'timeline-dot-join';
-        let pillClass = 'timeline-pill-join';
         let durPill = '';
 
-        if (evt.event === 'join') {
-            badgeText = '✦ Joined';
-            dotClass = 'timeline-dot-join';
-            pillClass = 'timeline-pill-join';
-        } else if (evt.event === 'return') {
-            badgeText = '↺ Returned';
-            dotClass = 'timeline-dot-return';
-            pillClass = 'timeline-pill-return';
-            if (evt.duration > 0) {
-                durPill = `<span style="background: var(--bg-card-hover); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem;">away ${formatEventDuration(evt.duration)}</span>`;
-            }
-        } else if (evt.event === 'leave') {
-            badgeText = '✗ Went offline';
-            dotClass = 'timeline-dot-leave';
-            pillClass = 'timeline-pill-leave';
-            if (evt.duration > 0) {
-                durPill = `<span style="background: var(--bg-card-hover); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem;">online ${formatEventDuration(evt.duration)}</span>`;
-            }
+        if (evt.event === 'return' && evt.duration > 0) {
+            durPill = `<span style="background: var(--bg-card-hover); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem;">away ${escapeHtml(formatEventDuration(evt.duration))}</span>`;
+        } else if (evt.event === 'leave' && evt.duration > 0) {
+            durPill = `<span style="background: var(--bg-card-hover); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem;">online ${escapeHtml(formatEventDuration(evt.duration))}</span>`;
         }
 
-        const name = evt.hostname || evt.mac || 'Unknown Device';
-
-        html += `
-            <div class="timeline-stream-item" onclick="editDevice('${evt.ip}')" title="${escapeHtml(name)} (${evt.ip}) on ${dayTitle} at ${timeStr}">
-                <span class="timeline-stream-dot ${dotClass}"></span>
-                <div class="timeline-stream-main">
-                    <strong style="color: var(--accent);">${escapeHtml(name)}</strong>
-                    <code style="color: var(--text-muted); font-size: 0.78rem;">${evt.ip}</code>
-                    <span class="timeline-pill ${pillClass}">${badgeText}</span>
-                </div>
-                <div class="timeline-stream-meta">
-                    ${durPill}
-                    <span title="${date.toLocaleString()}">${relativeTime}</span>
-                </div>
-            </div>
-        `;
+        html += htmlUtils.renderPresenceStreamItemHtml(evt, {
+            dayTitle,
+            timeStr,
+            relativeTime,
+            fullTimeStr: date.toLocaleString(),
+            durPill
+        });
     });
 
     html += `</div>`;
@@ -4303,14 +4253,7 @@ async function viewHistory(ip, mac) {
                     
                     sessionBarsHTML += `
                         <div class="presence-session-bar" style="left: ${left}%; width: ${width}%;">
-                            <div class="presence-tooltip">
-                                <strong style="color: var(--success); font-size: 0.85rem; display: block; margin-bottom: 4px;">🟩 ${session.isCurrent ? 'Active Online Session' : 'Completed Session'}</strong>
-                                <span style="display: block; margin-bottom: 2px;"><strong>Start:</strong> ${session.start.toLocaleString()}</span>
-                                <span style="display: block; margin-bottom: 2px;"><strong>End:</strong> ${session.isCurrent ? 'Present (Active Now)' : session.end.toLocaleString()}</span>
-                                <span style="display: block; margin-bottom: 2px;"><strong>Duration:</strong> ${durText}</span>
-                                ${session.ip ? `<span style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 4px;">IP Address: ${session.ip}</span>` : ''}
-                                ${session.networkName ? `<span style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 2px;">Network: ${session.networkName}</span>` : ''}
-                            </div>
+                            ${htmlUtils.renderPresenceTooltipHtml(session, durText, d => d.toLocaleString(), { fontSize: '0.8rem', titleSize: '0.85rem', includeIP: true, currentEndLabel: 'Present (Active Now)' })}
                         </div>
                     `;
                 }
@@ -4345,30 +4288,10 @@ async function viewHistory(ip, mac) {
                     ${events.map(event => {
                         const dateVal = new Date(event.created_at);
                         const ago = relativeTime(Math.floor(dateVal.getTime() / 1000));
-                        let detailText = '';
-                        if (event.event === 'leave') {
-                            const netText = event.network_name ? ` on <strong>${event.network_name}</strong>` : '';
-                            detailText = `went offline${netText} (was connected for ${formatSeconds(event.duration)})`;
-                        } else if (event.event === 'return') {
-                            const netText = event.network_name ? ` on <strong>${event.network_name}</strong>` : '';
-                            detailText = `reconnected${netText} (was gone for ${formatSeconds(event.duration)})`;
-                        } else if (event.event === 'join') {
-                            const netText = event.network_name ? ` <strong>${event.network_name}</strong>` : '';
-                            detailText = `joined${netText} network for the first time`;
-                        }
-                        const badgeClass = event.event === 'join' ? 'join' : (event.event === 'leave' ? 'leave' : 'return');
-                        return `
-                            <div class="timeline-event-item" style="display:flex; flex-direction:column; gap:4px; padding:12px 8px; border-bottom:1px solid var(--border); font-size:0.9rem;">
-                                <div style="display:flex; justify-content:space-between; align-items:center;">
-                                    <span class="scan-status-badge ${badgeClass}" style="padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; text-transform: uppercase;">${event.event}</span>
-                                    <span style="color:var(--text-muted); font-size:0.8rem;">${ago}</span>
-                                </div>
-                                <div style="color:var(--text); margin-top:4px;">${detailText}</div>
-                                <div style="color:var(--text-muted); font-size:0.75rem; margin-top:2px;">
-                                    Logged on ${dateVal.toLocaleString()} (IP: ${event.ip}${event.mac ? `, MAC: ` + event.mac.toUpperCase() : ''})
-                                </div>
-                            </div>
-                        `;
+                        return htmlUtils.renderDetailedHistoryEventHtml({
+                            ...event,
+                            createdStr: dateVal.toLocaleString()
+                        }, ago, formatSeconds);
                     }).join('')}
                 </div>
             `;

@@ -3,9 +3,33 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
+
+func offlineHooks() Hooks {
+	return Hooks{
+		LookPath: func(file string) (string, error) {
+			return "", fmt.Errorf("%s disabled in unit test", file)
+		},
+		RunCommand: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return nil, fmt.Errorf("command %s disabled in unit test", name)
+		},
+		GetInterface:   func(context.Context, string) string { return "eth0" },
+		ReverseDNS:     func(context.Context, string, string) string { return "" },
+		NetBIOSName:    func(context.Context, string) string { return "" },
+		EnrichServices: func(context.Context, []types.Device) {},
+		QueryMDNS:      func(context.Context) [][]byte { return nil },
+		IPv6Interfaces: func() []string { return nil },
+		RunIPv6Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return nil, fmt.Errorf("ipv6 command %s disabled in unit test", name)
+		},
+	}
+}
 
 func TestPortScanArgumentsSkipDiscoveryAndAllowRetries(t *testing.T) {
 	got := portScanArguments("1-1024", "10.0.0.15")
@@ -104,6 +128,7 @@ func TestScanUsesRemoteRunnerWhenConfigured(t *testing.T) {
 		runOutput: []byte(`<nmaprun><host><status state="up"/><address addr="10.0.0.22" addrtype="ipv4"/><address addr="00:11:22:33:44:55" addrtype="mac"/></host></nmaprun>`),
 	}
 	s := New(30, false, false, "")
+	s.SetHooks(offlineHooks())
 	s.SetRemoteRunner(mock)
 
 	result, err := s.Scan(context.Background(), "10.0.0.0/24")
@@ -127,6 +152,7 @@ func TestScanRemoteRunnerFailureDoesNotFallbackToArpScan(t *testing.T) {
 		runErr:    fmt.Errorf("remote nmap failed on gateway"),
 	}
 	s := New(30, false, false, "")
+	s.SetHooks(offlineHooks())
 	s.SetRemoteRunner(mock)
 
 	result, err := s.Scan(context.Background(), "10.0.0.0/24")
@@ -150,6 +176,7 @@ func TestScanHostPortsWithTimingUsesRemoteRunner(t *testing.T) {
 		runOutput: []byte(`<?xml version="1.0"?><nmaprun><host><ports><port protocol="tcp" portid="443"><state state="open"/><service name="https"/></port></ports></host></nmaprun>`),
 	}
 	s := New(30, false, false, "")
+	s.SetHooks(offlineHooks())
 	s.SetRemoteRunner(mock)
 
 	ports, _, services, _, _, _, err := s.ScanHostPortsWithTiming(context.Background(), "10.0.0.15", "443", false)
@@ -167,12 +194,99 @@ func TestScanHostPortsWithTimingUsesRemoteRunner(t *testing.T) {
 	}
 }
 
+func TestScanHostPortsWithTimingRejectsInvalidIP(t *testing.T) {
+	invalidIPs := []string{
+		"",
+		"   ",
+		"not-an-ip",
+		"-oN /tmp/pwn",
+		"10.0.0.1; id",
+		"10.0.0.1 $(whoami)",
+		"10.0.0.1\n-sS",
+	}
+
+	for _, ip := range invalidIPs {
+		mock := &mockRemoteRunner{hasTarget: true}
+		s := New(30, false, false, "")
+		s.SetRemoteRunner(mock)
+
+		_, _, _, _, _, _, err := s.ScanHostPortsWithTiming(context.Background(), ip, "80", false)
+		if err == nil {
+			t.Errorf("ScanHostPortsWithTiming(%q, \"80\") expected error, got nil", ip)
+		}
+		if mock.called {
+			t.Errorf("ScanHostPortsWithTiming(%q, \"80\") should not invoke RemoteRunner on invalid IP", ip)
+		}
+	}
+}
+
+func TestScanHostPortsWithTimingRejectsInvalidPortRange(t *testing.T) {
+	invalidRanges := []string{
+		"",
+		"   ",
+		"80; id",
+		"80 --script=evil",
+		"80\n443",
+		"$(id)",
+		"0",
+		"65536",
+		"1024-80",
+		"80-abc",
+		"22,,80",
+		"-80",
+		"80-",
+	}
+
+	for _, pr := range invalidRanges {
+		mock := &mockRemoteRunner{hasTarget: true}
+		s := New(30, false, false, "")
+		s.SetRemoteRunner(mock)
+
+		_, _, _, _, _, _, err := s.ScanHostPortsWithTiming(context.Background(), "10.0.0.15", pr, false)
+		if err == nil {
+			t.Errorf("ScanHostPortsWithTiming(\"10.0.0.15\", %q) expected error, got nil", pr)
+		}
+		if mock.called {
+			t.Errorf("ScanHostPortsWithTiming(\"10.0.0.15\", %q) should not invoke RemoteRunner on invalid port range", pr)
+		}
+	}
+}
+
+func TestScanHostPortsWithTimingAcceptsValidInputs(t *testing.T) {
+	cases := []struct {
+		ip        string
+		portRange string
+	}{
+		{" 10.0.0.15 ", " 1-1024 "},
+		{"10.0.0.15", "22,80,443"},
+		{"10.0.0.15", "T:22,80-443,U:53"},
+		{"fe80::1", "22-25"},
+	}
+
+	for _, tc := range cases {
+		mock := &mockRemoteRunner{
+			hasTarget: true,
+			runOutput: []byte(`<?xml version="1.0"?><nmaprun></nmaprun>`),
+		}
+		s := New(30, false, false, "")
+		s.SetRemoteRunner(mock)
+
+		if _, _, _, _, _, _, err := s.ScanHostPortsWithTiming(context.Background(), tc.ip, tc.portRange, false); err != nil {
+			t.Errorf("ScanHostPortsWithTiming(%q, %q) unexpected error: %v", tc.ip, tc.portRange, err)
+		}
+		if !mock.called {
+			t.Errorf("ScanHostPortsWithTiming(%q, %q) expected RemoteRunner to be called", tc.ip, tc.portRange)
+		}
+	}
+}
+
 func TestRemoteScanOmitsNoDNSFlag(t *testing.T) {
 	mock := &mockRemoteRunner{
 		hasTarget: true,
 		runOutput: []byte(`<nmaprun><host><status state="up"/><address addr="10.5.5.10" addrtype="ipv4"/><hostnames><hostname name="beacon.black.internal" type="PTR"/></hostnames></host></nmaprun>`),
 	}
 	s := New(30, false, false, "")
+	s.SetHooks(offlineHooks())
 	s.SetRemoteRunner(mock)
 
 	result, err := s.Scan(context.Background(), "10.5.5.0/24")
@@ -203,5 +317,143 @@ func TestExtractHostFromGateway(t *testing.T) {
 		if got := extractHostFromGateway(tt.input); got != tt.want {
 			t.Errorf("extractHostFromGateway(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestScanner_LocalPrivilegedConcurrentAccess(t *testing.T) {
+	s := New(30, false, false, "")
+	done := make(chan struct{})
+	for i := 0; i < 8; i++ {
+		go func(idx int) {
+			defer func() { done <- struct{}{} }()
+			for j := 0; j < 200; j++ {
+				_ = s.isLocalPrivileged()
+				if idx%2 == 0 {
+					s.setLocalPrivileged(false)
+				}
+			}
+		}(i)
+	}
+	for i := 0; i < 8; i++ {
+		<-done
+	}
+}
+
+func TestScanner_ScanCancelledContextPreservesErrorWithoutFallback(t *testing.T) {
+	s := New(30, false, false, "")
+	hooks := offlineHooks()
+	hooks.LookPath = func(file string) (string, error) {
+		return "/usr/bin/" + file, nil
+	}
+	hooks.RunCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return nil, ctx.Err()
+	}
+	s.SetHooks(hooks)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := s.Scan(ctx, "192.0.2.0/24")
+	if err != nil {
+		t.Fatalf("Scan returned unexpected top-level err: %v", err)
+	}
+	if res.Success {
+		t.Fatal("expected cancelled Scan to fail")
+	}
+	if !strings.Contains(res.Error, "nmap") && !strings.Contains(res.Error, "context canceled") {
+		t.Fatalf("expected nmap or context error to be preserved, got %q", res.Error)
+	}
+}
+
+func TestArpScanArgs_UsesTargetCIDRInsteadOfLocalnet(t *testing.T) {
+	got := arpScanArgs("10.5.5.0/24", "eth0")
+	want := []string{"10.5.5.0/24", "-q", "-I", "eth0"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("arpScanArgs() = %v, want %v", got, want)
+	}
+	for _, a := range got {
+		if a == "--localnet" {
+			t.Fatalf("arpScanArgs should not use --localnet when CIDR is provided: %v", got)
+		}
+	}
+}
+
+func TestReverseDNSWithServer_HonorsCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	got := reverseDNSWithServer(ctx, "192.0.2.1", "192.0.2.254")
+	if got != "" {
+		t.Fatalf("reverseDNSWithServer on cancelled ctx = %q, want empty", got)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("reverseDNSWithServer took %v on cancelled ctx; expected immediate return", elapsed)
+	}
+}
+
+func TestScanner_HooksIsolateLocalScanAndProbes(t *testing.T) {
+	s := New(30, true, false, "")
+	var enriched bool
+	var netbiosCalled bool
+	hooks := offlineHooks()
+	hooks.LookPath = func(file string) (string, error) {
+		if file == "arp-scan" {
+			return "/usr/sbin/arp-scan", nil
+		}
+		return "", fmt.Errorf("nmap missing")
+	}
+	hooks.RunCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name != "arp-scan" {
+			return nil, fmt.Errorf("unexpected command %s", name)
+		}
+		return []byte("192.168.1.50\t00:11:22:33:44:55\tTestVendor\n"), nil
+	}
+	hooks.NetBIOSName = func(ctx context.Context, ip string) string {
+		netbiosCalled = true
+		if ip == "192.168.1.50" {
+			return "WIN-DESKTOP"
+		}
+		return ""
+	}
+	hooks.EnrichServices = func(ctx context.Context, devices []types.Device) {
+		enriched = true
+	}
+	s.SetHooks(hooks)
+
+	res, err := s.Scan(context.Background(), "192.168.1.0/24")
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+	if !res.Success || res.Scanner != "arp-scan" {
+		t.Fatalf("unexpected scan result: %+v", res)
+	}
+	if len(res.Devices) != 1 || res.Devices[0].Hostname != "WIN-DESKTOP" {
+		t.Fatalf("devices = %+v, want WIN-DESKTOP via NetBIOS hook", res.Devices)
+	}
+	if !netbiosCalled || !enriched {
+		t.Fatalf("expected NetBIOSName (%v) and EnrichServices (%v) hooks to run", netbiosCalled, enriched)
+	}
+}
+
+func TestScanner_HooksIsolateMDNSAndIPv6(t *testing.T) {
+	s := New(30, false, false, "")
+	var ipv6Commands []string
+	hooks := offlineHooks()
+	hooks.QueryMDNS = func(context.Context) [][]byte { return nil }
+	hooks.IPv6Interfaces = func() []string { return []string{"en0"} }
+	hooks.RunIPv6Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		ipv6Commands = append(ipv6Commands, name)
+		return nil, nil
+	}
+	s.SetHooks(hooks)
+
+	if got := s.DiscoverMDNS(context.Background()); len(got) != 0 {
+		t.Fatalf("DiscoverMDNS = %+v, want empty", got)
+	}
+	if got := s.DiscoverIPv6(context.Background()); len(got) != 0 {
+		t.Fatalf("DiscoverIPv6 = %+v, want empty", got)
+	}
+	if len(ipv6Commands) != 2 {
+		t.Fatalf("ipv6Commands = %v, want 2 hooked calls (solicit + neighbor read)", ipv6Commands)
 	}
 }

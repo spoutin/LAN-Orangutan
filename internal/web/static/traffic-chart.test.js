@@ -55,3 +55,22 @@ test('renderTrafficChartSVG renders valid paths and gradients for data series', 
     assert.match(svg, /stroke="#10b981"/);
     assert.match(svg, /stroke="#3b82f6"/);
 });
+
+test('renderTrafficChartSVG renders visible markers and non-zero geometry for a single-point series', () => {
+    const series = [
+        { timestamp: '2026-10-14T10:00:00Z', rx_rate: 120000, tx_rate: 40000 },
+    ];
+    const svg = renderTrafficChartSVG(series);
+    assert.match(svg, /<svg/);
+    // Should include visible circle markers for Rx and Tx
+    assert.match(svg, /<circle[^>]*fill="#10b981"/);
+    assert.match(svg, /<circle[^>]*fill="#3b82f6"/);
+    // Line paths should have a segment with two distinct X coordinates (M x1 y L x2 y)
+    const linePaths = [...svg.matchAll(/<path d="([^"]+)" fill="none"/g)].map(m => m[1]);
+    assert.equal(linePaths.length, 2);
+    for (const d of linePaths) {
+        const coords = [...d.matchAll(/[ML]\s+([\d.]+)\s+([\d.]+)/g)].map(m => Number(m[1]));
+        assert.ok(coords.length >= 2, `expected at least 2 points in line path: ${d}`);
+        assert.notEqual(coords[0], coords[1], `expected distinct X coordinates in single-point line path: ${d}`);
+    }
+});

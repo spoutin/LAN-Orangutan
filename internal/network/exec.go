@@ -13,6 +13,11 @@ import (
 // `resolvectl`) would hang the page rather than degrade it.
 const commandTimeout = 5 * time.Second
 
+var (
+	runCommandFunc     = runCommand
+	execCommandContext = exec.CommandContext
+)
+
 // runCommand executes name with args and returns its standard output, giving up
 // after commandTimeout.
 //
@@ -28,5 +33,5 @@ func runCommandTimeout(timeout time.Duration, name string, args ...string) ([]by
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	return exec.CommandContext(ctx, name, args...).Output()
+	return execCommandContext(ctx, name, args...).Output()
 }

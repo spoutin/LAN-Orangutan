@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/csv"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,6 +43,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
+	defer store.Close()
 	store.SetScanInterval(cfg.Scanning.ScanInterval)
 	store.SetNetworkNames(cfg.Scanning.NetworkNames)
 
@@ -63,9 +65,18 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 	defer file.Close()
 
+	scanInterval := time.Duration(cfg.Scanning.ScanInterval) * time.Second
+	if err := writeExportCSV(file, deviceList, scanInterval); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(cmdOut(cmd), "Exported %d devices to %s\n", len(deviceList), absPath)
+	return nil
+}
+
+func writeExportCSV(out io.Writer, deviceList []*types.Device, scanInterval time.Duration) error {
 	// Write CSV
-	w := csv.NewWriter(file)
-	defer w.Flush()
+	w := csv.NewWriter(out)
 
 	// Header
 	if err := w.Write([]string{
@@ -83,8 +94,6 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write header: %w", err)
 	}
 
-	scanInterval := time.Duration(cfg.Scanning.ScanInterval) * time.Second
-
 	// Data rows
 	for _, d := range deviceList {
 		status := "offline"
@@ -92,7 +101,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 			status = "online"
 		}
 
-		if err := w.Write([]string{
+		if err := w.Write(types.SanitizeCSVRow([]string{
 			d.IP,
 			d.MAC,
 			d.Hostname,
@@ -103,11 +112,14 @@ func runExport(cmd *cobra.Command, args []string) error {
 			d.FirstSeen.Format("2006-01-02 15:04:05"),
 			d.LastSeen.Format("2006-01-02 15:04:05"),
 			status,
-		}); err != nil {
+		})); err != nil {
 			return fmt.Errorf("failed to write row: %w", err)
 		}
 	}
 
-	fmt.Printf("Exported %d devices to %s\n", len(deviceList), absPath)
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return fmt.Errorf("failed to flush csv: %w", err)
+	}
 	return nil
 }

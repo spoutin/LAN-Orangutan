@@ -65,7 +65,7 @@ orangutan export out.csv</code></pre>
             <a href="/scans" class="nav-link">Scans</a>
             <a href="/settings" class="nav-link">Settings</a>
             <button type="button" class="nav-link" onclick="openLogsModal()" title="View System &amp; Scan Logs">Logs</button>
-            {{if .AuthEnabled}}<a href="/logout" class="nav-link">Sign out</a>{{end}}
+            {{if .AuthEnabled}}<form method="post" action="/logout" style="display:inline;margin:0;"><button type="submit" class="nav-link">Sign out</button></form>{{end}}
             <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme (T)">◐</button>
         </nav>
     </header>
@@ -171,12 +171,12 @@ orangutan export out.csv</code></pre>
                         <button class="select" id="network-filter-btn" onclick="toggleDropdown('network-filter-menu'); event.stopPropagation();" style="text-align:left;min-width:135px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">All Networks</button>
                         <div id="network-filter-menu" class="dropdown-menu checkbox-menu" onclick="event.stopPropagation();">
                             <label class="dropdown-item checkbox-label">
-                                <input type="checkbox" id="network-filter-all" checked onchange="toggleNetworkDropdownFilter('all')">
+                                <input type="checkbox" id="network-filter-all" data-network="all" checked>
                                 <span>All Networks</span>
                             </label>
                             {{range .Networks}}
                                 <label class="dropdown-item checkbox-label">
-                                    <input type="checkbox" class="network-filter-checkbox" value="{{lower .FriendlyName}}" onchange="toggleNetworkDropdownFilter('{{lower .FriendlyName}}')">
+                                    <input type="checkbox" class="network-filter-checkbox" value="{{lower .FriendlyName}}" data-network="{{lower .FriendlyName}}">
                                     <span><span class="network-badge net-{{netColor .FriendlyName}}" style="margin-right: 4px; padding: 0.1rem 0.45rem; font-size: 0.7rem;">{{.FriendlyName}}</span></span>
                                 </label>
                             {{end}}
@@ -240,7 +240,7 @@ orangutan export out.csv</code></pre>
                                     data-network="{{lower .NetworkName}}"
                                     data-networks="{{range $i, $att := .IPs}}{{if $i}},{{end}}{{lower $att.NetworkName}}{{else}}{{lower .NetworkName}}{{end}}"
                                     data-ips="{{range $i, $att := .IPs}}{{if $i}},{{end}}{{$att.IP}}{{else}}{{.IP}}{{end}}"
-                                    data-ips-json='[{{range $i, $att := .IPs}}{{if $i}},{{end}}{"ip":"{{$att.IP}}","network_name":"{{$att.NetworkName}}"}{{end}}]'
+                                    data-ips-json='{{toJSON .IPs}}'
                                     data-assignment="{{.Assignment}}"
                                     data-custom-hostname="{{lower .CustomHostname}}"
                                     data-custom-hostname-original="{{.CustomHostname}}"
@@ -265,7 +265,7 @@ orangutan export out.csv</code></pre>
                                     data-linked-children="{{range $i, $child := .LinkedChildren}}{{if $i}}, {{end}}{{$child}}{{end}}"
                                     data-web-url="{{.WebURL}}"
                                      data-open-ports="{{range $i, $p := .OpenPorts}}{{if $i}}, {{end}}{{$p}}{{end}}"
-									 data-open-services='[{{range $i, $service := .OpenServices}}{{if $i}},{{end}}{"port":{{$service.Port}},"name":"{{$service.Name}}","version":"{{$service.Version}}"}{{end}}]'
+									 data-open-services='{{toJSON .OpenServices}}'
 									 data-detected-ssh-port="{{.DetectedSSHPort}}"
 									 data-ssh-override="{{.SSHOverride}}"
 									 data-ssh-override-port="{{.SSHOverridePort}}"
@@ -369,7 +369,6 @@ orangutan export out.csv</code></pre>
 										<div class="device-indicators" aria-label="Device capabilities and notes">
 											{{if .Notes}}<span class="notes-indicator" data-tip="{{.Notes}}"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0-2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>{{end}}
 										</div>
-                                         </div>
                                      </td>
                                      <td class="col-mac mac-cell" data-label="MAC Address" data-copy="{{.MAC}}">
                                          <span class="font-mono">{{if .MAC}}{{.MAC}}{{else}}<span style="color:var(--text-muted)">—</span>{{end}}</span>
@@ -381,7 +380,7 @@ orangutan export out.csv</code></pre>
                                      <td class="col-lastseen time-cell" data-label="Last Seen" data-relative-time="{{.LastSeenUnix}}">{{.TimeAgo}}</td>
                                      <td class="col-actions actions-cell" data-label="Actions" rowspan="2">
                                          {{if or .WebUI .CustomWebURL}}
-                                         <a href="{{.WebURL}}" target="_blank" class="btn-icon" data-tip="Open Web UI: {{.WebURL}}" aria-label="Open Web UI" onclick="event.stopPropagation()">
+                                         <a href="{{.WebURL}}" target="_blank" class="btn-icon" data-tip="Open Web UI: {{.WebURL}}" aria-label="Open Web UI">
                                              <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                                          </a>
                                          {{else}}
@@ -389,7 +388,7 @@ orangutan export out.csv</code></pre>
                                              <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                                          </button>
                                          {{end}}
-                                         <button class="btn-icon" onclick="event.stopPropagation(); toggleNotifyOnSeenMain('{{.IP}}')" data-tip="{{if .NotifyOnSeen}}Disable presence notifications{{else}}Enable presence notifications{{end}}" aria-label="Toggle presence notifications">
+                                         <button type="button" class="btn-icon js-toggle-notify" data-ip="{{.IP}}" data-tip="{{if .NotifyOnSeen}}Disable presence notifications{{else}}Enable presence notifications{{end}}" aria-label="Toggle presence notifications">
                                              {{if .NotifyOnSeen}}
                                              <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--success);">
                                                  <polyline points="9 11 12 14 22 4"></polyline>
@@ -402,7 +401,7 @@ orangutan export out.csv</code></pre>
                                              </svg>
                                              {{end}}
                                          </button>
-                                         <button class="btn-icon danger" onclick="event.stopPropagation(); deleteDevice('{{.IP}}')" data-tip="Delete" aria-label="Delete"><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg></button>
+                                         <button type="button" class="btn-icon danger js-delete-device" data-ip="{{.IP}}" data-tip="Delete" aria-label="Delete"><svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg></button>
                                      </td>
                                  </tr>
                                   <tr class="device-subrow {{.StatusClass}}" data-ip="{{.IP}}">
@@ -438,13 +437,13 @@ orangutan export out.csv</code></pre>
                                               </div>
                                                <div class="connection-strip-right">
                                                    {{if or (gt .RxRateBps 0) (gt .TxRateBps 0) (gt .RxBytes 0) (and .IsOnline (ne .TrafficSource "opnsense") (ne .TrafficSource "openwrt"))}}
-                                                   <span class="traffic-badge" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Local Link Throughput (Click to view history)">
+                                                   <span class="traffic-badge js-open-traffic" data-mac="{{.MAC}}" data-tip="Local Link Throughput (Click to view history)">
                                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
                                                        <span><strong style="color: #10b981;">↓ {{formatBandwidth .RxRateBps}}</strong> &nbsp; <strong style="color: #3b82f6;">↑ {{formatBandwidth .TxRateBps}}</strong>{{if gt .RxBytes 0}} &middot; Total: {{formatBytes .RxBytes}}{{end}}{{if and .TrafficSource (ne .TrafficSource "opnsense") (ne .TrafficSource "openwrt")}} <span style="opacity: 0.75;">[{{.TrafficSource}}]</span>{{end}}</span>
                                                    </span>
                                                    {{end}}
                                                    {{if or (gt .WanRxRateBps 0) (gt .WanTxRateBps 0) (gt .WanRxBytes 0) (eq .TrafficSource "opnsense") (eq .TrafficSource "openwrt")}}
-                                                   <span class="traffic-badge traffic-badge-wan" onclick="event.stopPropagation(); openTrafficModal('{{.MAC}}')" data-tip="Firewall WAN/Internet Throughput via {{if eq .TrafficSource "openwrt"}}OpenWrt nlbwmon{{else}}OPNsense NetFlow{{end}}">
+                                                   <span class="traffic-badge traffic-badge-wan js-open-traffic" data-mac="{{.MAC}}" data-tip="Firewall WAN/Internet Throughput via {{if eq .TrafficSource "openwrt"}}OpenWrt nlbwmon{{else}}OPNsense NetFlow{{end}}">
                                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                                                        <span>WAN: <strong style="color: #10b981;">↓ {{formatBandwidth .WanRxRateBps}}</strong> &nbsp; <strong style="color: #3b82f6;">↑ {{formatBandwidth .WanTxRateBps}}</strong>{{if gt .WanRxBytes 0}} &middot; Total: {{formatBytes .WanRxBytes}}{{end}}{{if or (eq .TrafficSource "opnsense") (eq .TrafficSource "openwrt")}} <span style="opacity: 0.75;">[{{.TrafficSource}}]</span>{{end}}</span>
                                                    </span>
@@ -1122,12 +1121,14 @@ orangutan export out.csv</code></pre>
         <img src="/static/orangutan.svg" alt="" class="scroll-top-logo" width="28" height="28">
     </button>
 
+    <script src="/static/html-utils.js?v={{.Version}}"></script>
     <script src="/static/switch-presentation.js?v={{.Version}}"></script>
     <script src="/static/scan-refresh.js?v={{.Version}}"></script>
     <script src="/static/device-operation-state.js?v={{.Version}}"></script>
     <script src="/static/traffic-chart.js?v={{.Version}}"></script>
     <script src="/static/os-presentation.js?v={{.Version}}"></script>
     <script src="/static/unifi-presentation.js?v={{.Version}}"></script>
+    <script src="/static/scans-view.js?v={{.Version}}"></script>
     <script src="/static/app.js?v={{.Version}}"></script>
 </body>
 </html>

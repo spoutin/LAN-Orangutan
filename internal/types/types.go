@@ -43,11 +43,18 @@ func IPToLong(ip string) int64 {
 	}
 	var result int64
 	for i, p := range parts {
+		if p == "" || len(p) > 3 {
+			return 0x7FFFFFFFFFFFFFFF
+		}
 		var n int
 		for _, c := range p {
-			if c >= '0' && c <= '9' {
-				n = n*10 + int(c-'0')
+			if c < '0' || c > '9' {
+				return 0x7FFFFFFFFFFFFFFF
 			}
+			n = n*10 + int(c-'0')
+		}
+		if n > 255 {
+			return 0x7FFFFFFFFFFFFFFF
 		}
 		result |= int64(n) << (24 - 8*i)
 	}

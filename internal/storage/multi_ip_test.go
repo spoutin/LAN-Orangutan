@@ -231,7 +231,7 @@ func TestDeviceMovementRetiresOldIPToAddressHistoryAfterTwoSweeps(t *testing.T) 
 func TestDHCPIPReassignmentEvictsStaleAttachment(t *testing.T) {
 	s := newTestStorage(t)
 
-	// Device 1 initially had 192.168.1.100 and attached 192.168.1.105
+	// Device 1 initially had 192.168.1.100 and attached 192.168.1.105 and 192.168.1.110
 	dev1 := types.Device{
 		IP:       "192.168.1.100",
 		MAC:      "11:11:11:11:11:11",
@@ -239,6 +239,7 @@ func TestDHCPIPReassignmentEvictsStaleAttachment(t *testing.T) {
 		IPs: []types.IPAttachment{
 			{IP: "192.168.1.100", NetworkName: "LAN", IsActive: true},
 			{IP: "192.168.1.105", NetworkName: "LAN", IsActive: true},
+			{IP: "192.168.1.110", NetworkName: "LAN", IsActive: true},
 		},
 	}
 	if _, _, err := s.MergeDevices([]types.Device{dev1}); err != nil {
@@ -255,15 +256,37 @@ func TestDHCPIPReassignmentEvictsStaleAttachment(t *testing.T) {
 		t.Fatalf("merge dev2: %v", err)
 	}
 
-	// Device 1 must have immediately dropped 192.168.1.105 from its attachments
+	// Device 1 must have immediately dropped 192.168.1.105 from its attachments,
+	// while keeping 192.168.1.100 and 192.168.1.110 intact (and not "null" in SQLite).
+	var rawIPs string
+	if err := s.db.QueryRow("SELECT ips FROM devices WHERE ip = ?", "192.168.1.100").Scan(&rawIPs); err != nil {
+		t.Fatalf("query raw ips: %v", err)
+	}
+	if rawIPs == "null" || rawIPs == "" {
+		t.Fatalf("device 1 raw ips column = %q, must not be null/empty", rawIPs)
+	}
+
 	d1 := s.GetDevice("192.168.1.100")
 	if d1 == nil {
 		t.Fatalf("device 1 missing")
 	}
+	if len(d1.IPs) != 2 {
+		t.Fatalf("device 1 IPs len = %d, want 2: %+v", len(d1.IPs), d1.IPs)
+	}
+	has100, has110 := false, false
 	for _, att := range d1.IPs {
 		if att.IP == "192.168.1.105" {
 			t.Errorf("device 1 still has 192.168.1.105 in IPs after reassignment: %+v", d1.IPs)
 		}
+		if att.IP == "192.168.1.100" {
+			has100 = true
+		}
+		if att.IP == "192.168.1.110" {
+			has110 = true
+		}
+	}
+	if !has100 || !has110 {
+		t.Errorf("device 1 missing surviving IPs (.100=%v, .110=%v): %+v", has100, has110, d1.IPs)
 	}
 
 	// Device 2 is the rightful owner of 192.168.1.105
@@ -348,5 +371,244 @@ func TestMultiIPAttachedSecondaryIPsNotDuplicated(t *testing.T) {
 	// Verify that the merged metadata from the standalone duplicate was preserved and SAVED on the target in the database
 	if router.Label != "Special Gateway" {
 		t.Errorf("expected router label 'Special Gateway', got '%s'", router.Label)
+	}
+}
+
+func TestProcessMissingDevices_OfflineEvictionAndPrimaryPromotion(t *testing.T) {
+	s := newTestStorage(t)
+	defer s.Close()
+
+	// 1. Offline eviction after 3 missed sweeps
+	if _, _, err := s.MergeDevices([]types.Device{
+		{IP: "192.168.10.50", MAC: "aa:bb:cc:dd:ee:10", Hostname: "ephemeral-host"},
+	}); err != nil {
+		t.Fatalf("merge ephemeral-host: %v", err)
+	}
+
+	for sweep := 1; sweep <= 2; sweep++ {
+		left, err := s.ProcessMissingDevices([]string{"192.168.10.0/24"}, nil)
+		if err != nil {
+			t.Fatalf("sweep %d failed: %v", sweep, err)
+		}
+		if left != 0 {
+			t.Fatalf("sweep %d leftCount = %d, want 0", sweep, left)
+		}
+	}
+
+	// Sweep 3 must mark device offline, return leftCount=1, and log a 'leave' event.
+	left3, err := s.ProcessMissingDevices([]string{"192.168.10.0/24"}, nil)
+	if err != nil {
+		t.Fatalf("sweep 3 failed: %v", err)
+	}
+	if left3 != 1 {
+		t.Fatalf("sweep 3 leftCount = %d, want 1", left3)
+	}
+	var isOnline int
+	if err := s.db.QueryRow(`SELECT is_online FROM devices WHERE ip = '192.168.10.50'`).Scan(&isOnline); err != nil {
+		t.Fatalf("query is_online: %v", err)
+	}
+	if isOnline != 0 {
+		t.Fatalf("is_online after 3 missed sweeps = %d, want 0", isOnline)
+	}
+	events, err := s.GetPresenceEventsFiltered("aa:bb:cc:dd:ee:10", "", "")
+	if err != nil {
+		t.Fatalf("GetPresenceEventsFiltered: %v", err)
+	}
+	hasLeave := false
+	for _, ev := range events {
+		if ev.Event == "leave" {
+			hasLeave = true
+			break
+		}
+	}
+	if !hasLeave {
+		t.Fatalf("expected 'leave' presence event after 3 missed sweeps, got %+v", events)
+	}
+
+	// 2. Primary IP promotion when primary attachment expires while secondary attachment survives,
+	// with multiple rows in attRows, open ports, and presence history.
+	if _, _, _, err := s.MergeDevicesWithMoves([]types.Device{
+		{
+			IP:       "192.168.1.50",
+			MAC:      "aa:bb:cc:dd:ee:20",
+			Hostname: "multi-promotable",
+			IPs: []types.IPAttachment{
+				{IP: "192.168.1.50", NetworkName: "Home LAN", IsActive: true},
+				{IP: "192.168.20.50", NetworkName: "IoT LAN", IsActive: true},
+			},
+		},
+		{
+			IP:       "192.168.1.60",
+			MAC:      "aa:bb:cc:dd:ee:21",
+			Hostname: "other-attached",
+			IPs: []types.IPAttachment{
+				{IP: "192.168.1.60", NetworkName: "Home LAN", IsActive: true},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("merge multi-ip devices: %v", err)
+	}
+	if err := s.UpdateOpenPorts("192.168.1.50", []int{22, 443}, []types.OpenService{{Port: 22, Name: "ssh"}}); err != nil {
+		t.Fatalf("UpdateOpenPorts: %v", err)
+	}
+
+	// Miss 2 sweeps on 192.168.1.0/24 while 192.168.1.60 stays active.
+	for sweep := 1; sweep <= 2; sweep++ {
+		if _, err := s.ProcessMissingDevices([]string{"192.168.1.0/24"}, []string{"192.168.1.60"}); err != nil {
+			t.Fatalf("promotion sweep %d failed: %v", sweep, err)
+		}
+	}
+
+	promoted := s.GetDevice("192.168.20.50")
+	if promoted == nil || promoted.IP != "192.168.20.50" {
+		t.Fatalf("expected promoted device at 192.168.20.50, got %+v", promoted)
+	}
+	if promoted.NetworkName != "IoT LAN" {
+		t.Errorf("promoted NetworkName = %q, want 'IoT LAN'", promoted.NetworkName)
+	}
+	if len(promoted.OpenPorts) != 2 {
+		t.Errorf("promoted OpenPorts = %+v, want [22 443]", promoted.OpenPorts)
+	}
+
+	// 3. When all attachments are retired, raw ips must be "[]", never "null".
+	for sweep := 1; sweep <= 2; sweep++ {
+		if _, err := s.ProcessMissingDevices([]string{"192.168.20.0/24"}, nil); err != nil {
+			t.Fatalf("retire-all sweep %d failed: %v", sweep, err)
+		}
+	}
+	var rawIPs string
+	if err := s.db.QueryRow(`SELECT ips FROM devices WHERE ip = '192.168.20.50'`).Scan(&rawIPs); err != nil {
+		t.Fatalf("query raw ips: %v", err)
+	}
+	if rawIPs != "[]" {
+		t.Fatalf("raw ips after retiring all attachments = %q, want \"[]\"", rawIPs)
+	}
+
+	// 4. Primary promotion tx.Exec error must propagate and roll back cleanly instead of being swallowed.
+	if _, _, _, err := s.MergeDevicesWithMoves([]types.Device{
+		{
+			IP:       "192.168.1.70",
+			MAC:      "aa:bb:cc:dd:ee:30",
+			Hostname: "fail-promote",
+			IPs: []types.IPAttachment{
+				{IP: "192.168.1.70", NetworkName: "Home LAN", IsActive: true},
+				{IP: "192.168.20.70", NetworkName: "IoT LAN", IsActive: true},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("merge fail-promote: %v", err)
+	}
+	if _, err := s.db.Exec(`
+		CREATE TRIGGER block_promote_ip
+		BEFORE UPDATE ON devices
+		WHEN NEW.ip = '192.168.20.70'
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated promotion error');
+		END;
+	`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	if _, err := s.ProcessMissingDevices([]string{"192.168.1.0/24"}, []string{"192.168.1.60"}); err != nil {
+		t.Fatalf("fail-promote sweep 1: %v", err)
+	}
+	if _, err := s.ProcessMissingDevices([]string{"192.168.1.0/24"}, []string{"192.168.1.60"}); err == nil {
+		t.Fatal("expected ProcessMissingDevices to return error when primary promotion UPDATE fails, got nil")
+	}
+}
+
+func TestMergeDevicesWithMoves_PreservesPrimaryNetworkNameAndMigratesMergedRows(t *testing.T) {
+	s := newTestStorage(t)
+	s.SetNetworkNames(map[string]string{
+		"10.0.4.0/24": "VLAN 4",
+		"10.0.0.0/24": "Home LAN",
+		"10.0.5.0/24": "VLAN 5",
+	})
+
+	// 1. Router at 10.0.4.1 with attached IP 10.0.0.1
+	if _, _, _, err := s.MergeDevicesWithMoves([]types.Device{
+		{
+			IP:       "10.0.4.1",
+			MAC:      "aa:bb:cc:dd:ee:50",
+			Hostname: "router-gw",
+			IPs: []types.IPAttachment{
+				{IP: "10.0.4.1", NetworkName: "VLAN 4", IsActive: true},
+				{IP: "10.0.0.1", NetworkName: "Home LAN", IsActive: true},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("merge router: %v", err)
+	}
+
+	// Seed a stray standalone row at 10.0.0.1 with presence history and open port 80
+	if _, err := s.db.Exec(`
+		INSERT INTO devices (ip, mac, hostname, first_seen, last_seen, is_online, last_presence_change)
+		VALUES ('10.0.0.1', '', 'stray-gw', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, CURRENT_TIMESTAMP)
+	`); err != nil {
+		t.Fatalf("seed stray row: %v", err)
+	}
+	if _, err := s.db.Exec(`
+		INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+		VALUES ('10.0.0.1', '', 'stray-gw', 'join', 0, CURRENT_TIMESTAMP)
+	`); err != nil {
+		t.Fatalf("seed stray presence: %v", err)
+	}
+	if err := s.UpdateOpenPorts("10.0.0.1", []int{80}, []types.OpenService{{Port: 80, Name: "http"}}); err != nil {
+		t.Fatalf("seed stray open port: %v", err)
+	}
+
+	// Sweep discovers 10.0.0.1 with empty MAC -> merges into 10.0.4.1 and deletes stray row 10.0.0.1
+	if _, _, _, err := s.MergeDevicesWithMoves([]types.Device{
+		{IP: "10.0.0.1", Hostname: "router-gw"},
+	}); err != nil {
+		t.Fatalf("merge 10.0.0.1: %v", err)
+	}
+
+	router := s.GetDevice("10.0.4.1")
+	if router == nil {
+		t.Fatalf("expected router at 10.0.4.1")
+	}
+	if router.NetworkName != "VLAN 4" {
+		t.Errorf("router.NetworkName = %q, want 'VLAN 4'", router.NetworkName)
+	}
+	if len(router.OpenPorts) != 1 || router.OpenPorts[0] != 80 {
+		t.Errorf("expected migrated open port 80 on 10.0.4.1, got %+v", router.OpenPorts)
+	}
+	var presCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM device_presence_history WHERE ip = '10.0.4.1'`).Scan(&presCount); err != nil {
+		t.Fatalf("count migrated presence: %v", err)
+	}
+	if presCount < 2 {
+		t.Errorf("expected stray presence event migrated to 10.0.4.1 (count >= 2), got %d", presCount)
+	}
+
+	// 2. Duplicate row merged by MAC in MergeDevicesWithMoves (existing had empty MAC, then gets MAC of another row)
+	if _, _, _, err := s.MergeDevicesWithMoves([]types.Device{
+		{IP: "10.0.5.2", MAC: "aa:bb:cc:dd:ee:51", Hostname: "vlan5-primary"},
+		{IP: "10.0.5.1", MAC: "", Hostname: "vlan5-nomac"},
+	}); err != nil {
+		t.Fatalf("seed vlan5 devices: %v", err)
+	}
+	if err := s.UpdateOpenPorts("10.0.5.1", []int{443}, []types.OpenService{{Port: 443, Name: "https"}}); err != nil {
+		t.Fatalf("seed vlan5 open port: %v", err)
+	}
+	if _, _, _, err := s.MergeDevicesWithMoves([]types.Device{
+		{IP: "10.0.5.1", MAC: "AA:BB:CC:DD:EE:51", Hostname: "vlan5-nomac"},
+	}); err != nil {
+		t.Fatalf("merge vlan5-nomac with MAC: %v", err)
+	}
+
+	unified := s.GetDevice("10.0.5.2")
+	if unified == nil {
+		t.Fatalf("expected unified device at 10.0.5.2")
+	}
+	if len(unified.OpenPorts) != 1 || unified.OpenPorts[0] != 443 {
+		t.Errorf("expected migrated open port 443 on 10.0.5.2, got %+v", unified.OpenPorts)
+	}
+	var migratedPres int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM device_presence_history WHERE ip = '10.0.5.2'`).Scan(&migratedPres); err != nil {
+		t.Fatalf("count vlan5 presence: %v", err)
+	}
+	if migratedPres < 2 {
+		t.Errorf("expected 10.0.5.1 presence migrated to 10.0.5.2 (count >= 2), got %d", migratedPres)
 	}
 }

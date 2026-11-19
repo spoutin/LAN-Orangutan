@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
+	"github.com/spoutin/LAN-Orangutan/internal/logging"
 )
 
 func TestExtendedRouterTelemetry(t *testing.T) {
@@ -468,47 +471,354 @@ func TestExtendedRouterTelemetry_EdgeCases(t *testing.T) {
 	})
 }
 
-func TestFetchOpenWrtDHCP_PreservesAuthOnHTTPRedirectToHTTPS(t *testing.T) {
-	httpsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if auth != "Bearer secret-token" {
-			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte(`{"code":"unauthorized","message":"missing or invalid token"}`))
-			return
+func TestFetchOpenWrtDHCP_RedirectAuthPolicy(t *testing.T) {
+	t.Run("SameOriginHTTPS_PreservesAuth", func(t *testing.T) {
+		var redirectedAuth string
+		httpsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v3/dhcp/leases":
+				http.Redirect(w, r, "/api/v3/dhcp/leases/v2", http.StatusTemporaryRedirect)
+				return
+			case "/api/v3/dhcp/leases/v2":
+				redirectedAuth = r.Header.Get("Authorization")
+				if redirectedAuth != "Bearer secret-token" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[{"ip":"10.5.5.10","mac":"00:11:22:33:44:55","hostname":"my-host"}]`))
+				return
+			case "/api/v3/dhcp/hosts":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[]`))
+				return
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer httpsServer.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:    true,
+			URL:       httpsServer.URL,
+			APIToken:  "secret-token",
+			VerifySSL: false,
 		}
-		if r.URL.Path == "/api/v3/dhcp/leases" {
+
+		leases, _, err := FetchOpenWrtDHCP(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected same-origin HTTPS redirect to succeed, got: %v", err)
+		}
+		if redirectedAuth != "Bearer secret-token" {
+			t.Fatalf("redirected Authorization = %q, want %q", redirectedAuth, "Bearer secret-token")
+		}
+		if len(leases) != 1 || leases[0].Hostname != "my-host" {
+			t.Fatalf("unexpected leases: %+v", leases)
+		}
+	})
+
+	t.Run("HTTPSDowngradeToHTTP_StripsAuth", func(t *testing.T) {
+		receivedAuth := "not-called"
+		httpTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedAuth = r.Header.Get("Authorization")
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[{"ip":"10.5.5.10","mac":"00:11:22:33:44:55","hostname":"my-host"}]`))
-			return
+			_, _ = w.Write([]byte(`[]`))
+		}))
+		defer httpTarget.Close()
+
+		httpsSource := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, httpTarget.URL+r.URL.Path, http.StatusTemporaryRedirect)
+		}))
+		defer httpsSource.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:    true,
+			URL:       httpsSource.URL,
+			APIToken:  "secret-token",
+			VerifySSL: false,
 		}
-		if r.URL.Path == "/api/v3/dhcp/hosts" {
+
+		_, _, _ = FetchOpenWrtDHCP(context.Background(), cfg)
+		if receivedAuth != "" {
+			t.Fatalf("expected Authorization header to be stripped on https->http downgrade redirect, got %q", receivedAuth)
+		}
+	})
+
+	t.Run("PortChangeOnSameHost_StripsAuth", func(t *testing.T) {
+		receivedAuth := "not-called"
+		httpsTarget := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedAuth = r.Header.Get("Authorization")
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[]`))
-			return
+			_, _ = w.Write([]byte(`[]`))
+		}))
+		defer httpsTarget.Close()
+
+		httpsSource := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, httpsTarget.URL+r.URL.Path, http.StatusTemporaryRedirect)
+		}))
+		defer httpsSource.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:    true,
+			URL:       httpsSource.URL,
+			APIToken:  "secret-token",
+			VerifySSL: false,
 		}
-		http.NotFound(w, r)
+
+		_, _, _ = FetchOpenWrtDHCP(context.Background(), cfg)
+		if receivedAuth != "" {
+			t.Fatalf("expected Authorization header to be stripped on port change redirect, got %q", receivedAuth)
+		}
+	})
+
+	t.Run("HostChange_StripsAuth", func(t *testing.T) {
+		receivedAuth := "not-called"
+		target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		}))
+		defer target.Close()
+
+		u, err := url.Parse(target.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Redirect from 127.0.0.1 to localhost on the same port.
+		redirectURL := "https://localhost:" + u.Port()
+
+		source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, redirectURL+r.URL.Path, http.StatusTemporaryRedirect)
+		}))
+		defer source.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:    true,
+			URL:       source.URL,
+			APIToken:  "secret-token",
+			VerifySSL: false,
+		}
+
+		_, _, _ = FetchOpenWrtDHCP(context.Background(), cfg)
+		if receivedAuth != "" {
+			t.Fatalf("expected Authorization header to be stripped on host change redirect, got %q", receivedAuth)
+		}
+	})
+}
+
+func TestFetchOpenWrtNlbwmon_RedirectAuthPolicy(t *testing.T) {
+	t.Run("SameOriginHTTPS_PreservesAuth", func(t *testing.T) {
+		var redirectedAuth string
+		httpsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v3/traffic/hosts":
+				http.Redirect(w, r, "/api/v3/traffic/hosts/v2", http.StatusTemporaryRedirect)
+				return
+			case "/api/v3/traffic/hosts/v2":
+				redirectedAuth = r.Header.Get("Authorization")
+				if redirectedAuth != "Bearer secret-token" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[{"ip":"10.5.5.10","rx_bytes":100,"tx_bytes":200}]`))
+				return
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer httpsServer.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:    true,
+			URL:       httpsServer.URL,
+			APIToken:  "secret-token",
+			VerifySSL: false,
+		}
+
+		stats, err := FetchOpenWrtNlbwmon(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected same-origin HTTPS redirect to succeed, got: %v", err)
+		}
+		if redirectedAuth != "Bearer secret-token" {
+			t.Fatalf("redirected Authorization = %q, want %q", redirectedAuth, "Bearer secret-token")
+		}
+		if st := stats["10.5.5.10"]; st == nil || st.RxBytes != 100 || st.TxBytes != 200 {
+			t.Fatalf("unexpected stats: %+v", stats)
+		}
+	})
+
+	t.Run("HTTPSDowngradeToHTTP_StripsAuth", func(t *testing.T) {
+		var receivedAuths []string
+		httpTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedAuths = append(receivedAuths, r.Header.Get("Authorization"))
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Path == "/ubus" {
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":[0,{"columns":["ip","rx_bytes","tx_bytes"],"data":[]}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`[]`))
+		}))
+		defer httpTarget.Close()
+
+		httpsSource := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, httpTarget.URL+r.URL.Path, http.StatusTemporaryRedirect)
+		}))
+		defer httpsSource.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:    true,
+			URL:       httpsSource.URL,
+			APIToken:  "secret-token",
+			VerifySSL: false,
+		}
+
+		_, _ = FetchOpenWrtNlbwmon(context.Background(), cfg)
+		if len(receivedAuths) == 0 {
+			t.Fatal("expected redirect target to be reached")
+		}
+		for _, auth := range receivedAuths {
+			if auth != "" {
+				t.Fatalf("expected Authorization header to be stripped on https->http downgrade redirect, got %q", auth)
+			}
+		}
+	})
+
+	t.Run("PortChangeOnSameHost_StripsAuth", func(t *testing.T) {
+		var receivedAuths []string
+		httpsTarget := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedAuths = append(receivedAuths, r.Header.Get("Authorization"))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		}))
+		defer httpsTarget.Close()
+
+		httpsSource := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, httpsTarget.URL+r.URL.Path, http.StatusTemporaryRedirect)
+		}))
+		defer httpsSource.Close()
+
+		cfg := config.OpenWrtConfig{
+			Enable:    true,
+			URL:       httpsSource.URL,
+			APIToken:  "secret-token",
+			VerifySSL: false,
+		}
+
+		_, _ = FetchOpenWrtNlbwmon(context.Background(), cfg)
+		if len(receivedAuths) == 0 {
+			t.Fatal("expected redirect target to be reached")
+		}
+		for _, auth := range receivedAuths {
+			if auth != "" {
+				t.Fatalf("expected Authorization header to be stripped on port change redirect, got %q", auth)
+			}
+		}
+	})
+}
+
+func TestSameOriginRedirect(t *testing.T) {
+	mustParse := func(raw string) *url.URL {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+
+	cases := []struct {
+		name string
+		orig string
+		next string
+		want bool
+	}{
+		{"identical", "https://10.5.5.1/a", "https://10.5.5.1/b", true},
+		{"implicit_and_explicit_443", "https://10.5.5.1/a", "https://10.5.5.1:443/b", true},
+		{"case_insensitive", "HTTPS://Router.LAN/a", "https://router.lan/b", true},
+		{"scheme_downgrade", "https://10.5.5.1/a", "http://10.5.5.1/b", false},
+		{"scheme_upgrade_diff_port", "http://10.5.5.1/a", "https://10.5.5.1/b", false},
+		{"port_change", "https://10.5.5.1:8443/a", "https://10.5.5.1:9443/b", false},
+		{"host_change", "https://10.5.5.1/a", "https://10.5.5.2/b", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sameOriginRedirect(mustParse(tc.next), mustParse(tc.orig)); got != tc.want {
+				t.Errorf("sameOriginRedirect(%q, %q) = %v, want %v", tc.next, tc.orig, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRouterAndUniFiTLS_VerifySSLRejectsUntrustedCert(t *testing.T) {
+	tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
 	}))
-	defer httpsServer.Close()
+	defer tlsServer.Close()
 
-	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, httpsServer.URL+r.URL.Path, http.StatusTemporaryRedirect)
-	}))
-	defer httpServer.Close()
+	t.Run("OpenWrtDHCP", func(t *testing.T) {
+		_, _, err := FetchOpenWrtDHCP(context.Background(), config.OpenWrtConfig{
+			Enable:    true,
+			URL:       tlsServer.URL,
+			APIToken:  "tok",
+			VerifySSL: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "certificate") {
+			t.Fatalf("expected TLS certificate verification error, got: %v", err)
+		}
+	})
 
-	cfg := config.OpenWrtConfig{
-		Enable:    true,
-		URL:       httpServer.URL,
-		APIToken:  "secret-token",
-		VerifySSL: false,
-	}
+	t.Run("OpenWrtNlbwmon", func(t *testing.T) {
+		_, err := FetchOpenWrtNlbwmon(context.Background(), config.OpenWrtConfig{
+			Enable:    true,
+			URL:       tlsServer.URL,
+			APIToken:  "tok",
+			VerifySSL: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "certificate") {
+			t.Fatalf("expected TLS certificate verification error, got: %v", err)
+		}
+	})
 
-	leases, _, err := FetchOpenWrtDHCP(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("expected FetchOpenWrtDHCP to succeed despite HTTP->HTTPS redirect, got: %v", err)
-	}
-	if len(leases) != 1 || leases[0].Hostname != "my-host" {
-		t.Fatalf("unexpected leases: %+v", leases)
-	}
+	t.Run("OPNsenseDHCP", func(t *testing.T) {
+		_, _, _, err := FetchOPNsenseDHCP(context.Background(), config.OPNsenseConfig{
+			Enable:    true,
+			URL:       tlsServer.URL,
+			APIKey:    "k",
+			APISecret: "s",
+			VerifySSL: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "certificate") {
+			t.Fatalf("expected TLS certificate verification error, got: %v", err)
+		}
+	})
+
+	t.Run("OPNsenseNetFlow", func(t *testing.T) {
+		_, err := FetchOPNsenseNetFlow(context.Background(), config.OPNsenseConfig{
+			Enable:    true,
+			URL:       tlsServer.URL,
+			APIKey:    "k",
+			APISecret: "s",
+			VerifySSL: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "certificate") {
+			t.Fatalf("expected TLS certificate verification error, got: %v", err)
+		}
+	})
+
+	t.Run("UniFiClients", func(t *testing.T) {
+		_, err := FetchUniFiClients(context.Background(), config.UniFiConfig{
+			Enable:    true,
+			URL:       tlsServer.URL,
+			Site:      "default",
+			APIKey:    "k",
+			VerifySSL: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "certificate") {
+			t.Fatalf("expected TLS certificate verification error, got: %v", err)
+		}
+	})
 }
 
 func TestFetchOPNsenseNetFlow(t *testing.T) {
@@ -1113,4 +1423,71 @@ func TestFetchOpenWrtNlbwmon(t *testing.T) {
 			t.Errorf("expected error for JSON-RPC error, got nil")
 		}
 	})
+}
+
+func TestFetchOPNsenseDHCP_LogsGetArpFailure(t *testing.T) {
+	before := len(logging.GlobalBuffer.GetEntries("getArp", "warn", 1000))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/kea/leases4/search", "/api/kea/dhcpv4/searchReservation":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"rows":[]}`))
+		case "/api/diagnostics/interface/getArp":
+			http.Error(w, "arp backend down", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, _, _, err := FetchOPNsenseDHCP(context.Background(), config.OPNsenseConfig{
+		Enable:    true,
+		URL:       server.URL,
+		APIKey:    "k",
+		APISecret: "s",
+	})
+	if err != nil {
+		t.Fatalf("FetchOPNsenseDHCP unexpected error: %v", err)
+	}
+
+	after := logging.GlobalBuffer.GetEntries("getArp", "warn", 1000)
+	if len(after) <= before {
+		t.Fatalf("expected logging.GlobalBuffer to record getArp failure (before=%d, after=%d)", before, len(after))
+	}
+}
+
+func TestFetchOPNsenseNetFlow_SurfacesReadAllError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/diagnostics/networkinsight/top":
+			w.Header().Set("Content-Length", "100")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"rows":[`))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			panic(http.ErrAbortHandler)
+		case "/api/diagnostics/firewall/query_states":
+			w.Header().Set("Content-Length", "100")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"rows":[`))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			panic(http.ErrAbortHandler)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, err := FetchOPNsenseNetFlow(context.Background(), config.OPNsenseConfig{
+		Enable:    true,
+		URL:       server.URL,
+		APIKey:    "k",
+		APISecret: "s",
+	})
+	if err == nil {
+		t.Fatal("expected FetchOPNsenseNetFlow to return an error when response body read fails")
+	}
 }

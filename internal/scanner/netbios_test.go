@@ -123,3 +123,43 @@ func TestSanitizeNetBIOSName(t *testing.T) {
 		t.Errorf("all-spaces should be empty, got %q", got)
 	}
 }
+
+func TestParseNodeStatusName_TruncatedAndMultiLabelNoPanic(t *testing.T) {
+	// Exactly 12 bytes with ancount = 1 previously panicked reading resp[12].
+	headerOnly := []byte{
+		0x00, 0x00, 0x84, 0x00,
+		0x00, 0x00, 0x00, 0x01,
+		0x00, 0x00, 0x00, 0x00,
+	}
+	if _, err := parseNodeStatusName(headerOnly); err == nil {
+		t.Error("expected error for 12-byte response with ancount=1")
+	}
+
+	// Truncated label claiming 32 bytes when none follow.
+	truncLabel := append(append([]byte{}, headerOnly...), 0x20)
+	if _, err := parseNodeStatusName(truncLabel); err == nil {
+		t.Error("expected error for truncated label")
+	}
+
+	// Truncated compression pointer (only 1 byte).
+	truncPtr := append(append([]byte{}, headerOnly...), 0xC0)
+	if _, err := parseNodeStatusName(truncPtr); err == nil {
+		t.Error("expected error for truncated compression pointer")
+	}
+
+	// Valid multi-label answer name followed by workstation entry.
+	multiLabel := append([]byte{}, headerOnly...)
+	multiLabel = append(multiLabel, 0x03, 'a', 'b', 'c', 0x02, 'd', 'e', 0x00)
+	multiLabel = append(multiLabel, 0x00, 0x21, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+	multiLabel = append(multiLabel, 0x01)
+	multiLabel = append(multiLabel, []byte("HOST-MULTI     ")...)
+	multiLabel = append(multiLabel, 0x00, 0x00, 0x00)
+
+	got, err := parseNodeStatusName(multiLabel)
+	if err != nil {
+		t.Fatalf("parseNodeStatusName multi-label unexpected error: %v", err)
+	}
+	if got != "HOST-MULTI" {
+		t.Errorf("got %q, want HOST-MULTI", got)
+	}
+}

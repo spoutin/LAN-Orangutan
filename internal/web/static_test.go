@@ -96,3 +96,19 @@ func TestStaticRejectsTraversal(t *testing.T) {
 		}
 	}
 }
+
+func TestStaticTrimsLeadingSlashes(t *testing.T) {
+	h := staticServer(t)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/static//style.css", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /static//style.css status = %d, want 200", rec.Code)
+	}
+
+	recTraversal := httptest.NewRecorder()
+	h.ServeHTTP(recTraversal, httptest.NewRequest(http.MethodGet, "/static//../handler.go", nil))
+	if recTraversal.Code != http.StatusNotFound {
+		t.Fatalf("GET /static//../handler.go status = %d, want 404", recTraversal.Code)
+	}
+}

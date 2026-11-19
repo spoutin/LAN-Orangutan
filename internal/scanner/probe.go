@@ -114,6 +114,16 @@ func EnrichWithServices(ctx context.Context, devices []types.Device) {
 	wg.Wait()
 }
 
+var (
+	probeHTTPTransport = &http.Transport{
+		DisableKeepAlives: true,
+	}
+	probeHTTPSTransport = &http.Transport{
+		DisableKeepAlives: true,
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+	}
+)
+
 // probeWebScheme checks if an open port serves an HTTP/HTTPS web interface and returns the scheme ("http" or "https").
 func probeWebScheme(ctx context.Context, ip string, port int) (bool, string) {
 	// 1. Check standard list and mock lists first
@@ -145,7 +155,8 @@ func probeWebScheme(ctx context.Context, ip string, port int) (bool, string) {
 
 	// Use a very light client with extremely short timeout
 	client := &http.Client{
-		Timeout: 200 * time.Millisecond,
+		Timeout:   200 * time.Millisecond,
+		Transport: probeHTTPTransport,
 		// Do not follow redirects (if it redirects, it means there is a web server!)
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -165,13 +176,10 @@ func probeWebScheme(ctx context.Context, ip string, port int) (bool, string) {
 		return false, ""
 	}
 
-	// Create insecure client for self-signed certificates
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
+	// Reuse shared insecure transport for self-signed LAN certificates
 	clientTLS := &http.Client{
 		Timeout:   200 * time.Millisecond,
-		Transport: tr,
+		Transport: probeHTTPSTransport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

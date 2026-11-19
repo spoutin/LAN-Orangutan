@@ -31,6 +31,11 @@ const (
 // scanJob tracks a scan running in the background. Scans of large networks take
 // minutes, which is far too long to hold an HTTP request open, so the scan runs
 // detached and the UI polls for progress.
+type networkTiming struct {
+	startedAt        time.Time
+	estimatedSeconds float64
+}
+
 type scanJob struct {
 	id       string
 	networks []string
@@ -42,6 +47,7 @@ type scanJob struct {
 	currentNetwork   string
 	activeNetworks   map[string]string // CIDR -> gateway
 	networkIndex     int               // 1-based; 0 before the first network starts
+	networkTimings   map[string]networkTiming
 	deviceCount      int
 	discoveredIPs    map[string]bool
 	startedAt        time.Time
@@ -66,7 +72,6 @@ type scanJob struct {
 	portScanActive      bool
 	portScanTotal       int
 	portScanComplete    int
-	portScanWG          sync.WaitGroup
 	lastPortScanHost    scanHostResult
 	portScanStartedAt   time.Time
 	deepNetworkProgress []deepNetworkProgress
@@ -250,6 +255,40 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 	// Without timing history for the current network there is no honest way to
 	// estimate progress, so report it as unknown and let the UI show an
 	// indeterminate state rather than invent a number.
+	if len(j.networkTimings) > 0 && len(j.networks) > 0 {
+		finished := make(map[string]bool, len(j.results))
+		for _, res := range j.results {
+			if !res.IsSupplemental && (res.Status == "scanned" || res.Status == "failed" || res.Status == "skipped") {
+				finished[res.Network] = true
+			}
+		}
+
+		totalProgress := 0.0
+		hasEstimate := len(finished) > 0
+		for _, cidr := range j.networks {
+			if finished[cidr] {
+				totalProgress += 1.0
+				continue
+			}
+			if timing, ok := j.networkTimings[cidr]; ok && timing.estimatedSeconds > 0 {
+				hasEstimate = true
+				fraction := time.Since(timing.startedAt).Seconds() / timing.estimatedSeconds
+				if fraction < 0 {
+					fraction = 0
+				}
+				if fraction > 0.99 {
+					fraction = 0.99
+				}
+				totalProgress += fraction
+			}
+		}
+		if !hasEstimate {
+			return p
+		}
+		p.Percent = totalProgress / float64(len(j.networks)) * 100
+		return p
+	}
+
 	if j.estimatedSeconds <= 0 || j.networkIndex == 0 {
 		return p
 	}
@@ -265,6 +304,18 @@ func (j *scanJob) snapshot(cfg *config.Config, store *storage.Storage) scanProgr
 	p.Percent = (float64(j.networkIndex-1) + fraction) / float64(len(j.networks)) * 100
 
 	return p
+}
+
+func (j *scanJob) networksCopy() []string {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return append([]string(nil), j.networks...)
+}
+
+func (j *scanJob) isNightlyDeep() bool {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.nightlyDeep
 }
 
 // startScanJob begins scanning the given networks in the background. The caller
@@ -355,7 +406,8 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	var deepMu sync.Mutex
 	var activeIPsMu sync.Mutex
 
-	for i, cidr := range j.networks {
+	stage1Networks := j.networksCopy()
+	for i, cidr := range stage1Networks {
 		gwName := h.gatewayForTarget(cidr)
 		index := i + 1
 		stage1WG.Add(1)
@@ -393,8 +445,8 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			}
 
 			sweepStarted := time.Now()
-			// scanNetwork applies its own per-network timeout.
-			result, err := h.scanNetwork(ctx, cidr)
+			// executeNetworkSweep applies its own per-network timeout.
+			result, err := h.executeNetworkSweep(ctx, cidr)
 			j.setActiveNetwork(cidr, gwName, false)
 			h.store.SetNetworkScanning(cidr, false)
 
@@ -448,34 +500,10 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 
 			// Stage 2 begins after discovery has covered every requested network, so
 			// each result and progress indicator has one unambiguous network context.
-			if j.mode == scanModeBoth && h.cfg.Scanning.PortScanRange != "" && (!j.automatic || h.cfg.Scanning.EnablePortScan) {
-				shouldPortScan := false
-				if !j.automatic {
-					// Keep manual scans immediate
-					shouldPortScan = true
-				} else if !j.nightlyDeep {
-					// Automatic background scan: quiet-hour 3:00 AM Eastern Time prober
-					loc, err := time.LoadLocation("America/New_York")
-					if err != nil {
-						// Fallback to UTC if America/New_York is not loaded/available
-						loc = time.UTC
-					}
-					nowET := time.Now().In(loc)
-					if nowET.Hour() == 3 {
-						todayStr := nowET.Format("2006-01-02")
-						lastDeepScan, _ := h.store.GetSetting("last_deep_scan_date")
-						if lastDeepScan != todayStr {
-							shouldPortScan = true
-							_ = h.store.SetSetting("last_deep_scan_date", todayStr)
-						}
-					}
-				}
-
-				if shouldPortScan {
-					deepMu.Lock()
-					deepTargets[cidr] = append(deepTargets[cidr], result.Devices...)
-					deepMu.Unlock()
-				}
+			if j.mode == scanModeBoth && h.cfg.Scanning.PortScanRange != "" && !j.automatic {
+				deepMu.Lock()
+				deepTargets[cidr] = append(deepTargets[cidr], result.Devices...)
+				deepMu.Unlock()
 			}
 		}(cidr, gwName, index)
 	}
@@ -486,14 +514,14 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		return
 	}
 
-	if j.nightlyDeep && ctx.Err() == nil {
+	if j.isNightlyDeep() && ctx.Err() == nil {
 		j.runNightlyDeepScan(ctx, h)
 		if ctx.Err() == context.DeadlineExceeded {
 			j.finish("cancelled", "nightly deep scan stopped at the 06:00 Eastern cutoff")
 			return
 		}
 	} else if len(deepTargets) > 0 && ctx.Err() == nil {
-		j.runDeepQueue(ctx, h, deepTargets)
+		j.runDeepQueueWithTiming(ctx, h, deepTargets, false)
 	} else if ctx.Err() == nil {
 		j.runNewDeviceDeepScan(ctx, h)
 	}
@@ -502,32 +530,44 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 	// subnet cannot be swept) and mDNS announcements. Both merge as secondary
 	// sources so they enrich rather than overwrite. A cancelled job skips them.
 	if ctx.Err() == nil {
-		if ipv6 := h.scanner.DiscoverIPv6(ctx); len(ipv6) > 0 {
-			if err := h.store.MergeIPv6Neighbors(ipv6); err == nil {
-				var ips []string
-				for _, d := range ipv6 {
-					if d.IP != "" {
-						activeIPsMap[d.IP] = true
-						ips = append(ips, d.IP)
+		discoverIPv6 := h.discoverIPv6
+		if discoverIPv6 == nil && h.scanner != nil {
+			discoverIPv6 = h.scanner.DiscoverIPv6
+		}
+		if discoverIPv6 != nil {
+			if ipv6 := discoverIPv6(ctx); len(ipv6) > 0 {
+				if err := h.store.MergeIPv6Neighbors(ipv6); err == nil {
+					var ips []string
+					for _, d := range ipv6 {
+						if d.IP != "" {
+							activeIPsMap[d.IP] = true
+							ips = append(ips, d.IP)
+						}
 					}
+					j.recordDiscoveredIPs(ips)
+					j.addResult(networkScanSummary{Network: "IPv6 neighbors", Status: "scanned", DeviceCount: len(ipv6), IsSupplemental: true})
 				}
-				j.recordDiscoveredIPs(ips)
-				j.addResult(networkScanSummary{Network: "IPv6 neighbors", Status: "scanned", DeviceCount: len(ipv6), IsSupplemental: true})
 			}
 		}
 	}
 	if ctx.Err() == nil {
-		if mdns := h.scanner.DiscoverMDNS(ctx); len(mdns) > 0 {
-			if err := h.store.MergeSupplemental(mdns); err == nil {
-				var ips []string
-				for _, d := range mdns {
-					if d.IP != "" {
-						activeIPsMap[d.IP] = true
-						ips = append(ips, d.IP)
+		discoverMDNS := h.discoverMDNS
+		if discoverMDNS == nil && h.scanner != nil {
+			discoverMDNS = h.scanner.DiscoverMDNS
+		}
+		if discoverMDNS != nil {
+			if mdns := discoverMDNS(ctx); len(mdns) > 0 {
+				if err := h.store.MergeSupplemental(mdns); err == nil {
+					var ips []string
+					for _, d := range mdns {
+						if d.IP != "" {
+							activeIPsMap[d.IP] = true
+							ips = append(ips, d.IP)
+						}
 					}
+					j.recordDiscoveredIPs(ips)
+					j.addResult(networkScanSummary{Network: "mDNS", Status: "scanned", DeviceCount: len(mdns), IsSupplemental: true})
 				}
-				j.recordDiscoveredIPs(ips)
-				j.addResult(networkScanSummary{Network: "mDNS", Status: "scanned", DeviceCount: len(mdns), IsSupplemental: true})
 			}
 		}
 	}
@@ -539,11 +579,15 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		var routerName string
 
 		// Query OpenWrt routers if enabled
+		fetchOpenWrtDHCP := h.fetchOpenWrtDHCP
+		if fetchOpenWrtDHCP == nil {
+			fetchOpenWrtDHCP = scanner.FetchOpenWrtDHCP
+		}
 		for _, wrt := range h.cfg.AllOpenWrts() {
 			if !wrt.Enable {
 				continue
 			}
-			leases, reservations, err := scanner.FetchOpenWrtDHCP(ctx, wrt)
+			leases, reservations, err := fetchOpenWrtDHCP(ctx, wrt)
 			if err == nil {
 				h.notifyRouterAPISuccess("OpenWrt", wrt.ID, wrt.Networks)
 				allLeases = append(allLeases, leases...)
@@ -567,7 +611,11 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 
 		// Query OPNsense if enabled
 		if h.cfg.OPNsense.Enable {
-			leases, reservations, arpEntries, err := scanner.FetchOPNsenseDHCP(ctx, h.cfg.OPNsense)
+			fetchOPNsenseDHCP := h.fetchOPNsenseDHCP
+			if fetchOPNsenseDHCP == nil {
+				fetchOPNsenseDHCP = scanner.FetchOPNsenseDHCP
+			}
+			leases, reservations, arpEntries, err := fetchOPNsenseDHCP(ctx, h.cfg.OPNsense)
 			if err == nil {
 				h.notifyRouterAPISuccess("OPNsense", "OPNsense", h.cfg.OPNsense.Networks)
 				allLeases = append(allLeases, leases...)
@@ -627,11 +675,15 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 
 	// UniFi clients discovery
 	if ctx.Err() == nil && h.cfg.UniFi.Enable {
-		unifiClients, err := scanner.FetchUniFiClients(ctx, h.cfg.UniFi)
+		fetchUniFiClients := h.fetchUniFiClients
+		if fetchUniFiClients == nil {
+			fetchUniFiClients = scanner.FetchUniFiClients
+		}
+		unifiClients, err := fetchUniFiClients(ctx, h.cfg.UniFi)
 		if err == nil {
 			newDevs, seenDevs, mergeErr := h.store.MergeUniFiClients(unifiClients)
 			if mergeErr != nil {
-				fmt.Printf("[DEBUG] UniFi client merge error: %v\n", mergeErr)
+				log.Printf("[DEBUG] UniFi client merge error: %v", mergeErr)
 			}
 			var newIPs, seenIPs []string
 			for _, d := range newDevs {
@@ -662,15 +714,15 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 				IsSupplemental: true,
 			})
 		} else {
-			fmt.Printf("UniFi client fetch error: %v\n", err)
+			log.Printf("UniFi client fetch error: %v", err)
 		}
 	}
 
 	if ctx.Err() == nil && h.cfg.Switches.Enable {
 		vlanByMAC := make(map[string]int)
 		for _, device := range h.store.GetDevices() {
-			if device.MAC != "" {
-				vlanByMAC[device.MAC] = device.VLAN
+			if normMAC := storage.NormalizeMAC(device.MAC); normMAC != "" {
+				vlanByMAC[normMAC] = device.VLAN
 			}
 		}
 		seenSwitches := make(map[string]struct{}, len(h.cfg.Switches.Names))
@@ -684,7 +736,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			}
 			seenSwitches[switchCfg.ID] = struct{}{}
 			if err := switchCfg.Validate(); err != nil {
-				fmt.Printf("Switch %s SNMP configuration invalid\n", switchCfg.ID)
+				log.Printf("Switch %s SNMP configuration invalid", switchCfg.ID)
 				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP configuration invalid", IsSupplemental: true})
 				continue
 			}
@@ -692,7 +744,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 			if err != nil {
 				// SNMP failures can include transport details. Keep user-visible
 				// summaries and logs credential-safe.
-				fmt.Printf("Switch %s SNMP poll failed\n", switchCfg.ID)
+				log.Printf("Switch %s SNMP poll failed", switchCfg.ID)
 				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP polling failed", IsSupplemental: true})
 				continue
 			}
@@ -709,11 +761,11 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 				}
 			}
 			if err := h.store.MergeSwitchConnections(storageConnections, switchCfg.ID); err != nil {
-				fmt.Printf("Switch %s SNMP merge failed\n", switchCfg.ID)
+				log.Printf("Switch %s SNMP merge failed", switchCfg.ID)
 				j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "failed", Error: "SNMP result storage failed", IsSupplemental: true})
 				continue
 			}
-			fmt.Printf("Switch %s SNMP resolved %d connections\n", switchCfg.ID, len(connections))
+			log.Printf("Switch %s SNMP resolved %d connections", switchCfg.ID, len(connections))
 			j.addResult(networkScanSummary{Network: switchCfg.ID + " SNMP", Status: "scanned", DeviceCount: len(connections), IsSupplemental: true})
 		}
 	}
@@ -729,14 +781,14 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		if len(allNetworks) > 1 {
 			cycleInterval = time.Duration(len(allNetworks)) * scanInterval
 		}
-		_, err := h.store.ProcessMissingDevices(j.networks, activeIPs, cycleInterval)
+		_, err := h.store.ProcessMissingDevices(j.networksCopy(), activeIPs, cycleInterval)
 		if err != nil {
-			fmt.Printf("[DEBUG] ProcessMissingDevices error: %v\n", err)
+			log.Printf("[DEBUG] ProcessMissingDevices error: %v", err)
 		}
 
 		// Reconcile and unify any multi-IP or shared-MAC devices that were scanned across different subnets
 		if dedupErr := h.store.DeduplicateMACs(); dedupErr != nil {
-			fmt.Printf("[DEBUG] DeduplicateMACs error: %v\n", dedupErr)
+			log.Printf("[DEBUG] DeduplicateMACs error: %v", dedupErr)
 		}
 
 		// Dispatch deferred notifications using fully complete, enriched database entries
@@ -745,7 +797,10 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 		var hasFailure bool
 		var firstErr string
 		var scannedSubnets int
-		for _, res := range j.results {
+		j.mu.RLock()
+		resultsCopy := append([]networkScanSummary(nil), j.results...)
+		j.mu.RUnlock()
+		for _, res := range resultsCopy {
 			if !res.IsSupplemental {
 				if res.Status == "failed" {
 					hasFailure = true
@@ -773,6 +828,7 @@ func (j *scanJob) run(ctx context.Context, h *Handler) {
 func (j *scanJob) runNewDeviceDeepScan(ctx context.Context, h *Handler) {
 	j.mu.RLock()
 	newIPs := append([]string(nil), j.accumulatedNew...)
+	networks := append([]string(nil), j.networks...)
 	j.mu.RUnlock()
 	if len(newIPs) == 0 {
 		return
@@ -783,7 +839,7 @@ func (j *scanJob) runNewDeviceDeepScan(ctx context.Context, h *Handler) {
 		if device == nil || !device.IsOnline(time.Duration(h.cfg.Scanning.ScanInterval)*time.Second) {
 			continue
 		}
-		for _, network := range j.networks {
+		for _, network := range networks {
 			_, cidr, err := net.ParseCIDR(network)
 			if err == nil && cidr.Contains(net.ParseIP(ip)) {
 				targets[network] = append(targets[network], *device)
@@ -795,10 +851,7 @@ func (j *scanJob) runNewDeviceDeepScan(ctx context.Context, h *Handler) {
 		return
 	}
 	// New-device probing is intentionally conservative even outside the nightly window.
-	wasNightly := j.nightlyDeep
-	j.nightlyDeep = true
-	j.runDeepQueue(ctx, h, targets)
-	j.nightlyDeep = wasNightly
+	j.runDeepQueueWithTiming(ctx, h, targets, true)
 }
 
 func prioritizeDeepScanDevices(devices []types.Device) []types.Device {
@@ -820,8 +873,13 @@ func prioritizeDeepScanDevices(devices []types.Device) []types.Device {
 }
 
 func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork map[string][]types.Device) {
-	progress := make([]deepNetworkProgress, 0, len(j.networks))
-	for _, network := range j.networks {
+	j.runDeepQueueWithTiming(ctx, h, targetsByNetwork, j.isNightlyDeep())
+}
+
+func (j *scanJob) runDeepQueueWithTiming(ctx context.Context, h *Handler, targetsByNetwork map[string][]types.Device, conservative bool) {
+	networks := j.networksCopy()
+	progress := make([]deepNetworkProgress, 0, len(networks))
+	for _, network := range networks {
 		if targets := targetsByNetwork[network]; len(targets) > 0 {
 			progress = append(progress, deepNetworkProgress{Network: network, Total: len(targets)})
 		}
@@ -842,7 +900,7 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 	// Group networks with targets by gateway
 	gatewayOrder := make([]string, 0)
 	subnetsByGateway := make(map[string][]string)
-	for _, network := range j.networks {
+	for _, network := range networks {
 		if len(targetsByNetwork[network]) == 0 {
 			continue
 		}
@@ -885,7 +943,7 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 				var firstError string
 
 				concurrency := 2
-				if j.nightlyDeep || len(j.deepDevices) == 1 {
+				if conservative || len(j.deepDevices) == 1 {
 					concurrency = 1
 				}
 
@@ -899,7 +957,7 @@ func (j *scanJob) runDeepQueue(ctx context.Context, h *Handler, targetsByNetwork
 							if ctx.Err() != nil {
 								return
 							}
-							ports, err := j.scanPortHost(ctx, h, network, dev)
+							ports, err := j.scanPortHostWithTiming(ctx, h, network, dev, conservative)
 							dur := time.Since(subnetStarted).Seconds()
 							deepResultsMu.Lock()
 							if err != nil {
@@ -1005,8 +1063,10 @@ func (j *scanJob) runNightlyDeepScan(ctx context.Context, h *Handler) {
 			targetsByNetwork[cidr][i], targetsByNetwork[cidr][k] = targetsByNetwork[cidr][k], targetsByNetwork[cidr][i]
 		})
 	}
+	j.mu.Lock()
 	j.networks = networks
-	j.runDeepQueue(ctx, h, targetsByNetwork)
+	j.mu.Unlock()
+	j.runDeepQueueWithTiming(ctx, h, targetsByNetwork, true)
 	if ctx.Err() == context.DeadlineExceeded {
 		j.notifyNightlyDeepCutoff(h)
 	}
@@ -1031,7 +1091,7 @@ func (j *scanJob) notifyNightlyDeepCutoff(h *Handler) {
 		}
 		message := notification.FormatDeepScanCutoffSlackMessage(name, network.Network, network.Complete, skipped)
 		if err := h.sendSlackNotification(conf.SlackWebhook, message); err != nil {
-			fmt.Printf("Nightly deep scan cutoff notification failed for %s: %v\n", network.Network, err)
+			log.Printf("Nightly deep scan cutoff notification failed for %s: %v", network.Network, err)
 		}
 	}
 }
@@ -1039,21 +1099,22 @@ func (j *scanJob) notifyNightlyDeepCutoff(h *Handler) {
 // runDeepScan probes currently online inventory records without rediscovering
 // the network. This gives users an explicit Stage 2-only operation.
 func (j *scanJob) runDeepScan(ctx context.Context, h *Handler) {
+	networks := j.networksCopy()
 	if len(j.deepDevices) > 0 {
 		targets := make(map[string][]types.Device)
 		for _, device := range j.deepDevices {
-			cidr := findSubnetForIP(device.IP, j.networks)
+			cidr := findSubnetForIP(device.IP, networks)
 			if cidr != "" {
 				targets[cidr] = append(targets[cidr], device)
 			}
 		}
-		j.runDeepQueue(ctx, h, targets)
+		j.runDeepQueueWithTiming(ctx, h, targets, j.isNightlyDeep())
 		return
 	}
 	devices := h.store.GetDevices()
 	interval := time.Duration(h.cfg.Scanning.ScanInterval) * time.Second
 	targetsByNetwork := make(map[string][]types.Device)
-	for _, cidr := range j.networks {
+	for _, cidr := range networks {
 		if ctx.Err() != nil {
 			return
 		}
@@ -1071,8 +1132,8 @@ func (j *scanJob) runDeepScan(ctx context.Context, h *Handler) {
 		}
 		targetsByNetwork[cidr] = targets
 	}
-	j.runDeepQueue(ctx, h, targetsByNetwork)
-	for i, cidr := range j.networks {
+	j.runDeepQueueWithTiming(ctx, h, targetsByNetwork, j.isNightlyDeep())
+	for i, cidr := range networks {
 		targets := targetsByNetwork[cidr]
 		j.beginNetwork(cidr, i+1, 0)
 		j.addResult(networkScanSummary{Network: cidr, Status: "scanned", DeviceCount: len(targets)}, len(targets))
@@ -1084,9 +1145,19 @@ func (j *scanJob) beginNetwork(cidr string, index int, estimate float64) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.currentNetwork = cidr
-	j.networkIndex = index
-	j.networkStartedAt = time.Now()
+	if index > j.networkIndex {
+		j.networkIndex = index
+	}
+	now := time.Now()
+	j.networkStartedAt = now
 	j.estimatedSeconds = estimate
+	if j.networkTimings == nil {
+		j.networkTimings = make(map[string]networkTiming)
+	}
+	j.networkTimings[cidr] = networkTiming{
+		startedAt:        now,
+		estimatedSeconds: estimate,
+	}
 }
 
 // recordDiscoveredIPs records newly discovered active IPs and updates unique device count.
@@ -1172,18 +1243,23 @@ func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Dura
 		return
 	}
 
+	runCtx, cancel := h.bgContext(ctx)
+	h.bgWG.Add(1)
 	go func() {
+		defer h.bgWG.Done()
+		defer cancel()
+
 		startup := time.NewTimer(5 * time.Second)
 		defer startup.Stop()
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			return
 		case <-startup.C:
 		}
 
 		for {
 			if !h.store.ContinuousScanEnabled(h.cfg.Scanning.ContinuousScan) {
-				if !waitForBackgroundScan(ctx, nil, interval) {
+				if !waitForBackgroundScan(runCtx, nil, interval) {
 					return
 				}
 				continue
@@ -1191,18 +1267,18 @@ func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Dura
 
 			networks, err := h.resolveScanTargets("all")
 			if err != nil || len(networks) == 0 {
-				if !waitForBackgroundScan(ctx, nil, interval) {
+				if !waitForBackgroundScan(runCtx, nil, interval) {
 					return
 				}
 				continue
 			}
 
 			job := h.startBackgroundNetworks(networks, networks)
-			wasNightlyDeep := job != nil && job.nightlyDeep
-			if job != nil && !waitForBackgroundScan(ctx, job.done, interval) {
+			wasNightlyDeep := job != nil && job.isNightlyDeep()
+			if job != nil && !waitForBackgroundScan(runCtx, job.done, interval) {
 				return
 			}
-			if job == nil && !waitForBackgroundScan(ctx, nil, interval) {
+			if job == nil && !waitForBackgroundScan(runCtx, nil, interval) {
 				return
 			}
 			if wasNightlyDeep {
@@ -1215,7 +1291,7 @@ func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Dura
 						sweepJob := h.startScanJob(allNetworks, true, scanModeQuick)
 						h.jobMu.Unlock()
 						if sweepJob != nil {
-							_ = waitForBackgroundScan(ctx, sweepJob.done, 0)
+							_ = waitForBackgroundScan(runCtx, sweepJob.done, 0)
 						}
 					} else {
 						h.jobMu.Unlock()
@@ -1224,6 +1300,36 @@ func (h *Handler) StartBackgroundScanner(ctx context.Context, interval time.Dura
 			}
 		}
 	}()
+}
+
+func (h *Handler) claimNightlyDeepDeadline() (time.Time, bool) {
+	if !h.cfg.Scanning.EnablePortScan || h.cfg.Scanning.PortScanRange == "" {
+		return time.Time{}, false
+	}
+	h.nightlyMu.Lock()
+	defer h.nightlyMu.Unlock()
+
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		loc = time.UTC
+	}
+	nowFn := h.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	nowET := nowFn().In(loc)
+	if nowET.Hour() != 3 {
+		return time.Time{}, false
+	}
+	date := nowET.Format("2006-01-02")
+	last, _ := h.store.GetSetting("last_deep_scan_date")
+	if last == date {
+		return time.Time{}, false
+	}
+	if err := h.store.SetSetting("last_deep_scan_date", date); err != nil {
+		return time.Time{}, false
+	}
+	return time.Date(nowET.Year(), nowET.Month(), nowET.Day(), 6, 0, 0, 0, loc), true
 }
 
 func (h *Handler) startBackgroundNetworks(selectedNetworks []string, allNetworks []string) *scanJob {
@@ -1235,21 +1341,9 @@ func (h *Handler) startBackgroundNetworks(selectedNetworks []string, allNetworks
 	}
 	var deadline time.Time
 	var deepNetworks []string
-	if h.cfg.Scanning.EnablePortScan && h.cfg.Scanning.PortScanRange != "" {
-		loc, err := time.LoadLocation("America/New_York")
-		if err != nil {
-			loc = time.UTC
-		}
-		now := h.now().In(loc)
-		if now.Hour() == 3 {
-			date := now.Format("2006-01-02")
-			last, _ := h.store.GetSetting("last_deep_scan_date")
-			if last != date {
-				_ = h.store.SetSetting("last_deep_scan_date", date)
-				deadline = time.Date(now.Year(), now.Month(), now.Day(), 6, 0, 0, 0, loc)
-				deepNetworks = append([]string(nil), allNetworks...)
-			}
-		}
+	if d, ok := h.claimNightlyDeepDeadline(); ok {
+		deadline = d
+		deepNetworks = append([]string(nil), allNetworks...)
 	}
 	h.job = h.startScanJobWithDeadline(selectedNetworks, true, scanModeBoth, deadline, deepNetworks, nil)
 	return h.job
@@ -1317,16 +1411,6 @@ func selectOldestScannedNetwork(store *storage.Storage, networks []string) (stri
 	return oldestNet, true
 }
 
-func nextBackgroundNetwork(networks []string, cursor int) (string, int, bool) {
-	if len(networks) == 0 {
-		return "", 0, false
-	}
-	if cursor < 0 || cursor >= len(networks) {
-		cursor = 0
-	}
-	return networks[cursor], (cursor + 1) % len(networks), true
-}
-
 func waitForBackgroundScan(ctx context.Context, done <-chan struct{}, delay time.Duration) bool {
 	if done != nil {
 		select {
@@ -1348,28 +1432,11 @@ func waitForBackgroundScan(ctx context.Context, done <-chan struct{}, delay time
 	}
 }
 
-// startPortScan runs a targeted high-speed port scan on a list of discovered active devices.
-func (j *scanJob) startPortScan(ctx context.Context, h *Handler, network string, devices []types.Device) {
-	var activeDevices []types.Device
-	for _, d := range devices {
-		if d.IP != "" {
-			activeDevices = append(activeDevices, d)
-		}
-	}
-
-	if len(activeDevices) == 0 {
-		return
-	}
-
-	for _, d := range activeDevices {
-		if ctx.Err() != nil {
-			break
-		}
-		j.scanPortHost(ctx, h, network, d)
-	}
+func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, device types.Device) ([]int, error) {
+	return j.scanPortHostWithTiming(ctx, h, network, device, j.isNightlyDeep())
 }
 
-func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, device types.Device) ([]int, error) {
+func (j *scanJob) scanPortHostWithTiming(ctx context.Context, h *Handler, network string, device types.Device, conservative bool) ([]int, error) {
 	j.mu.Lock()
 	for i := range j.deepNetworkProgress {
 		if j.deepNetworkProgress[i].Network == network {
@@ -1387,7 +1454,7 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 	}
 	log.Printf("[scan] starting service scan on %s (%s) via gateway %s", device.IP, name, gwName)
 
-	ports, sshPorts, services, osName, osVersion, osFamily, err := h.scanner.ScanHostPortsWithTiming(ctx, device.IP, h.cfg.Scanning.PortScanRange, j.nightlyDeep)
+	ports, sshPorts, services, osName, osVersion, osFamily, err := h.scanner.ScanHostPortsWithTiming(ctx, device.IP, h.cfg.Scanning.PortScanRange, conservative)
 	dur := time.Since(start).Seconds()
 	if err != nil {
 		log.Printf("[scan] service scan failed for %s via gateway %s: %v (%.2fs)", device.IP, gwName, err, dur)
@@ -1417,7 +1484,11 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 
 		// Enrich device with open ports (re-classifies types and finds web servers)
 		tempDevices := []types.Device{*current}
-		scanner.EnrichWithServices(ctx, tempDevices)
+		enrichWithServices := h.enrichWithServices
+		if enrichWithServices == nil {
+			enrichWithServices = scanner.EnrichWithServices
+		}
+		enrichWithServices(ctx, tempDevices)
 		*current = tempDevices[0]
 		current.Probed = true
 
@@ -1449,12 +1520,17 @@ func (j *scanJob) scanPortHost(ctx context.Context, h *Handler, network string, 
 
 // StartBackgroundCleanup runs a daily task to delete history older than a year.
 func (h *Handler) StartBackgroundCleanup(ctx context.Context) {
+	runCtx, cancel := h.bgContext(ctx)
+	h.bgWG.Add(1)
 	go func() {
+		defer h.bgWG.Done()
+		defer cancel()
+
 		// Run cleanup shortly after startup
 		startup := time.NewTimer(30 * time.Second)
 		defer startup.Stop()
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			return
 		case <-startup.C:
 		}
@@ -1465,7 +1541,7 @@ func (h *Handler) StartBackgroundCleanup(ctx context.Context) {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-runCtx.Done():
 				return
 			case <-ticker.C:
 				h.runCleanup()
@@ -1478,9 +1554,9 @@ func (h *Handler) runCleanup() {
 	oneYearAgo := time.Now().AddDate(-1, 0, 0)
 	deleted, err := h.store.PruneOldHistory(oneYearAgo)
 	if err != nil {
-		fmt.Printf("[CLEANUP] Failed to prune old history: %v\n", err)
+		log.Printf("[CLEANUP] Failed to prune old history: %v", err)
 	} else if deleted > 0 {
-		fmt.Printf("[CLEANUP] Pruned %d records older than a year\n", deleted)
+		log.Printf("[CLEANUP] Pruned %d records older than a year", deleted)
 	}
 }
 
@@ -1495,8 +1571,10 @@ func (j *scanJob) accumulate(newIPs, seenIPs []string) {
 // dispatchDeferredNotifications pulls complete, enriched rows from SQLite and sends the Slack reports
 func (j *scanJob) dispatchDeferredNotifications(h *Handler) {
 	j.mu.Lock()
-	newIPs := j.accumulatedNew
-	seenIPs := j.accumulatedSeen
+	newIPs := append([]string(nil), j.accumulatedNew...)
+	seenIPs := append([]string(nil), j.accumulatedSeen...)
+	startedAt := j.startedAt
+	networks := append([]string(nil), j.networks...)
 	j.mu.Unlock()
 
 	if len(newIPs) == 0 && len(seenIPs) == 0 {
@@ -1511,10 +1589,10 @@ func (j *scanJob) dispatchDeferredNotifications(h *Handler) {
 		d := h.store.GetDevice(ip)
 		if d != nil {
 			// If d was first seen well before this job started (or has multiple attachments), it is an existing device!
-			if !d.FirstSeen.IsZero() && d.FirstSeen.Before(j.startedAt) {
+			if !d.FirstSeen.IsZero() && d.FirstSeen.Before(startedAt) {
 				continue
 			}
-			cidr := findSubnetForIP(d.IP, j.networks)
+			cidr := findSubnetForIP(d.IP, networks)
 			if cidr != "" {
 				newByNetwork[cidr] = append(newByNetwork[cidr], *d)
 			}
@@ -1524,7 +1602,7 @@ func (j *scanJob) dispatchDeferredNotifications(h *Handler) {
 	for _, ip := range seenIPs {
 		d := h.store.GetDevice(ip)
 		if d != nil {
-			cidr := findSubnetForIP(d.IP, j.networks)
+			cidr := findSubnetForIP(d.IP, networks)
 			if cidr != "" {
 				seenByNetwork[cidr] = append(seenByNetwork[cidr], *d)
 			}
@@ -1532,7 +1610,7 @@ func (j *scanJob) dispatchDeferredNotifications(h *Handler) {
 	}
 
 	// Dispatch consolidated notifications for each subnet
-	for _, cidr := range j.networks {
+	for _, cidr := range networks {
 		news := newByNetwork[cidr]
 		seens := seenByNetwork[cidr]
 		if len(news) > 0 || len(seens) > 0 {

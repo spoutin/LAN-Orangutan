@@ -2,17 +2,142 @@ package notification
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
+// ErrInvalidWebhookURL indicates a webhook URL was rejected by SSRF/scheme validation.
+var ErrInvalidWebhookURL = errors.New("invalid webhook URL")
+
+// ValidateWebhookURL checks that rawURL is a valid http(s) URL that does not
+// target localhost, loopback, link-local/metadata, private, or unspecified IPs.
+func ValidateWebhookURL(rawURL string) error {
+	return validateWebhookURL(rawURL, false)
+}
+
+func validateWebhookURL(rawURL string, allowPrivate bool) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return fmt.Errorf("%w: URL is empty", ErrInvalidWebhookURL)
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("%w: malformed URL", ErrInvalidWebhookURL)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%w: scheme must be http or https", ErrInvalidWebhookURL)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("%w: host is required", ErrInvalidWebhookURL)
+	}
+	if !allowPrivate {
+		lowerHost := strings.ToLower(host)
+		if lowerHost == "localhost" || strings.HasSuffix(lowerHost, ".localhost") ||
+			lowerHost == "metadata.google.internal" || lowerHost == "metadata.goog" {
+			return fmt.Errorf("%w: host %q is not allowed", ErrInvalidWebhookURL, host)
+		}
+		if ip := net.ParseIP(host); ip != nil && isBlockedWebhookIP(ip) {
+			return fmt.Errorf("%w: IP address %q is not allowed", ErrInvalidWebhookURL, host)
+		}
+	}
+	return nil
+}
+
+func isBlockedWebhookIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		ip = ip4
+	}
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified()
+}
+
+func newWebhookDialer(lookupIP func(context.Context, string) ([]net.IPAddr, error)) func(context.Context, string, string) (net.Conn, error) {
+	baseDialer := &net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	if lookupIP == nil {
+		lookupIP = net.DefaultResolver.LookupIPAddr
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid address", ErrInvalidWebhookURL)
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			if isBlockedWebhookIP(ip) {
+				return nil, fmt.Errorf("%w: target IP is not allowed", ErrInvalidWebhookURL)
+			}
+			return baseDialer.DialContext(ctx, network, addr)
+		}
+		ips, err := lookupIP(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("%w: host did not resolve", ErrInvalidWebhookURL)
+		}
+		for _, ipAddr := range ips {
+			if isBlockedWebhookIP(ipAddr.IP) {
+				return nil, fmt.Errorf("%w: resolved IP is not allowed", ErrInvalidWebhookURL)
+			}
+		}
+		// Dial the first validated IP directly to avoid TOCTOU DNS rebinding.
+		var lastErr error
+		for _, ipAddr := range ips {
+			conn, dialErr := baseDialer.DialContext(ctx, network, net.JoinHostPort(ipAddr.IP.String(), port))
+			if dialErr == nil {
+				return conn, nil
+			}
+			lastErr = dialErr
+		}
+		return nil, lastErr
+	}
+}
+
+func newWebhookHTTPClient(allowPrivate bool) *http.Client {
+	transport := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		TLSHandshakeTimeout: 5 * time.Second,
+	}
+	if !allowPrivate {
+		transport.DialContext = newWebhookDialer(nil)
+	}
+	return &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return fmt.Errorf("%w: redirects are not allowed", ErrInvalidWebhookURL)
+		},
+	}
+}
+
 // SendSlackNotification posts a raw message string or payload to Slack
 func SendSlackNotification(webhookURL, text string) error {
+	return sendSlackNotificationWithClient(webhookURL, text, newWebhookHTTPClient(false), false)
+}
+
+func sendSlackNotificationWithClient(webhookURL, text string, client *http.Client, allowPrivate bool) error {
+	if err := validateWebhookURL(webhookURL, allowPrivate); err != nil {
+		return err
+	}
 	payload := map[string]interface{}{
 		"text": text,
 	}
@@ -27,7 +152,6 @@ func SendSlackNotification(webhookURL, text string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

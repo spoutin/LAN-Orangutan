@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -29,11 +30,11 @@ func TestScanJob_SwitchesPollSequentiallyAndPropagateKnownVLAN(t *testing.T) {
 		t.Fatalf("UpdateDevice: %v", err)
 	}
 	cfg := switchTestConfig("edge-a", "edge-b")
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	var calls []string
 	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, vlanByMAC map[string]int) ([]scanner.SwitchConnection, error) {
 		calls = append(calls, switchCfg.ID)
-		if got := vlanByMAC["AA:BB:CC:DD:EE:01"]; got != 30 {
+		if got := vlanByMAC["aa:bb:cc:dd:ee:01"]; got != 30 {
 			t.Fatalf("vlanByMAC for known device = %d, want 30", got)
 		}
 		return []scanner.SwitchConnection{{MAC: "aa:bb:cc:dd:ee:01", SwitchName: switchCfg.ID, SwitchHost: switchCfg.Host, Port: "gi1/10", VLAN: 30}}, nil
@@ -79,7 +80,7 @@ func TestSelectOldestScannedNetwork(t *testing.T) {
 func TestSelectOldestScannedNetworksPerGateway(t *testing.T) {
 	store := newScanJobTestStore(t)
 	cfg := config.Default()
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	runner := &testConcurrencyTrackingRemoteRunner{}
 	h.scanner.SetRemoteRunner(runner)
@@ -131,7 +132,7 @@ func TestStartBackgroundScanner_SchedulesAllNetworksTogether(t *testing.T) {
 	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.0.1.0/24", "10.5.5.0/24"}
 	cfg.Scanning.OnlyConfiguredNetworks = true
 	cfg.Scanning.ContinuousScan = true
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	networks, err := h.resolveScanTargets("all")
 	if err != nil {
@@ -190,7 +191,7 @@ func TestStartBackgroundNetworkMakesOneNightlyDeepJobForAllNetworks(t *testing.T
 	cfg := config.Default()
 	cfg.Scanning.EnablePortScan = true
 	cfg.Scanning.PortScanRange = "1-10"
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	loc, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +231,7 @@ func TestNightlyDeepCutoffNotifiesOnlyAffectedNetworks(t *testing.T) {
 	if err := store.SaveNetworkNotification("10.20.0.0/24", "https://example.test/complete", true); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(store, config.Default())
+	h := newTestHandler(t, store, config.Default())
 	var messages []string
 	h.sendSlackNotification = func(webhook, text string) error {
 		messages = append(messages, webhook+"\n"+text)
@@ -261,7 +262,7 @@ func TestNightlyDeepScanIncludesDevicesSeenWithin24h(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"192.168.1.0/24"}
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately so runDeepQueue does not actually execute nmap
@@ -293,7 +294,7 @@ func TestScanPortHostUpdatesPresence(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Scanning.PortScanRange = "80"
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
 		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
 			return []byte(`<nmaprun><host><ports><port protocol="tcp" portid="80"><state state="open"/></port></ports></host></nmaprun>`), nil
@@ -329,7 +330,7 @@ func TestScanPortHost_SavesDetectedOS(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Scanning.PortScanRange = "22"
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
 		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
 			return []byte(`<?xml version="1.0"?>
@@ -381,6 +382,15 @@ func TestSingleDeviceScan_DoesNotAlertSlackOrTriggerFalseRecovery(t *testing.T) 
 	store := newScanJobTestStore(t)
 	_ = store.SaveNetworkNotification("10.5.5.0/24", "https://example.test/slack-openwrt", true)
 
+	// Pre-seed the gateway returned by the mock sweep so the sweep does not
+	// treat it as a newly discovered device and emit a sweep report.
+	_ = store.UpdateDevice(&types.Device{
+		IP:        "10.5.5.1",
+		Hostname:  "openwrt",
+		FirstSeen: time.Now(),
+		LastSeen:  time.Now(),
+	})
+
 	device := types.Device{
 		IP:       "10.5.5.143",
 		Hostname: "iot-device",
@@ -391,11 +401,15 @@ func TestSingleDeviceScan_DoesNotAlertSlackOrTriggerFalseRecovery(t *testing.T) 
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"10.5.5.0/24"}
 	cfg.Scanning.PortScanRange = "22,80"
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
+	defer h.Close()
 
+	var mu sync.Mutex
 	var slackMessages []string
 	h.sendSlackNotification = func(webhook, text string) error {
+		mu.Lock()
 		slackMessages = append(slackMessages, text)
+		mu.Unlock()
 		return nil
 	}
 
@@ -418,15 +432,22 @@ func TestSingleDeviceScan_DoesNotAlertSlackOrTriggerFalseRecovery(t *testing.T) 
 	job.scanPortHost(context.Background(), h, "10.5.5.0/24", device)
 
 	// Single device failure should NOT send Slack notifications!
+	h.WaitForScans()
+	mu.Lock()
 	if len(slackMessages) != 0 {
+		mu.Unlock()
 		t.Fatalf("expected 0 Slack alerts for single device failure, got %d: %v", len(slackMessages), slackMessages)
 	}
+	mu.Unlock()
 
 	// 2. Run a normal network discovery sweep on 10.5.5.0/24
 	sweepJob := h.startScanJob([]string{"10.5.5.0/24"}, false, scanModeQuick)
 	<-sweepJob.done
+	h.WaitForScans()
 
 	// Successful sweep should NOT trigger a false recovery message!
+	mu.Lock()
+	defer mu.Unlock()
 	if len(slackMessages) != 0 {
 		t.Fatalf("expected 0 Slack alerts (no false recovery), got %d: %v", len(slackMessages), slackMessages)
 	}
@@ -444,7 +465,7 @@ func TestSingleDeviceScan_LogsSingleDeviceCompletion(t *testing.T) {
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"10.5.5.0/24"}
 	cfg.Scanning.PortScanRange = "22"
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
 		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
@@ -482,7 +503,7 @@ func TestDeepScan_TracksFailedAndWarningStatus(t *testing.T) {
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"10.5.5.0/24"}
 	cfg.Scanning.PortScanRange = "22"
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	// Case 1: All hosts fail (e.g. fatal scanner error)
 	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
@@ -591,7 +612,7 @@ func TestRemoteScannerFailureNotifiesSlackAndSkips(t *testing.T) {
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"10.0.0.0/24"}
 	cfg.Scanning.OnlyConfiguredNetworks = true
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	var slackMessages []string
 	h.sendSlackNotification = func(webhook, text string) error {
@@ -664,11 +685,20 @@ func (r *testSwitchableRemoteRunner) Close() error { return nil }
 func TestRemoteScannerAlertOnceAndRecoveryNotification(t *testing.T) {
 	store := newScanJobTestStore(t)
 	_ = store.SaveNetworkNotification("10.0.0.0/24", "https://example.test/slack-opnsense", true)
+	// Pre-seed the gateway returned by testSwitchableRemoteRunner so recovery
+	// does not also emit a new-device sweep report.
+	_ = store.UpdateDevice(&types.Device{
+		IP:        "10.0.0.1",
+		Hostname:  "opnsense",
+		FirstSeen: time.Now(),
+		LastSeen:  time.Now(),
+	})
 
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"10.0.0.0/24"}
 	cfg.Scanning.OnlyConfiguredNetworks = true
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
+	defer h.Close()
 
 	var mu sync.Mutex
 	var slackMessages []string
@@ -748,7 +778,7 @@ func TestScanJob_RecordsAndClearsNetworkScanError(t *testing.T) {
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"10.0.0.0/24"}
 	cfg.Scanning.OnlyConfiguredNetworks = true
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	runner := &testSwitchableRemoteRunner{
 		gateway: "opnsense (10.0.0.1)",
 		target:  "10.0.0.0/24",
@@ -812,7 +842,7 @@ func TestScanJob_RecordsPerNetworkScanHistoryOnSuccessAndFailure(t *testing.T) {
 	cfg.Scanning.OnlyConfiguredNetworks = true
 	cfg.Scanning.PortScanRange = ""
 	cfg.Scanning.EnablePortScan = false
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	// Pre-seed 10.0.0.1 so new device deep scan doesn't run
 	_, _, _ = store.MergeDevices([]types.Device{{
@@ -876,7 +906,7 @@ func TestNotifyFailure_FallbackWebhook(t *testing.T) {
 	_ = store.SaveNetworkNotification("10.0.0.0/24", "https://example.test/primary-slack", true)
 
 	cfg := config.Default()
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	h.scanner.SetRemoteRunner(&testSwitchableRemoteRunner{
 		gateway: "openwrt (10.5.5.1)",
 		target:  "10.5.5.0/24",
@@ -955,11 +985,14 @@ func TestPrioritizeDeepScanDevices(t *testing.T) {
 }
 
 type testConcurrencyTrackingRemoteRunner struct {
-	mu           sync.Mutex
-	activePerGW  map[string]int
-	maxPerGW     map[string]int
-	activeGlobal int
-	maxGlobal    int
+	mu             sync.Mutex
+	activePerGW    map[string]int
+	maxPerGW       map[string]int
+	activeGlobal   int
+	maxGlobal      int
+	expectedGlobal int
+	allEntered     chan struct{}
+	enteredOnce    sync.Once
 }
 
 func (r *testConcurrencyTrackingRemoteRunner) HasRemoteScannerForTarget(target string) bool {
@@ -995,10 +1028,21 @@ func (r *testConcurrencyTrackingRemoteRunner) RunScan(ctx context.Context, targe
 	if r.activeGlobal > r.maxGlobal {
 		r.maxGlobal = r.activeGlobal
 	}
+	if r.expectedGlobal > 0 && r.allEntered != nil && r.activeGlobal >= r.expectedGlobal {
+		r.enteredOnce.Do(func() { close(r.allEntered) })
+	}
+	allEntered := r.allEntered
 	r.mu.Unlock()
 
-	// Sleep briefly to allow concurrent execution across gateways
-	time.Sleep(50 * time.Millisecond)
+	if allEntered != nil {
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-allEntered:
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+		timer.Stop()
+	}
 
 	r.mu.Lock()
 	r.activePerGW[gw]--
@@ -1016,9 +1060,12 @@ func TestScanJob_Stage1AllSubnetsParallelSweep(t *testing.T) {
 	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.0.1.0/24", "10.5.5.0/24", "10.5.6.0/24"}
 	cfg.Scanning.OnlyConfiguredNetworks = true
 	cfg.Scanning.MinScanInterval = 1
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
-	runner := &testConcurrencyTrackingRemoteRunner{}
+	runner := &testConcurrencyTrackingRemoteRunner{
+		expectedGlobal: 4,
+		allEntered:     make(chan struct{}),
+	}
 	h.scanner.SetRemoteRunner(runner)
 
 	job := h.startScanJob(cfg.Scanning.Networks, false, scanModeQuick)
@@ -1052,6 +1099,9 @@ type testDeepScanConcurrencyRemoteRunner struct {
 	maxActiveSubnetsPerGW map[string]int
 	maxGlobalHosts        int
 	activeGlobalHosts     int
+	expectedGlobalHosts   int
+	allEntered            chan struct{}
+	enteredOnce           sync.Once
 }
 
 func (r *testDeepScanConcurrencyRemoteRunner) HasRemoteScannerForTarget(target string) bool {
@@ -1118,9 +1168,21 @@ func (r *testDeepScanConcurrencyRemoteRunner) RunScan(ctx context.Context, targe
 	if r.activeGlobalHosts > r.maxGlobalHosts {
 		r.maxGlobalHosts = r.activeGlobalHosts
 	}
+	if r.expectedGlobalHosts > 0 && r.allEntered != nil && r.activeGlobalHosts >= r.expectedGlobalHosts {
+		r.enteredOnce.Do(func() { close(r.allEntered) })
+	}
+	allEntered := r.allEntered
 	r.mu.Unlock()
 
-	time.Sleep(30 * time.Millisecond)
+	if allEntered != nil {
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-allEntered:
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+		timer.Stop()
+	}
 
 	r.mu.Lock()
 	r.activeHostsPerGW[gw]--
@@ -1153,9 +1215,12 @@ func TestScanJob_Stage2PerGatewayDeepScan(t *testing.T) {
 	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.0.1.0/24", "10.5.5.0/24", "10.5.6.0/24"}
 	cfg.Scanning.PortScanRange = "80"
 	cfg.Scanning.EnablePortScan = true
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
-	runner := &testDeepScanConcurrencyRemoteRunner{}
+	runner := &testDeepScanConcurrencyRemoteRunner{
+		expectedGlobalHosts: 4,
+		allEntered:          make(chan struct{}),
+	}
 	h.scanner.SetRemoteRunner(runner)
 
 	job := h.startScanJob(cfg.Scanning.Networks, false, scanModeDeep)
@@ -1235,7 +1300,7 @@ func TestScanJob_Stage2PerSubnetDeepScanningLifecycle(t *testing.T) {
 	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.5.5.0/24"}
 	cfg.Scanning.PortScanRange = "80"
 	cfg.Scanning.EnablePortScan = true
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	opnDone := make(chan struct{})
 	unblockOpenwrt := make(chan struct{})
@@ -1244,8 +1309,7 @@ func TestScanJob_Stage2PerSubnetDeepScanningLifecycle(t *testing.T) {
 	runner := &testControlledRemoteRunner{
 		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
 			if strings.Contains(target, "10.0.0.10") {
-				// Fast opnsense completes after brief sleep
-				time.Sleep(10 * time.Millisecond)
+				// Fast opnsense completes immediately
 				defer close(opnDone)
 				return []byte(`<nmaprun><host><ports><port protocol="tcp" portid="80"><state state="open"/></port></ports></host></nmaprun>`), nil
 			}
@@ -1268,7 +1332,7 @@ func TestScanJob_Stage2PerSubnetDeepScanningLifecycle(t *testing.T) {
 	// Wait until opnsense (10.0.0.0/24) has finished its subnet deep scan queue
 	deadline := time.Now().Add(5 * time.Second)
 	for store.IsNetworkDeepScanning("10.0.0.0/24") && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
+		runtime.Gosched()
 	}
 
 	// At this point, opnsense deep scan is complete, so 10.0.0.0/24 should NOT be deep scanning!
@@ -1321,7 +1385,7 @@ func TestScanJob_SnapshotReportsActiveNetworksDuringParallelSweep(t *testing.T) 
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"10.0.0.0/24", "10.5.5.0/24"}
 	cfg.Scanning.OnlyConfiguredNetworks = true
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	startedSweep := make(chan string, 2)
 	continueSweep := make(chan struct{})
@@ -1432,7 +1496,7 @@ func TestScanJob_BriefRateLimitWaitsAndProceeds(t *testing.T) {
 	cfg := config.Default()
 	cfg.Scanning.Networks = []string{"10.0.0.0/24"}
 	cfg.Scanning.OnlyConfiguredNetworks = true
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	scanned := false
 	runner := &testControlledRemoteRunner{
@@ -1470,7 +1534,7 @@ func TestScanJob_RouterAPIFailureAlertAndRecovery(t *testing.T) {
 	cfg.OpenWrt.ID = "openwrt"
 	cfg.OpenWrt.Networks = []string{"10.5.5.0/24"}
 	cfg.OpenWrt.URL = "http://127.0.0.1:1"
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	var mu sync.Mutex
 	var slackMessages []string
@@ -1511,9 +1575,9 @@ func TestScanJob_SwitchesResolveUnknownVLANInventoryMACThroughBridgeFDB(t *testi
 		t.Fatalf("UpdateDevice: %v", err)
 	}
 	cfg := switchTestConfig("edge-a")
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, vlanByMAC map[string]int) ([]scanner.SwitchConnection, error) {
-		vlan, ok := vlanByMAC["AA:BB:CC:DD:EE:02"]
+		vlan, ok := vlanByMAC["aa:bb:cc:dd:ee:02"]
 		if !ok || vlan != 0 {
 			t.Fatalf("vlanByMAC = %v, want unknown-VLAN inventory MAC", vlanByMAC)
 		}
@@ -1533,7 +1597,7 @@ func TestScanJob_SwitchesResolveUnknownVLANInventoryMACThroughBridgeFDB(t *testi
 func TestScanJob_SwitchesIgnoreDuplicateConfiguredNames(t *testing.T) {
 	store := newScanJobTestStore(t)
 	cfg := switchTestConfig("switchy", "switchy", "core")
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	var calls []string
 	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
 		calls = append(calls, switchCfg.ID)
@@ -1557,7 +1621,7 @@ func TestScanJob_SwitchesIgnoreAliasesWithSameID(t *testing.T) {
 	cfg := switchTestConfig("primary", "alias")
 	cfg.Switches.Configs["primary"] = validSwitchConfig("switchy", "switchy.example.test")
 	cfg.Switches.Configs["alias"] = validSwitchConfig("switchy", "switchy.example.test")
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	calls := 0
 	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
 		calls++
@@ -1579,7 +1643,7 @@ func TestScanJob_SwitchesIgnoreAliasesWithSameID(t *testing.T) {
 func TestScanJob_SwitchFailureIsIsolated(t *testing.T) {
 	store := newScanJobTestStore(t)
 	cfg := switchTestConfig("unreachable", "edge-b")
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	var calls []string
 	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
 		calls = append(calls, switchCfg.ID)
@@ -1606,7 +1670,7 @@ func TestScanJob_InvalidSwitchIsIsolated(t *testing.T) {
 	store := newScanJobTestStore(t)
 	cfg := switchTestConfig("invalid", "edge-b")
 	cfg.Switches.Configs["invalid"] = config.SwitchConfig{ID: "invalid"}
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	var calls []string
 	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
 		calls = append(calls, switchCfg.ID)
@@ -1632,7 +1696,7 @@ func TestScanJob_SwitchesDisabledDoesNotPoll(t *testing.T) {
 	store := newScanJobTestStore(t)
 	cfg := switchTestConfig("edge-a")
 	cfg.Switches.Enable = false
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 	calls := 0
 	h.fetchSwitchConnections = func(context.Context, config.SwitchConfig, map[string]int) ([]scanner.SwitchConnection, error) {
 		calls++
@@ -1656,7 +1720,52 @@ func newScanJobTestStore(t *testing.T) *storage.Storage {
 	if err != nil {
 		t.Fatalf("storage.New: %v", err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	return store
+}
+
+func newTestHandler(t *testing.T, store *storage.Storage, cfg *config.Config) *Handler {
+	t.Helper()
+	h := NewHandler(store, cfg)
+	h.discoverIPv6 = func(context.Context) []types.Device { return nil }
+	h.discoverMDNS = func(context.Context) []types.Device { return nil }
+	h.fetchOpenWrtDHCP = func(context.Context, config.OpenWrtConfig) ([]types.Device, []types.Device, error) {
+		return nil, nil, nil
+	}
+	h.fetchOPNsenseDHCP = func(context.Context, config.OPNsenseConfig) ([]types.Device, []types.Device, []types.Device, error) {
+		return nil, nil, nil, nil
+	}
+	h.fetchOpenWrtNlbwmon = func(context.Context, config.OpenWrtConfig) (map[string]*types.NetFlowDeviceStats, error) {
+		return nil, nil
+	}
+	h.fetchUniFiClients = func(context.Context, config.UniFiConfig) ([]types.Device, error) { return nil, nil }
+	h.fetchSwitchConnections = func(context.Context, config.SwitchConfig, map[string]int) ([]scanner.SwitchConnection, error) {
+		return nil, nil
+	}
+	h.fetchOPNsenseNetFlow = func(context.Context, config.OPNsenseConfig) (map[string]*types.NetFlowDeviceStats, error) {
+		return nil, nil
+	}
+	h.enrichWithServices = func(context.Context, []types.Device) {}
+	h.sendSlackNotification = func(string, string) error { return nil }
+	h.scanner.SetHooks(scanner.Hooks{
+		LookPath: func(file string) (string, error) {
+			return "", fmt.Errorf("%s disabled in test", file)
+		},
+		RunCommand: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return nil, fmt.Errorf("command %s disabled in test", name)
+		},
+		GetInterface:   func(context.Context, string) string { return "eth0" },
+		ReverseDNS:     func(context.Context, string, string) string { return "" },
+		NetBIOSName:    func(context.Context, string) string { return "" },
+		EnrichServices: func(context.Context, []types.Device) {},
+		QueryMDNS:      func(context.Context) [][]byte { return nil },
+		IPv6Interfaces: func() []string { return nil },
+		RunIPv6Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return nil, fmt.Errorf("ipv6 command %s disabled in test", name)
+		},
+	})
+	t.Cleanup(func() { _ = h.Close() })
+	return h
 }
 
 func switchTestConfig(names ...string) *config.Config {
@@ -1751,11 +1860,7 @@ func TestScanJob_UniFiIntegration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	dir := t.TempDir()
-	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatalf("storage.New: %v", err)
-	}
+	store := newScanJobTestStore(t)
 
 	cfg := config.Default()
 	cfg.UniFi.Enable = true
@@ -1768,7 +1873,8 @@ func TestScanJob_UniFiIntegration(t *testing.T) {
 	cfg.Switches.Names = []string{"edge"}
 	cfg.Switches.Configs["edge"] = validSwitchConfig("edge", "edge.example.test")
 
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
+	h.fetchUniFiClients = scanner.FetchUniFiClients
 	fetches := 0
 	h.fetchSwitchConnections = func(_ context.Context, switchCfg config.SwitchConfig, vlanByMAC map[string]int) ([]scanner.SwitchConnection, error) {
 		fetches++
@@ -1853,11 +1959,7 @@ func TestScanJob_UniFiErrorGraceful(t *testing.T) {
 	}))
 	defer server.Close()
 
-	dir := t.TempDir()
-	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatalf("storage.New: %v", err)
-	}
+	store := newScanJobTestStore(t)
 
 	cfg := config.Default()
 	cfg.UniFi.Enable = true
@@ -1867,7 +1969,8 @@ func TestScanJob_UniFiErrorGraceful(t *testing.T) {
 	cfg.OpenWrt.Enable = false
 	cfg.OPNsense.Enable = false
 
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
+	h.fetchUniFiClients = scanner.FetchUniFiClients
 
 	job := &scanJob{
 		id:        "test-job-err",
@@ -1913,11 +2016,7 @@ func TestScanJob_UniFiSeenNotification(t *testing.T) {
 	}))
 	defer server.Close()
 
-	dir := t.TempDir()
-	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatalf("storage.New: %v", err)
-	}
+	store := newScanJobTestStore(t)
 
 	// Pre-insert device as offline with NotifyOnSeen: true
 	existingDev := &types.Device{
@@ -1931,7 +2030,7 @@ func TestScanJob_UniFiSeenNotification(t *testing.T) {
 	}
 	// Force it offline in DB
 	twoHoursAgo := time.Now().Add(-2 * time.Hour)
-	_, err = store.GetDB().Exec("UPDATE devices SET is_online = 0, last_presence_change = ? WHERE ip = ?", twoHoursAgo, "192.168.1.99")
+	_, err := store.GetDB().Exec("UPDATE devices SET is_online = 0, last_presence_change = ? WHERE ip = ?", twoHoursAgo, "192.168.1.99")
 	if err != nil {
 		t.Fatalf("force offline: %v", err)
 	}
@@ -1944,7 +2043,8 @@ func TestScanJob_UniFiSeenNotification(t *testing.T) {
 	cfg.OpenWrt.Enable = false
 	cfg.OPNsense.Enable = false
 
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
+	h.fetchUniFiClients = scanner.FetchUniFiClients
 
 	job := &scanJob{
 		id:        "test-job-seen",
@@ -1961,5 +2061,473 @@ func TestScanJob_UniFiSeenNotification(t *testing.T) {
 
 	if len(accumSeen) != 1 || accumSeen[0] != "192.168.1.99" {
 		t.Errorf("expected accumulatedSeen to contain 192.168.1.99, got %v", accumSeen)
+	}
+}
+
+func TestScanJob_SnapshotConcurrentWithNightlyAndNewDeviceDeepScan(t *testing.T) {
+	store := newScanJobTestStore(t)
+	defer store.Close()
+
+	now := time.Now()
+	for _, ip := range []string{"192.168.1.10", "10.20.0.10", "10.30.0.10"} {
+		if err := store.UpdateDevice(&types.Device{
+			IP:       ip,
+			MAC:      "aa:bb:cc:00:00:" + ip[len(ip)-2:],
+			LastSeen: now,
+		}); err != nil {
+			t.Fatalf("UpdateDevice %s: %v", ip, err)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"192.168.1.0/24", "10.20.0.0/24", "10.30.0.0/24"}
+	cfg.Scanning.PortScanRange = "22"
+	h := newTestHandler(t, store, cfg)
+	defer h.Close()
+
+	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			return []byte(`<nmaprun></nmaprun>`), nil
+		},
+	})
+
+	// 1. Concurrent snapshot() during runNightlyDeepScan() and runNewDeviceDeepScan().
+	job := &scanJob{
+		id:             "race-deep",
+		status:         "running",
+		startedAt:      now,
+		networks:       []string{"192.168.1.0/24", "10.20.0.0/24", "10.30.0.0/24"},
+		deepNetworks:   []string{"192.168.1.0/24", "10.20.0.0/24", "10.30.0.0/24"},
+		accumulatedNew: []string{"192.168.1.10", "10.20.0.10"},
+	}
+
+	stopSnap := make(chan struct{})
+	var snapWG sync.WaitGroup
+	snapWG.Add(1)
+	go func() {
+		defer snapWG.Done()
+		for {
+			select {
+			case <-stopSnap:
+				return
+			default:
+				_ = job.snapshot(cfg, store)
+			}
+		}
+	}()
+
+	var deepWG sync.WaitGroup
+	deepWG.Add(2)
+	go func() {
+		defer deepWG.Done()
+		job.runNightlyDeepScan(context.Background(), h)
+	}()
+	go func() {
+		defer deepWG.Done()
+		job.runNewDeviceDeepScan(context.Background(), h)
+	}()
+	deepWG.Wait()
+	close(stopSnap)
+	snapWG.Wait()
+
+	// 2. Parallel Stage 1 beginNetwork calls should track per-network timing rather
+	// than clobbering a single scalar networkIndex and jumping Percent immediately.
+	parallelJob := &scanJob{
+		id:        "parallel-stage1",
+		status:    "running",
+		startedAt: time.Now(),
+		networks:  []string{"192.168.1.0/24", "10.20.0.0/24", "10.30.0.0/24"},
+	}
+	var stageWG sync.WaitGroup
+	for i, cidr := range parallelJob.networks {
+		stageWG.Add(1)
+		go func(c string, idx int) {
+			defer stageWG.Done()
+			parallelJob.beginNetwork(c, idx, 60)
+		}(cidr, i+1)
+	}
+	stageWG.Wait()
+
+	snap := parallelJob.snapshot(cfg, store)
+	if snap.Percent > 25 {
+		t.Fatalf("parallel beginNetwork jumped Percent to %.2f immediately at t=0; want <= 25", snap.Percent)
+	}
+}
+
+func TestScanJob_DispatchDeferredNotificationsConcurrentWithAccumulate(t *testing.T) {
+	store := newScanJobTestStore(t)
+	defer store.Close()
+
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"192.168.1.0/24"}
+	h := newTestHandler(t, store, cfg)
+	defer h.Close()
+
+	_ = store.SaveNetworkNotification("192.168.1.0/24", "https://example.test/slack", true)
+	h.sendSlackNotification = func(webhook, text string) error { return nil }
+
+	if err := store.UpdateDevice(&types.Device{
+		IP:        "192.168.1.50",
+		MAC:       "aa:bb:cc:dd:ee:50",
+		FirstSeen: time.Now(),
+		LastSeen:  time.Now(),
+	}); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	job := &scanJob{
+		id:        "race-notify",
+		status:    "running",
+		startedAt: time.Now().Add(-time.Second),
+		networks:  []string{"192.168.1.0/24"},
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			job.accumulate([]string{"192.168.1.50"}, []string{"192.168.1.50"})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			job.dispatchDeferredNotifications(h)
+		}
+	}()
+	wg.Wait()
+	h.WaitForScans()
+}
+
+func TestHandler_LifecycleCloseDrainsBackgroundGoroutines(t *testing.T) {
+	store := newScanJobTestStore(t)
+	defer store.Close()
+
+	_ = store.SaveNetworkNotification("192.168.1.0/24", "https://example.test/slack", true)
+
+	cfg := config.Default()
+	cfg.Scanning.ScanInterval = 1
+	h := newTestHandler(t, store, cfg)
+
+	slackStarted := make(chan struct{})
+	releaseSlack := make(chan struct{})
+	var slackFinished sync.WaitGroup
+	slackFinished.Add(1)
+	var slackDone atomicBoolFlag
+	h.sendSlackNotification = func(webhook, text string) error {
+		close(slackStarted)
+		<-releaseSlack
+		slackDone.Set(true)
+		slackFinished.Done()
+		return nil
+	}
+
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+	h.SetScanContext(bgCtx)
+	h.StartBackgroundScanner(bgCtx, time.Hour)
+	h.StartBackgroundCleanup(bgCtx)
+	h.StartTrafficCollector(bgCtx)
+
+	// Trigger async Slack notification via dispatchNotificationsWithMoves
+	h.dispatchNotifications("192.168.1.0/24", []types.Device{{IP: "192.168.1.10", MAC: "aa:bb:cc:dd:ee:10"}}, nil)
+
+	select {
+	case <-slackStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for async Slack notification goroutine to start")
+	}
+
+	// Cancel context and start Close() in a goroutine; Close() must wait until the
+	// in-flight Slack goroutine and background loops drain cleanly.
+	bgCancel()
+	closeReturned := make(chan error, 1)
+	go func() {
+		closeReturned <- h.Close()
+	}()
+
+	select {
+	case err := <-closeReturned:
+		t.Fatalf("Handler.Close() returned (%v) before async Slack goroutine finished", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseSlack)
+	select {
+	case err := <-closeReturned:
+		if err != nil {
+			t.Fatalf("Handler.Close() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Handler.Close() did not return after background goroutines unblocked")
+	}
+
+	if !slackDone.Get() {
+		t.Fatal("expected async Slack goroutine to finish before Handler.Close() returned")
+	}
+	slackFinished.Wait()
+}
+
+type atomicBoolFlag struct {
+	mu  sync.Mutex
+	val bool
+}
+
+func (f *atomicBoolFlag) Set(v bool) {
+	f.mu.Lock()
+	f.val = v
+	f.mu.Unlock()
+}
+
+func (f *atomicBoolFlag) Get() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.val
+}
+
+func TestScanJob_CleanupUsesStandardLogger(t *testing.T) {
+	store := newScanJobTestStore(t)
+	defer store.Close()
+
+	// Insert an old offline device so runCleanup prunes it and logs a message.
+	twoYearsAgo := time.Now().AddDate(-2, 0, 0)
+	if err := store.UpdateDevice(&types.Device{
+		IP:       "192.168.1.99",
+		MAC:      "aa:bb:cc:dd:ee:99",
+		LastSeen: twoYearsAgo,
+	}); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	h := newTestHandler(t, store, config.Default())
+	defer h.Close()
+
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(origOut)
+
+	h.runCleanup()
+
+	if !strings.Contains(buf.String(), "[CLEANUP] Pruned") {
+		t.Fatalf("expected runCleanup to log via standard log.Printf (so /api/logs receives it), got log buffer: %q", buf.String())
+	}
+}
+
+func TestEnrichGatewayMACs(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	cfg.RemoteScanners = config.RemoteScannersConfig{
+		Enable: true,
+		Names:  []string{"opnsense"},
+		Configs: map[string]config.RemoteScannerConfig{
+			"opnsense": {ID: "opnsense", Host: "10.0.0.1", Networks: []string{"10.0.0.0/24"}},
+		},
+	}
+	h := newTestHandler(t, store, cfg)
+
+	now := time.Now()
+	_ = store.UpdateDevice(&types.Device{
+		IP:        "10.0.0.1",
+		MAC:       "00:0d:b9:11:22:33",
+		Vendor:    "PC Engines",
+		FirstSeen: now,
+		LastSeen:  now,
+	})
+	_ = store.UpdateDevice(&types.Device{
+		IP:        "10.0.0.2",
+		MAC:       "aa:bb:cc:00:00:02",
+		Vendor:    "Ubiquiti",
+		FirstSeen: now,
+		LastSeen:  now,
+	})
+
+	devices := []types.Device{
+		{IP: "10.0.0.1"}, // matches gwHost, empty MAC -> enriched
+		{IP: "10.0.0.2"}, // matches stored IP fallback -> enriched
+		{IP: "10.0.0.3", MAC: "11:22:33:44:55:66"}, // already has MAC -> untouched
+		{IP: "10.0.0.4"}, // unknown -> stays empty
+	}
+	h.enrichGatewayMACs("10.0.0.0/24", devices)
+
+	if devices[0].MAC != "00:0d:b9:11:22:33" || devices[0].Vendor != "PC Engines" {
+		t.Errorf("gwHost device not enriched: %+v", devices[0])
+	}
+	if devices[1].MAC != "aa:bb:cc:00:00:02" || devices[1].Vendor != "Ubiquiti" {
+		t.Errorf("stored IP fallback device not enriched: %+v", devices[1])
+	}
+	if devices[2].MAC != "11:22:33:44:55:66" {
+		t.Errorf("existing MAC overwritten: %+v", devices[2])
+	}
+	if devices[3].MAC != "" {
+		t.Errorf("unknown device got unexpected MAC: %+v", devices[3])
+	}
+}
+
+func TestDispatchDeferredNotifications(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	h := newTestHandler(t, store, cfg)
+
+	_ = store.SaveNetworkNotification("10.10.0.0/24", "https://hooks.slack.com/services/T00/B00/ONE", true)
+	var sent []string
+	var sentMu sync.Mutex
+	h.sendSlackNotification = func(webhookURL, text string) error {
+		sentMu.Lock()
+		sent = append(sent, text)
+		sentMu.Unlock()
+		return nil
+	}
+
+	startedAt := time.Now().Add(-1 * time.Minute)
+	_ = store.UpdateDevice(&types.Device{
+		IP:        "10.10.0.10",
+		MAC:       "00:11:22:33:10:10",
+		Hostname:  "fresh-host",
+		FirstSeen: startedAt.Add(10 * time.Second),
+		LastSeen:  startedAt.Add(10 * time.Second),
+	})
+	_ = store.UpdateDevice(&types.Device{
+		IP:        "10.10.0.11",
+		MAC:       "00:11:22:33:10:11",
+		Hostname:  "preexisting-host",
+		FirstSeen: startedAt.Add(-1 * time.Hour),
+		LastSeen:  startedAt.Add(15 * time.Second),
+	})
+	_ = store.UpdateDevice(&types.Device{
+		IP:           "10.10.0.12",
+		MAC:          "00:11:22:33:10:12",
+		Hostname:     "tracked-host",
+		NotifyOnSeen: true,
+		FirstSeen:    startedAt.Add(-2 * time.Hour),
+		LastSeen:     startedAt.Add(20 * time.Second),
+	})
+
+	job := &scanJob{
+		networks:        []string{"10.10.0.0/24"},
+		startedAt:       startedAt,
+		accumulatedNew:  []string{"10.10.0.10", "10.10.0.11"},
+		accumulatedSeen: []string{"10.10.0.12"},
+	}
+	job.dispatchDeferredNotifications(h)
+	h.WaitForScans()
+
+	sentMu.Lock()
+	defer sentMu.Unlock()
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 Slack notification, got %d: %v", len(sent), sent)
+	}
+	if !strings.Contains(sent[0], "fresh-host") {
+		t.Errorf("expected fresh-host in notification: %s", sent[0])
+	}
+	if strings.Contains(sent[0], "preexisting-host") {
+		t.Errorf("preexisting-host should have been filtered from new devices: %s", sent[0])
+	}
+	if !strings.Contains(sent[0], "tracked-host") {
+		t.Errorf("expected tracked-host in notification: %s", sent[0])
+	}
+}
+
+func TestRunNewDeviceDeepScan(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	cfg.Scanning.PortScanRange = "22,80"
+	cfg.Scanning.ScanInterval = 300
+	h := newTestHandler(t, store, cfg)
+
+	var scannedTargets []string
+	var scanMu sync.Mutex
+	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			scanMu.Lock()
+			scannedTargets = append(scannedTargets, target)
+			scanMu.Unlock()
+			return []byte(`<nmaprun><host><status state="up"/><address addr="10.20.0.10" addrtype="ipv4"/><ports><port protocol="tcp" portid="80"><state state="open"/><service name="http"/></port></ports></host></nmaprun>`), nil
+		},
+	})
+
+	now := time.Now()
+	_ = store.UpdateDevice(&types.Device{
+		IP:        "10.20.0.10",
+		MAC:       "00:11:22:33:20:10",
+		Hostname:  "new-online",
+		FirstSeen: now,
+		LastSeen:  now,
+	})
+	_ = store.UpdateDevice(&types.Device{
+		IP:        "10.20.0.11",
+		MAC:       "00:11:22:33:20:11",
+		Hostname:  "new-offline",
+		FirstSeen: now.Add(-2 * time.Hour),
+		LastSeen:  now.Add(-2 * time.Hour),
+	})
+
+	job := &scanJob{
+		networks:       []string{"10.20.0.0/24"},
+		accumulatedNew: []string{"10.20.0.10", "10.20.0.11", "10.99.0.1"},
+	}
+	job.runNewDeviceDeepScan(context.Background(), h)
+
+	if len(scannedTargets) != 1 || scannedTargets[0] != "10.20.0.10" {
+		t.Fatalf("scannedTargets = %v, want [10.20.0.10]", scannedTargets)
+	}
+	updated := store.GetDevice("10.20.0.10")
+	if updated == nil || len(updated.OpenPorts) != 1 || updated.OpenPorts[0] != 80 {
+		t.Fatalf("expected open port 80 recorded on 10.20.0.10, got %+v", updated)
+	}
+}
+
+func TestScanJob_OpenWrtAndOPNsensePollingInRun(t *testing.T) {
+	store := newScanJobTestStore(t)
+	cfg := config.Default()
+	cfg.Scanning.Networks = []string{"10.0.0.0/24"}
+	cfg.OpenWrt = config.OpenWrtConfig{
+		Enable:  true,
+		SSHHost: "10.0.0.2",
+	}
+	cfg.OPNsense = config.OPNsenseConfig{
+		Enable:  true,
+		SSHHost: "10.0.0.1",
+	}
+	h := newTestHandler(t, store, cfg)
+	h.scanner.SetRemoteRunner(&testControlledRemoteRunner{
+		fn: func(ctx context.Context, target string, args []string) ([]byte, error) {
+			return []byte(`<nmaprun><host><status state="up"/><address addr="10.0.0.10" addrtype="ipv4"/><address addr="00:11:22:33:44:10" addrtype="mac"/></host></nmaprun>`), nil
+		},
+	})
+
+	h.fetchOpenWrtDHCP = func(ctx context.Context, wrt config.OpenWrtConfig) ([]types.Device, []types.Device, error) {
+		return []types.Device{{IP: "10.0.0.20", MAC: "00:11:22:33:44:20", Hostname: "wrt-lease", RouterSource: "OpenWrt"}},
+			[]types.Device{{IP: "10.0.0.21", MAC: "00:11:22:33:44:21", Hostname: "wrt-static", RouterSource: "OpenWrt"}},
+			nil
+	}
+	h.fetchOPNsenseDHCP = func(ctx context.Context, opn config.OPNsenseConfig) ([]types.Device, []types.Device, []types.Device, error) {
+		return []types.Device{{IP: "10.0.0.30", MAC: "00:11:22:33:44:30", Hostname: "opn-lease", RouterSource: "OPNsense"}},
+			nil,
+			[]types.Device{{IP: "10.0.0.31", MAC: "00:11:22:33:44:31", Hostname: "opn-arp"}},
+			nil
+	}
+
+	job := h.startScanJob([]string{"10.0.0.0/24"}, false, scanModeQuick)
+	h.WaitForScans()
+
+	snap := job.snapshot(cfg, store)
+	if snap.Status != "done" {
+		t.Fatalf("job status = %q, want done", snap.Status)
+	}
+	foundDHCP := false
+	for _, res := range snap.Networks {
+		if res.Network == "OpenWrt & OPNsense DHCP" && res.Status == "scanned" && res.DeviceCount == 3 {
+			foundDHCP = true
+		}
+	}
+	if !foundDHCP {
+		t.Fatalf("expected 'OpenWrt & OPNsense DHCP' supplemental result in %+v", snap.Networks)
+	}
+	for _, ip := range []string{"10.0.0.20", "10.0.0.21", "10.0.0.30", "10.0.0.31"} {
+		if store.GetDevice(ip) == nil {
+			t.Errorf("expected router-discovered device %s in storage", ip)
+		}
 	}
 }

@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/network"
@@ -24,6 +26,20 @@ type RemoteRunner interface {
 	CanRunPrivileged(target string) bool
 }
 
+// Hooks allows tests to stub OS commands and network discovery probes without
+// sending real LAN traffic. Zero-valued fields use the real implementations.
+type Hooks struct {
+	LookPath       func(file string) (string, error)
+	RunCommand     func(ctx context.Context, name string, args ...string) ([]byte, error)
+	GetInterface   func(ctx context.Context, cidr string) string
+	ReverseDNS     func(ctx context.Context, ip, dnsServer string) string
+	NetBIOSName    func(ctx context.Context, ip string) string
+	EnrichServices func(ctx context.Context, devices []types.Device)
+	QueryMDNS      func(ctx context.Context) [][]byte
+	IPv6Interfaces func() []string
+	RunIPv6Command func(ctx context.Context, name string, args ...string) ([]byte, error)
+}
+
 // Scanner performs network scans
 type Scanner struct {
 	minInterval time.Duration
@@ -33,7 +49,8 @@ type Scanner struct {
 	enablePortScan   bool
 	portScanRange    string
 	remoteRunner     RemoteRunner
-	localPrivileged  *bool
+	localPrivileged  atomic.Int32 // 0 = unset, 1 = false, 2 = true
+	hooks            Hooks
 }
 
 // New creates a new Scanner. serviceDetection enables the opt-in port probe
@@ -55,6 +72,40 @@ func (s *Scanner) SetRemoteRunner(runner RemoteRunner) {
 // GetRemoteRunner returns the registered remote runner, or nil
 func (s *Scanner) GetRemoteRunner() RemoteRunner {
 	return s.remoteRunner
+}
+
+// SetHooks installs optional test hooks for OS commands and network probes.
+func (s *Scanner) SetHooks(hooks Hooks) {
+	s.hooks = hooks
+}
+
+func (s *Scanner) lookPath(file string) (string, error) {
+	if s.hooks.LookPath != nil {
+		return s.hooks.LookPath(file)
+	}
+	return exec.LookPath(file)
+}
+
+func (s *Scanner) runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if s.hooks.RunCommand != nil {
+		return s.hooks.RunCommand(ctx, name, args...)
+	}
+	return exec.CommandContext(ctx, name, args...).Output()
+}
+
+func (s *Scanner) getInterface(ctx context.Context, cidr string) string {
+	if s.hooks.GetInterface != nil {
+		return s.hooks.GetInterface(ctx, cidr)
+	}
+	return getInterfaceForCIDR(ctx, cidr)
+}
+
+func (s *Scanner) enrichWithServices(ctx context.Context, devices []types.Device) {
+	if s.hooks.EnrichServices != nil {
+		s.hooks.EnrichServices(ctx, devices)
+		return
+	}
+	EnrichWithServices(ctx, devices)
 }
 
 // nmapRun represents the root element of nmap XML output
@@ -153,9 +204,9 @@ func (s *Scanner) Scan(ctx context.Context, cidr string) (*types.ScanResult, err
 				Timestamp: time.Now(),
 			}, nil
 		}
-		fillWindowsNames(ctx, devices)
+		s.fillWindowsNames(ctx, devices)
 		if s.serviceDetection {
-			EnrichWithServices(ctx, devices)
+			s.enrichWithServices(ctx, devices)
 		}
 		return &types.ScanResult{
 			Success:     true,
@@ -171,28 +222,39 @@ func (s *Scanner) Scan(ctx context.Context, cidr string) (*types.ScanResult, err
 	// Try nmap first
 	devices, scanner, err := s.scanWithNmap(ctx, cidr)
 	if err != nil {
-		// Fallback to arp-scan
-		devices, scanner, err = s.scanWithArpScan(ctx, cidr)
-		if err != nil {
+		if ctx.Err() != nil {
 			return &types.ScanResult{
 				Success:   false,
 				Error:     err.Error(),
 				Network:   cidr,
+				Scanner:   scanner,
 				Timestamp: time.Now(),
 			}, nil
 		}
+		// Fallback to arp-scan
+		arpDevices, arpScanner, arpErr := s.scanWithArpScan(ctx, cidr)
+		if arpErr != nil {
+			return &types.ScanResult{
+				Success:   false,
+				Error:     fmt.Sprintf("%v (arp-scan fallback failed: %v)", err, arpErr),
+				Network:   cidr,
+				Timestamp: time.Now(),
+			}, nil
+		}
+		devices = arpDevices
+		scanner = arpScanner
 	}
 
 	// Recover names for devices that reverse DNS could not name, over NetBIOS.
 	// This is name resolution like the reverse DNS lookup above, so it always
 	// runs, and only touches devices that still have no hostname.
-	fillWindowsNames(ctx, devices)
+	s.fillWindowsNames(ctx, devices)
 
 	// With service detection on, probe each device's well-known ports to refine
 	// its type and flag a web interface. This is the only step that sends more
 	// than a ping or a name query, so it stays behind the opt-in flag.
 	if s.serviceDetection {
-		EnrichWithServices(ctx, devices)
+		s.enrichWithServices(ctx, devices)
 	}
 
 	duration := time.Since(startTime).Seconds()
@@ -248,13 +310,12 @@ func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device
 		}
 	} else {
 		// Check if nmap is available
-		if _, lookErr := exec.LookPath("nmap"); lookErr != nil {
+		if _, lookErr := s.lookPath("nmap"); lookErr != nil {
 			return nil, "", fmt.Errorf("nmap not found")
 		}
 
 		// Run nmap with a fast ping sweep and disable reverse DNS (we decouple port scanning to run asynchronously in Stage 2)
-		cmd := exec.CommandContext(ctx, "nmap", args...)
-		output, err = cmd.Output()
+		output, err = s.runCommand(ctx, "nmap", args...)
 		if err != nil {
 			return nil, "", fmt.Errorf("nmap failed: %w", err)
 		}
@@ -306,7 +367,7 @@ func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device
 
 		// Try reverse DNS if no hostname
 		if device.Hostname == "" {
-			device.Hostname = s.reverseDNSForTarget(device.IP, cidr)
+			device.Hostname = s.reverseDNSForTarget(ctx, device.IP, cidr)
 		}
 
 		// Parse response time
@@ -339,20 +400,16 @@ func (s *Scanner) scanWithNmap(ctx context.Context, cidr string) ([]types.Device
 // scanWithArpScan performs a scan using arp-scan
 func (s *Scanner) scanWithArpScan(ctx context.Context, cidr string) ([]types.Device, string, error) {
 	// Check if arp-scan is available
-	if _, err := exec.LookPath("arp-scan"); err != nil {
+	if _, err := s.lookPath("arp-scan"); err != nil {
 		return nil, "", fmt.Errorf("arp-scan not found")
 	}
 
 	// Extract interface from CIDR if possible
-	iface := getInterfaceForCIDR(ctx, cidr)
+	iface := s.getInterface(ctx, cidr)
 
 	// Run arp-scan
-	args := []string{"--localnet", "-q"}
-	if iface != "" {
-		args = append(args, "-I", iface)
-	}
-	cmd := exec.CommandContext(ctx, "arp-scan", args...)
-	output, err := cmd.Output()
+	args := arpScanArgs(cidr, iface)
+	output, err := s.runCommand(ctx, "arp-scan", args...)
 	if err != nil {
 		return nil, "", fmt.Errorf("arp-scan failed: %w", err)
 	}
@@ -393,7 +450,7 @@ func (s *Scanner) scanWithArpScan(ctx context.Context, cidr string) ([]types.Dev
 		}
 
 		// Try reverse DNS
-		device.Hostname = s.reverseDNSForTarget(ip, cidr)
+		device.Hostname = s.reverseDNSForTarget(ctx, ip, cidr)
 
 		device.Type = Classify(device.Vendor, device.Hostname, nil)
 
@@ -401,6 +458,18 @@ func (s *Scanner) scanWithArpScan(ctx context.Context, cidr string) ([]types.Dev
 	}
 
 	return devices, "arp-scan", nil
+}
+
+func arpScanArgs(cidr, iface string) []string {
+	target := "--localnet"
+	if strings.TrimSpace(cidr) != "" {
+		target = strings.TrimSpace(cidr)
+	}
+	args := []string{target, "-q"}
+	if iface != "" {
+		args = append(args, "-I", iface)
+	}
+	return args
 }
 
 func extractHostFromGateway(gw string) string {
@@ -412,17 +481,26 @@ func extractHostFromGateway(gw string) string {
 	return ""
 }
 
-func (s *Scanner) reverseDNSForTarget(ip, cidr string) string {
+func (s *Scanner) reverseDNSForTarget(ctx context.Context, ip, cidr string) string {
 	dnsServer := ""
 	if s.remoteRunner != nil && s.remoteRunner.HasRemoteScannerForTarget(cidr) {
 		gw := s.remoteRunner.GetGatewayForTarget(cidr)
 		dnsServer = extractHostFromGateway(gw)
 	}
-	return reverseDNSWithServer(ip, dnsServer)
+	if s.hooks.ReverseDNS != nil {
+		return s.hooks.ReverseDNS(ctx, ip, dnsServer)
+	}
+	return reverseDNSWithServer(ctx, ip, dnsServer)
 }
 
-func reverseDNSWithServer(ip, dnsServer string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func reverseDNSWithServer(parentCtx context.Context, ip, dnsServer string) string {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	if parentCtx.Err() != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 2*time.Second)
 	defer cancel()
 
 	done := make(chan string, 1)
@@ -463,7 +541,7 @@ func reverseDNSWithServer(ip, dnsServer string) string {
 
 // reverseDNS performs a reverse DNS lookup
 func reverseDNS(ip string) string {
-	return reverseDNSWithServer(ip, "")
+	return reverseDNSWithServer(context.Background(), ip, "")
 }
 
 // parseResponseTime parses nmap SRTT value (microseconds) to milliseconds
@@ -555,16 +633,27 @@ func getInterfaceForCIDR(ctx context.Context, cidr string) string {
 
 // isLocalPrivileged checks if the current process has root privileges to run nmap -O.
 func (s *Scanner) isLocalPrivileged() bool {
-	if s.localPrivileged != nil {
-		return *s.localPrivileged
+	switch s.localPrivileged.Load() {
+	case 1:
+		return false
+	case 2:
+		return true
 	}
 	isPriv := os.Geteuid() == 0
-	s.localPrivileged = &isPriv
+	if isPriv {
+		s.localPrivileged.CompareAndSwap(0, 2)
+	} else {
+		s.localPrivileged.CompareAndSwap(0, 1)
+	}
 	return isPriv
 }
 
 func (s *Scanner) setLocalPrivileged(val bool) {
-	s.localPrivileged = &val
+	if val {
+		s.localPrivileged.Store(2)
+	} else {
+		s.localPrivileged.Store(1)
+	}
 }
 
 // ScanHostPorts performs a high-speed targeted port scan on a single IP address.
@@ -575,30 +664,39 @@ func (s *Scanner) ScanHostPorts(ctx context.Context, ip string, portRange string
 // ScanHostPortsWithTiming runs a targeted service scan. Nightly scans use the
 // conservative timing profile to keep connection state pressure low.
 func (s *Scanner) ScanHostPortsWithTiming(ctx context.Context, ip string, portRange string, conservative bool) ([]int, []int, []types.OpenService, string, string, string, error) {
+	parsedIP := net.ParseIP(strings.TrimSpace(ip))
+	if parsedIP == nil {
+		return nil, nil, nil, "", "", "", fmt.Errorf("invalid target IP: %q", ip)
+	}
+	validIP := parsedIP.String()
+
+	validPorts, err := validatePortRange(portRange)
+	if err != nil {
+		return nil, nil, nil, "", "", "", err
+	}
+
 	privileged := false
-	isRemote := s.remoteRunner != nil && s.remoteRunner.HasRemoteScannerForTarget(ip)
+	isRemote := s.remoteRunner != nil && s.remoteRunner.HasRemoteScannerForTarget(validIP)
 	if isRemote {
-		privileged = s.remoteRunner.CanRunPrivileged(ip)
+		privileged = s.remoteRunner.CanRunPrivileged(validIP)
 	} else {
 		privileged = s.isLocalPrivileged()
 	}
 
-	args := portScanArgumentsWithTiming(portRange, ip, conservative, privileged)
+	args := portScanArgumentsWithTiming(validPorts, validIP, conservative, privileged)
 	var output []byte
-	var err error
 
 	if isRemote {
-		output, err = s.remoteRunner.RunScan(ctx, ip, args)
+		output, err = s.remoteRunner.RunScan(ctx, validIP, args)
 		if err != nil {
 			return nil, nil, nil, "", "", "", err
 		}
 	} else {
-		if _, lookErr := exec.LookPath("nmap"); lookErr != nil {
+		if _, lookErr := s.lookPath("nmap"); lookErr != nil {
 			return nil, nil, nil, "", "", "", fmt.Errorf("nmap not found")
 		}
 
-		cmd := exec.CommandContext(ctx, "nmap", args...)
-		output, err = cmd.Output()
+		output, err = s.runCommand(ctx, "nmap", args...)
 		if err != nil && privileged {
 			errMsg := err.Error()
 			if exitErr, ok := err.(*exec.ExitError); ok {
@@ -606,9 +704,8 @@ func (s *Scanner) ScanHostPortsWithTiming(ctx context.Context, ip string, portRa
 			}
 			if strings.Contains(strings.ToLower(errMsg), "requires root") || strings.Contains(strings.ToLower(errMsg), "root privileges") {
 				s.setLocalPrivileged(false)
-				fallbackArgs := portScanArgumentsWithTiming(portRange, ip, conservative, false)
-				cmd = exec.CommandContext(ctx, "nmap", fallbackArgs...)
-				output, err = cmd.Output()
+				fallbackArgs := portScanArgumentsWithTiming(validPorts, validIP, conservative, false)
+				output, err = s.runCommand(ctx, "nmap", fallbackArgs...)
 			}
 		}
 		if err != nil {
@@ -616,6 +713,60 @@ func (s *Scanner) ScanHostPortsWithTiming(ctx context.Context, ip string, portRa
 		}
 	}
 	return parsePortScanResult(output)
+}
+
+func validatePortRange(portRange string) (string, error) {
+	trimmed := strings.TrimSpace(portRange)
+	if trimmed == "" {
+		return "", fmt.Errorf("invalid port range: empty")
+	}
+
+	parts := strings.Split(trimmed, ",")
+	for _, part := range parts {
+		if part == "" {
+			return "", fmt.Errorf("invalid port range %q: empty segment", portRange)
+		}
+		seg := part
+		if strings.HasPrefix(seg, "T:") || strings.HasPrefix(seg, "U:") {
+			seg = seg[2:]
+		}
+		if seg == "" {
+			return "", fmt.Errorf("invalid port range %q: empty port spec", portRange)
+		}
+
+		if strings.Contains(seg, "-") {
+			bounds := strings.Split(seg, "-")
+			if len(bounds) != 2 || bounds[0] == "" || bounds[1] == "" {
+				return "", fmt.Errorf("invalid port range %q: malformed range %q", portRange, part)
+			}
+			start, err1 := parseStrictPort(bounds[0])
+			end, err2 := parseStrictPort(bounds[1])
+			if err1 != nil || err2 != nil || start > end {
+				return "", fmt.Errorf("invalid port range %q: invalid bounds %q", portRange, part)
+			}
+		} else {
+			if _, err := parseStrictPort(seg); err != nil {
+				return "", fmt.Errorf("invalid port range %q: %w", portRange, err)
+			}
+		}
+	}
+	return trimmed, nil
+}
+
+func parseStrictPort(s string) (int, error) {
+	if s == "" {
+		return 0, fmt.Errorf("empty port")
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, fmt.Errorf("non-numeric port %q", s)
+		}
+	}
+	p, err := strconv.Atoi(s)
+	if err != nil || p < 1 || p > 65535 {
+		return 0, fmt.Errorf("port %q out of range 1-65535", s)
+	}
+	return p, nil
 }
 
 func portScanArguments(portRange string, ip string) []string {

@@ -1,6 +1,9 @@
 package network
 
 import (
+	"errors"
+	"io/fs"
+	"os"
 	"testing"
 
 	"github.com/spoutin/LAN-Orangutan/internal/types"
@@ -155,5 +158,66 @@ func TestExcludeNetworks(t *testing.T) {
 	})
 	if len(got) != 1 || got[0].CIDR != "10.10.0.0/24" {
 		t.Errorf("an explicitly configured network must survive an exclude, got %v", got)
+	}
+}
+
+func TestInContainerAndIsolatedFromLAN(t *testing.T) {
+	origStat := statFileFunc
+	origRead := readFileFunc
+	t.Cleanup(func() {
+		statFileFunc = origStat
+		readFileFunc = origRead
+	})
+
+	// Case 1: Not in container
+	statFileFunc = func(string) (os.FileInfo, error) { return nil, fs.ErrNotExist }
+	readFileFunc = func(string) ([]byte, error) { return []byte("0::/init.scope\n"), nil }
+	if InContainer() {
+		t.Fatal("InContainer() = true when neither /.dockerenv nor container cgroup exists")
+	}
+	if IsolatedFromLAN(nil) {
+		t.Fatal("IsolatedFromLAN should be false when not in a container")
+	}
+
+	// Case 2: /.dockerenv present -> InContainer == true, IsolatedFromLAN == true for empty or Docker-only networks
+	statFileFunc = func(path string) (os.FileInfo, error) {
+		if path == "/.dockerenv" {
+			return nil, nil
+		}
+		return nil, fs.ErrNotExist
+	}
+	if !InContainer() {
+		t.Fatal("InContainer() = false when /.dockerenv exists")
+	}
+	if !IsolatedFromLAN(nil) {
+		t.Fatal("IsolatedFromLAN(nil) = false inside container")
+	}
+	if !IsolatedFromLAN([]types.Network{{CIDR: "172.17.0.0/16"}, {CIDR: "10.88.0.0/16"}}) {
+		t.Fatal("IsolatedFromLAN should be true when only container bridges are visible")
+	}
+	if w := IsolationWarning([]types.Network{{CIDR: "172.17.0.0/16"}}); w == "" {
+		t.Fatal("IsolationWarning should be non-empty when isolated inside container")
+	}
+	if IsolatedFromLAN([]types.Network{{CIDR: "172.17.0.0/16"}, {CIDR: "192.168.1.0/24"}}) {
+		t.Fatal("IsolatedFromLAN should be false when a real LAN is visible")
+	}
+	if w := IsolationWarning([]types.Network{{CIDR: "192.168.1.0/24"}}); w != "" {
+		t.Fatalf("IsolationWarning = %q, want empty when real LAN visible", w)
+	}
+
+	// Case 3: cgroup markers (docker, containerd, kubepods) without /.dockerenv
+	statFileFunc = func(string) (os.FileInfo, error) { return nil, fs.ErrNotExist }
+	for _, marker := range []string{"docker", "containerd", "kubepods"} {
+		readFileFunc = func(string) ([]byte, error) {
+			return []byte("12:memory:/" + marker + "/abc\n"), nil
+		}
+		if !InContainer() {
+			t.Errorf("InContainer() = false for cgroup marker %q", marker)
+		}
+	}
+
+	readFileFunc = func(string) ([]byte, error) { return nil, errors.New("unreadable") }
+	if InContainer() {
+		t.Fatal("InContainer() = true on cgroup read error")
 	}
 }

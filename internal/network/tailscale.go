@@ -73,6 +73,11 @@ func (p tailscalePeerJSON) toDevice() types.Device {
 	}
 }
 
+var (
+	findTailscaleBinaryFunc = findTailscaleBinary
+	lookPathFunc            = exec.LookPath
+)
+
 // GetTailscaleDevices returns the devices currently reachable over Tailscale,
 // including this machine.
 //
@@ -83,12 +88,12 @@ func (p tailscalePeerJSON) toDevice() types.Device {
 // Only peers that are currently online are returned. Offline peers are known to
 // Tailscale but reporting them as discovered would mark them as seen just now.
 func GetTailscaleDevices() []types.Device {
-	tailscaleBin := findTailscaleBinary()
+	tailscaleBin := findTailscaleBinaryFunc()
 	if tailscaleBin == "" {
 		return nil
 	}
 
-	output, err := runCommand(tailscaleBin, "status", "--json")
+	output, err := runCommandFunc(tailscaleBin, "status", "--json")
 	if err != nil {
 		return nil
 	}
@@ -104,7 +109,7 @@ func GetTailscaleDevices() []types.Device {
 		return nil
 	}
 
-	var devices []types.Device
+	devices := []types.Device{}
 
 	self := tailscalePeerJSON{
 		TailscaleIPs: tsStatus.Self.TailscaleIPs,
@@ -131,7 +136,7 @@ func GetTailscaleDevices() []types.Device {
 // findTailscaleBinary finds the tailscale CLI binary path
 func findTailscaleBinary() string {
 	// First check if it's in PATH
-	if path, err := exec.LookPath("tailscale"); err == nil {
+	if path, err := lookPathFunc("tailscale"); err == nil {
 		return path
 	}
 
@@ -144,7 +149,7 @@ func findTailscaleBinary() string {
 			"/usr/local/bin/tailscale",
 		}
 		for _, p := range paths {
-			if _, err := exec.LookPath(p); err == nil {
+			if _, err := lookPathFunc(p); err == nil {
 				return p
 			}
 		}
@@ -154,7 +159,7 @@ func findTailscaleBinary() string {
 			`C:\Program Files (x86)\Tailscale\tailscale.exe`,
 		}
 		for _, p := range paths {
-			if _, err := exec.LookPath(p); err == nil {
+			if _, err := lookPathFunc(p); err == nil {
 				return p
 			}
 		}
@@ -168,7 +173,7 @@ func GetTailscaleStatus() types.TailscaleStatus {
 	status := types.TailscaleStatus{}
 
 	// Check if tailscale is installed
-	tailscaleBin := findTailscaleBinary()
+	tailscaleBin := findTailscaleBinaryFunc()
 	if tailscaleBin == "" {
 		status.Installed = false
 		return status
@@ -176,7 +181,7 @@ func GetTailscaleStatus() types.TailscaleStatus {
 	status.Installed = true
 
 	// Get tailscale status
-	output, err := runCommand(tailscaleBin, "status", "--json")
+	output, err := runCommandFunc(tailscaleBin, "status", "--json")
 	if err != nil {
 		// Tailscale is installed but not running, not connected, or wedged.
 		status.Running = false
@@ -199,8 +204,14 @@ func GetTailscaleStatus() types.TailscaleStatus {
 	status.TailnetName = tsStatus.CurrentTailnet.Name
 	status.PeerCount = len(tsStatus.Peer)
 
-	// Get self info
-	if len(tsStatus.Self.TailscaleIPs) > 0 {
+	// Get self info (prefer IPv4 address over IPv6)
+	for _, addr := range tsStatus.Self.TailscaleIPs {
+		if ip := net.ParseIP(addr); ip != nil && ip.To4() != nil {
+			status.SelfIP = addr
+			break
+		}
+	}
+	if status.SelfIP == "" && len(tsStatus.Self.TailscaleIPs) > 0 {
 		status.SelfIP = tsStatus.Self.TailscaleIPs[0]
 	}
 	if tsStatus.Self.DNSName != "" {

@@ -1,8 +1,14 @@
 (function (root, factory) {
-    const mod = factory();
+    const htmlUtils = (typeof module === 'object' && module.exports && typeof require === 'function')
+        ? require('./html-utils.js')
+        : (root.htmlUtils || root);
+    const mod = factory(htmlUtils);
     if (typeof module === 'object' && module.exports) module.exports = mod;
     root.deviceOperationState = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (htmlUtils) {
+    const escapeHtml = (htmlUtils && typeof htmlUtils.escapeHtml === 'function')
+        ? htmlUtils.escapeHtml
+        : (str => String(str ?? ''));
     function shouldSyncSidebarForm({ hasUnsavedChanges, isFormFocused }) {
         return !hasUnsavedChanges && !isFormFocused;
     }
@@ -44,16 +50,6 @@
             hasRelativeTime: true,
             unix: unix,
         };
-    }
-
-    function escapeHtml(str) {
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
     }
 
     const networkPalette = ['blue', 'pink', 'amber', 'purple', 'cyan', 'emerald', 'orange', 'indigo'];
@@ -203,11 +199,18 @@
         return [...matching, ...nonMatching];
     }
 
+    function escapeSelectorValue(val) {
+        if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+            return CSS.escape(String(val));
+        }
+        return String(val).replace(/([^\w-])/g, '\\$1');
+    }
+
     function resolveDeviceRow(target, doc) {
         if (!target) return null;
         if (typeof target === 'string') {
             const d = doc || (typeof document !== 'undefined' ? document : null);
-            return d ? d.querySelector(`.device-row[data-ip="${target}"]`) : null;
+            return d ? d.querySelector(`.device-row[data-ip="${escapeSelectorValue(target)}"]`) : null;
         }
         if (target.classList && target.classList.contains('device-row')) {
             return target;
@@ -218,7 +221,7 @@
             }
             const ip = target.dataset?.ip;
             const d = doc || (typeof document !== 'undefined' ? document : null);
-            return (ip && d) ? d.querySelector(`.device-row[data-ip="${ip}"]`) : null;
+            return (ip && d) ? d.querySelector(`.device-row[data-ip="${escapeSelectorValue(ip)}"]`) : null;
         }
         if (typeof target.closest === 'function') {
             const mainRow = target.closest('.device-row');
@@ -230,7 +233,7 @@
                 }
                 const ip = sub.dataset?.ip;
                 const d = doc || (typeof document !== 'undefined' ? document : null);
-                return (ip && d) ? d.querySelector(`.device-row[data-ip="${ip}"]`) : null;
+                return (ip && d) ? d.querySelector(`.device-row[data-ip="${escapeSelectorValue(ip)}"]`) : null;
             }
         }
         return null;
@@ -243,7 +246,7 @@
         }
         const ip = row.dataset?.ip;
         const d = doc || (typeof document !== 'undefined' ? document : null);
-        return (ip && d) ? d.querySelector(`.device-subrow[data-ip="${ip}"]`) : null;
+        return (ip && d) ? d.querySelector(`.device-subrow[data-ip="${escapeSelectorValue(ip)}"]`) : null;
     }
 
     return {

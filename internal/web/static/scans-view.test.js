@@ -89,13 +89,70 @@ test('parseNetworkScanTarget parses network and mode from control elements', () 
     assert.equal(parseNetworkScanTarget(null), null);
 });
 
-test('scans.html uses border-collapse separate on tables to prevent scroll flicker', () => {
+test('isSameDay returns false for invalid dates and scansView helpers are preserved when loaded with app.js', () => {
     const fs = require('node:fs');
     const path = require('node:path');
-    const html = fs.readFileSync(path.join(__dirname, '../templates/scans.html'), 'utf8');
+    const vm = require('node:vm');
 
-    assert.doesNotMatch(html, /border-collapse:\s*collapse/);
-    assert.match(html, /border-collapse:\s*separate/);
+    assert.equal(isSameDay(new Date('invalid'), new Date('2026-10-12T00:00:00Z')), false);
+    assert.equal(isSameDay(new Date('2026-10-12T00:00:00Z'), new Date('invalid')), false);
+
+    // Default scan mode falls back to 'quick' when .scan-mode-select is absent
+    const btnNoSelect = {
+        getAttribute: (attr) => attr === 'data-network' ? '10.0.0.0/24' : null,
+        closest: () => ({ querySelector: () => null }),
+    };
+    assert.deepEqual(parseNetworkScanTarget(btnNoSelect), { network: '10.0.0.0/24', mode: 'quick' });
+
+    // Loading scans-view.js followed by app.js preserves the canonical global helpers
+    const noop = () => {};
+    const makeClassList = () => ({ add: noop, remove: noop, toggle: () => false, contains: () => false });
+    const document = {
+        documentElement: { classList: makeClassList(), style: { setProperty: noop }, getAttribute: () => null, setAttribute: noop, offsetWidth: 0 },
+        body: { classList: makeClassList(), appendChild: noop },
+        getElementById: () => null,
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        createElement: () => ({ style: {}, classList: makeClassList(), setAttribute: noop, appendChild: noop }),
+        addEventListener: noop,
+        removeEventListener: noop,
+    };
+    const sandbox = {
+        console, Math, Number, String, Boolean, Array, Object, Map, Set, Date, JSON, RegExp, Error, URL,
+        encodeURIComponent, decodeURIComponent, parseInt, parseFloat, isNaN, isFinite,
+        CSS: { escape: s => String(s) },
+        localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
+        matchMedia: () => ({ matches: false, addEventListener: noop }),
+        fetch: async () => ({ ok: true, text: async () => '{}', json: async () => ({ success: true, data: {} }) }),
+        setInterval: () => 1,
+        clearInterval: noop,
+        setTimeout: () => 1,
+        clearTimeout: noop,
+        Event: class Event { constructor(type) { this.type = type; } },
+        document,
+        addEventListener: noop,
+        removeEventListener: noop,
+        dispatchEvent: noop,
+    };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    sandbox.self = sandbox;
+
+    const htmlSrc = fs.readFileSync(path.join(__dirname, 'html-utils.js'), 'utf8');
+    vm.runInNewContext(htmlSrc, sandbox, { filename: 'html-utils.js' });
+
+    const scansViewSrc = fs.readFileSync(path.join(__dirname, 'scans-view.js'), 'utf8');
+    vm.runInNewContext(scansViewSrc, sandbox, { filename: 'scans-view.js' });
+    const canonicalIsSameDay = sandbox.isSameDay;
+    const canonicalFormatRelativeTime = sandbox.formatRelativeTime;
+
+    const appSrc = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+    vm.runInNewContext(appSrc, sandbox, { filename: 'app.js' });
+
+    assert.equal(typeof sandbox.isSameDay, 'function');
+    assert.equal(typeof sandbox.formatRelativeTime, 'function');
+    assert.equal(sandbox.isSameDay, canonicalIsSameDay);
+    assert.equal(sandbox.formatRelativeTime, canonicalFormatRelativeTime);
 });
 
 

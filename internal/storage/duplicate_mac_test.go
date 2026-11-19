@@ -239,3 +239,147 @@ func TestRetroactiveDeduplicateMACs(t *testing.T) {
 		t.Errorf("expected presence events migrated to 10.0.0.20, got 0")
 	}
 }
+
+func TestTask11_MACNormalizationAcrossLookupPresenceAndDeduplicate(t *testing.T) {
+	s := newTestStorage(t)
+	now := time.Now()
+
+	// Seed two rows with the same MAC in different formats (hyphenated uppercase vs colon lowercase)
+	_, err := s.db.Exec(`
+		INSERT INTO devices (
+			ip, mac, hostname, label, first_seen, last_seen, is_online, last_presence_change
+		) VALUES (
+			'10.0.0.10', 'AA-BB-CC-DD-EE-01', 'host-old', 'Lab Box', ?, ?, 0, ?
+		)
+	`, now.Add(-10*time.Hour), now.Add(-5*time.Hour), now.Add(-5*time.Hour))
+	if err != nil {
+		t.Fatalf("seed dev 1: %v", err)
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO devices (
+			ip, mac, hostname, first_seen, last_seen, is_online, last_presence_change
+		) VALUES (
+			'10.0.0.20', 'aa:bb:cc:dd:ee:01', 'host-new', ?, ?, 1, ?
+		)
+	`, now.Add(-1*time.Hour), now, now)
+	if err != nil {
+		t.Fatalf("seed dev 2: %v", err)
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+		VALUES ('10.0.0.10', 'AA:BB:CC:DD:EE:01', 'host-old', 'join', 0, ?)
+	`, now.Add(-10*time.Hour))
+	if err != nil {
+		t.Fatalf("seed presence: %v", err)
+	}
+
+	// GetPresenceEventsFiltered must match regardless of MAC case/hyphen formatting
+	events, err := s.GetPresenceEventsFiltered("aa-bb-cc-dd-ee-01", "", "")
+	if err != nil {
+		t.Fatalf("GetPresenceEventsFiltered: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatalf("expected GetPresenceEventsFiltered to match mixed-case/hyphenated MAC, got 0")
+	}
+
+	// DeduplicateMACs must group 'AA-BB-CC-DD-EE-01' and 'aa:bb:cc:dd:ee:01'
+	if err := s.DeduplicateMACs(); err != nil {
+		t.Fatalf("DeduplicateMACs: %v", err)
+	}
+	devices := s.GetDevices()
+	if len(devices) != 1 {
+		t.Fatalf("expected 1 deduplicated device across mixed MAC formats, got %d: %+v", len(devices), devices)
+	}
+	if dev := devices["10.0.0.20"]; dev == nil || dev.Label != "Lab Box" {
+		t.Fatalf("expected surviving device 10.0.0.20 with label 'Lab Box', got %+v", dev)
+	}
+}
+
+func TestTask11_DeduplicateMACsPreservesOfflineState(t *testing.T) {
+	s := newTestStorage(t)
+	now := time.Now()
+
+	// Both duplicate rows are offline (last_seen 10h ago, is_online = 0)
+	_, err := s.db.Exec(`
+		INSERT INTO devices (
+			ip, mac, hostname, first_seen, last_seen, is_online, last_presence_change
+		) VALUES
+			('10.0.0.30', 'aa:bb:cc:dd:ee:02', 'offline-1', ?, ?, 0, ?),
+			('10.0.0.31', 'AA:BB:CC:DD:EE:02', 'offline-2', ?, ?, 0, ?)
+	`, now.Add(-12*time.Hour), now.Add(-10*time.Hour), now.Add(-10*time.Hour),
+		now.Add(-11*time.Hour), now.Add(-9*time.Hour), now.Add(-9*time.Hour))
+	if err != nil {
+		t.Fatalf("seed offline duplicates: %v", err)
+	}
+
+	if err := s.DeduplicateMACs(); err != nil {
+		t.Fatalf("DeduplicateMACs: %v", err)
+	}
+
+	if devs := s.GetDevices(); len(devs) != 1 {
+		t.Fatalf("expected 1 deduplicated offline device, got %d", len(devs))
+	}
+	var isOnline int
+	if err := s.db.QueryRow(`SELECT is_online FROM devices WHERE ip = '10.0.0.30'`).Scan(&isOnline); err != nil {
+		t.Fatalf("query is_online: %v", err)
+	}
+	if isOnline != 0 {
+		t.Fatalf("DeduplicateMACs forced offline device is_online = %d, want 0", isOnline)
+	}
+}
+
+func TestTask11_RelocationNoBogusJoinAndMoveEventsOnlyOnRelocation(t *testing.T) {
+	s := newTestStorage(t)
+	s.SetNetworkNames(map[string]string{
+		"192.168.1.0/24":  "Home LAN",
+		"192.168.50.0/24": "Tailscale",
+	})
+
+	// 1. Initial discovery at 192.168.1.50
+	if _, _, _, err := s.MergeDevicesWithMoves([]types.Device{
+		{IP: "192.168.1.50", MAC: "aa:bb:cc:11:22:99", Hostname: "roaming-box"},
+	}); err != nil {
+		t.Fatalf("initial merge: %v", err)
+	}
+
+	// Simulate sweep where 192.168.1.50 did not answer and 192.168.1.51 answered with mixed-case MAC (relocation)
+	_, _, moved, err := s.MergeDevicesWithMoves([]types.Device{
+		{IP: "192.168.1.51", MAC: "AA-BB-CC-11-22-99", Hostname: "roaming-box"},
+	})
+	if err != nil {
+		t.Fatalf("relocation merge: %v", err)
+	}
+	if len(moved) != 1 || moved[0].OldIP != "192.168.1.50" || moved[0].NewIP != "192.168.1.51" {
+		t.Fatalf("expected 1 move event 192.168.1.50 -> 192.168.1.51, got %+v", moved)
+	}
+
+	var joinCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM device_presence_history WHERE event = 'join'`).Scan(&joinCount); err != nil {
+		t.Fatalf("count join events: %v", err)
+	}
+	if joinCount != 1 {
+		t.Fatalf("join event count after relocation = %d, want 1 (no bogus second 'join')", joinCount)
+	}
+
+	// 2. Multi-IP attachment (both IPs active on different subnets) must NOT emit a move event
+	// and must NOT overwrite primary device's network_name!
+	devPrimary := types.Device{IP: "192.168.1.80", MAC: "11:22:33:44:55:66", Hostname: "multi-gw"}
+	devSecondary := types.Device{IP: "192.168.50.80", MAC: "11:22:33:44:55:66", Hostname: "multi-gw"}
+	if _, _, _, err := s.MergeDevicesWithMoves([]types.Device{devPrimary}); err != nil {
+		t.Fatalf("merge multi-gw primary: %v", err)
+	}
+	_, _, moved2, err := s.MergeDevicesWithMoves([]types.Device{devPrimary, devSecondary})
+	if err != nil {
+		t.Fatalf("merge multi-gw secondary: %v", err)
+	}
+	if len(moved2) != 0 {
+		t.Fatalf("expected 0 move events for active multi-IP attachment, got %+v", moved2)
+	}
+	gw := s.GetDevice("192.168.1.80")
+	if gw == nil {
+		t.Fatalf("expected multi-gw primary at 192.168.1.80")
+	}
+	if gw.NetworkName != "Home LAN" {
+		t.Fatalf("primary network_name overwritten on secondary attachment: got %q, want 'Home LAN'", gw.NetworkName)
+	}
+}

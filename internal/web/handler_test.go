@@ -2,11 +2,14 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"github.com/spoutin/LAN-Orangutan/internal/config"
 	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const testPassword = "test-password"
@@ -28,11 +32,12 @@ func newTestHandler(t *testing.T, password string) (*Handler, *auth.Authenticato
 	if err != nil {
 		t.Fatalf("storage.New: %v", err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 
 	cfg := config.Default()
 	cfg.Server.Password = password
 
-	authn, err := auth.New(password, time.Hour)
+	authn, err := auth.New(password, time.Hour, auth.WithBcryptCost(bcrypt.MinCost))
 	if err != nil {
 		t.Fatalf("auth.New: %v", err)
 	}
@@ -158,7 +163,7 @@ func TestLogoutClearsCookieAndRedirects(t *testing.T) {
 		t.Fatal("login failed")
 	}
 
-	req := httptest.NewRequest(http.MethodGet, auth.LogoutPath, nil)
+	req := httptest.NewRequest(http.MethodPost, auth.LogoutPath, nil)
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
 	rec := httptest.NewRecorder()
 
@@ -186,6 +191,57 @@ func TestLogoutClearsCookieAndRedirects(t *testing.T) {
 
 	if rec2.Code == http.StatusOK {
 		t.Error("the old token should be rejected after signing out")
+	}
+}
+
+func TestLogoutRejectsGETAndTemplatesUsePOSTForm(t *testing.T) {
+	h, authn := newTestHandler(t, testPassword)
+
+	token, ok := authn.Login("192.168.1.9:5000", testPassword)
+	if !ok {
+		t.Fatal("login failed")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, auth.LogoutPath, nil)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
+	rec := httptest.NewRecorder()
+
+	h.HandleLogout(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /logout status = %d, want 405", rec.Code)
+	}
+
+	// Session must remain valid after rejected GET /logout.
+	after := httptest.NewRequest(http.MethodGet, "/", nil)
+	after.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
+	rec2 := httptest.NewRecorder()
+	authn.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rec2, after)
+	if rec2.Code != http.StatusOK {
+		t.Errorf("GET /logout should not invalidate active session, got %d", rec2.Code)
+	}
+
+	// Check rendered pages use POST form instead of GET link for /logout.
+	for _, tc := range []struct {
+		name string
+		call func(http.ResponseWriter, *http.Request)
+		path string
+	}{
+		{"index", h.handleIndex, "/"},
+		{"scans", h.handleScans, "/scans"},
+		{"settings", h.handleSettings, "/settings"},
+	} {
+		pageRec := httptest.NewRecorder()
+		tc.call(pageRec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		body := pageRec.Body.String()
+		if strings.Contains(body, `href="/logout"`) {
+			t.Errorf("%s page still renders GET href=\"/logout\"", tc.name)
+		}
+		if !strings.Contains(body, `action="/logout"`) {
+			t.Errorf("%s page missing POST form action=\"/logout\"", tc.name)
+		}
 	}
 }
 
@@ -682,10 +738,14 @@ func TestIndexPageRendersServiceDetailsModal(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := rec.Body.String()
-	for _, expected := range []string{"service-details-modal", "View services", `data-open-services='[{"port":22`, "Open services"} {
+	for _, expected := range []string{"service-details-modal", "View services", "Open services"} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("expected body to contain %q", expected)
 		}
+	}
+	rawServices := extractSingleQuotedAttr(t, body, "data-open-services")
+	if !strings.Contains(rawServices, `{"port":22,`) {
+		t.Errorf("expected decoded data-open-services to contain port 22 entry, got %q", rawServices)
 	}
 }
 
@@ -1249,6 +1309,67 @@ func TestDashboardFullWidthLayoutAndScanAllToolbar(t *testing.T) {
 	}
 }
 
+func TestHandler_TemplateSSHNILDeviceDoesNotPanic(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+
+	// Invoke template functions directly via an inline template execution with a nil *types.Device
+	tmpl, err := h.templates.Clone()
+	if err != nil {
+		t.Fatalf("templates.Clone: %v", err)
+	}
+	tmpl, err = tmpl.New("nil_ssh_test").Parse(`has={{hasSSH .}} port={{sshPort .}}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var out bytes.Buffer
+	var nilDev *types.Device
+	if err := tmpl.ExecuteTemplate(&out, "nil_ssh_test", nilDev); err != nil {
+		t.Fatalf("ExecuteTemplate on nil device: %v", err)
+	}
+	if out.String() != "has=false port=0" {
+		t.Fatalf("got %q, want %q", out.String(), "has=false port=0")
+	}
+}
+
+func TestHandleIndex_DoesNotMutateDeviceIPsOrder(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	origIPs := []types.IPAttachment{
+		{IP: "10.0.0.20", NetworkName: "net2"},
+		{IP: "10.0.0.5", NetworkName: "net1"},
+	}
+	dev := types.Device{
+		IP:        "10.0.0.20",
+		MAC:       "aa:bb:cc:dd:ee:01",
+		Hostname:  "multi-ip",
+		IPs:       append([]types.IPAttachment(nil), origIPs...),
+		FirstSeen: time.Now().Add(-time.Hour),
+		LastSeen:  time.Now(),
+	}
+	if err := h.store.UpdateDevice(&dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	// Verify cloning helper directly on a shared Device slice so even if store.GetDevices()
+	// returns cached pointers, handleIndex's preparation does not mutate the caller's slice.
+	shared := &types.Device{
+		IP:  "10.0.0.20",
+		MAC: "aa:bb:cc:dd:ee:02",
+		IPs: []types.IPAttachment{
+			{IP: "10.0.0.20"},
+			{IP: "10.0.0.5"},
+		},
+	}
+	cloned := cloneDeviceForView(shared)
+	sortDeviceIPs(cloned)
+
+	if shared.IPs[0].IP != "10.0.0.20" || shared.IPs[1].IP != "10.0.0.5" {
+		t.Fatalf("shared.IPs was mutated in place: %+v", shared.IPs)
+	}
+	if cloned.IPs[0].IP != "10.0.0.5" || cloned.IPs[1].IP != "10.0.0.20" {
+		t.Fatalf("cloned.IPs was not sorted ascending: %+v", cloned.IPs)
+	}
+}
+
 func TestDashboardRendersScanStatusFooter(t *testing.T) {
 	h, _ := newTestHandler(t, testPassword)
 	rec := httptest.NewRecorder()
@@ -1319,8 +1440,26 @@ func TestDashboardRendersMultiNetworkAndMultiIPDeviceRow(t *testing.T) {
 	if !strings.Contains(body, `data-networks="home lan,home lan,tailscale"`) {
 		t.Errorf("expected data-networks attribute for filter matching")
 	}
-	if !strings.Contains(body, `data-ips-json='[{"ip":"10.0.0.10","network_name":"Home LAN"},{"ip":"10.0.0.20","network_name":"Home LAN"},{"ip":"100.64.1.5","network_name":"Tailscale"}]'`) {
-		t.Errorf("expected data-ips-json attribute for sidebar presentation")
+	rawIPs := extractSingleQuotedAttr(t, body, "data-ips-json")
+	var parsedIPs []types.IPAttachment
+	if err := json.Unmarshal([]byte(rawIPs), &parsedIPs); err != nil {
+		t.Fatalf("data-ips-json invalid JSON (%v): %s", err, rawIPs)
+	}
+	wantIPs := []struct {
+		ip  string
+		net string
+	}{
+		{"10.0.0.10", "Home LAN"},
+		{"10.0.0.20", "Home LAN"},
+		{"100.64.1.5", "Tailscale"},
+	}
+	if len(parsedIPs) != len(wantIPs) {
+		t.Fatalf("decoded data-ips-json len = %d, want %d: %s", len(parsedIPs), len(wantIPs), rawIPs)
+	}
+	for i, w := range wantIPs {
+		if parsedIPs[i].IP != w.ip || parsedIPs[i].NetworkName != w.net {
+			t.Errorf("data-ips-json[%d] = (%q, %q), want (%q, %q)", i, parsedIPs[i].IP, parsedIPs[i].NetworkName, w.ip, w.net)
+		}
 	}
 	if !strings.Contains(body, `class="network-badge net-blue"`) {
 		t.Errorf("expected Home LAN badge to have net-blue class")
@@ -1442,5 +1581,171 @@ func TestDashboardActionsCellSpansTwoRowsAndCentered(t *testing.T) {
 	// Actions cell must span 2 rows so buttons are vertically centered across the item
 	if !strings.Contains(body, `class="col-actions actions-cell" data-label="Actions" rowspan="2"`) {
 		t.Error("expected actions cell to have rowspan='2' to center buttons across both item rows")
+	}
+}
+
+func extractSingleQuotedAttr(t *testing.T, body, attrName string) string {
+	t.Helper()
+	re := regexp.MustCompile(regexp.QuoteMeta(attrName) + `='([^']*)'`)
+	m := re.FindStringSubmatch(body)
+	if len(m) != 2 {
+		t.Fatalf("attribute %s='...' not found in rendered HTML", attrName)
+	}
+	return html.UnescapeString(m[1])
+}
+
+func TestIndexPageEscapesJSONDataAttributes(t *testing.T) {
+	h, _ := newTestHandler(t, "")
+	evilNet := `IoT "Lab" \ 'test' </script><script>alert(1)</script>`
+	evilService := `http "admin" \ 'x'`
+	evilVersion := `1.0 "dev" \ 'quoted' <script>alert(2)</script>`
+
+	dev := types.Device{
+		IP:          "192.168.1.77",
+		MAC:         "aa:bb:cc:dd:ee:77",
+		Hostname:    "xss-test-host",
+		NetworkName: evilNet,
+		IPs: []types.IPAttachment{
+			{IP: "192.168.1.77", NetworkName: evilNet},
+			{IP: "10.0.0.77", NetworkName: `Secondary \ "net"`},
+		},
+		OpenServices: []types.OpenService{
+			{Port: 8080, Name: evilService, Version: evilVersion},
+		},
+		FirstSeen: time.Now().Add(-time.Hour),
+		LastSeen:  time.Now(),
+	}
+	if err := h.store.UpdateDevice(&dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+	if err := h.store.UpdateOpenPorts(dev.IP, []int{8080}, dev.OpenServices); err != nil {
+		t.Fatalf("UpdateOpenPorts: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleIndex status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, "<script>alert(") {
+		t.Fatal("rendered HTML contains unescaped <script>alert( payload")
+	}
+
+	rawIPs := extractSingleQuotedAttr(t, body, "data-ips-json")
+	var parsedIPs []types.IPAttachment
+	if err := json.Unmarshal([]byte(rawIPs), &parsedIPs); err != nil {
+		t.Fatalf("data-ips-json is invalid JSON (%v): %s", err, rawIPs)
+	}
+	if len(parsedIPs) != 2 || parsedIPs[1].NetworkName != evilNet {
+		t.Fatalf("decoded data-ips-json = %+v, want parsedIPs[1].NetworkName %q", parsedIPs, evilNet)
+	}
+
+	rawServices := extractSingleQuotedAttr(t, body, "data-open-services")
+	var parsedServices []types.OpenService
+	if err := json.Unmarshal([]byte(rawServices), &parsedServices); err != nil {
+		t.Fatalf("data-open-services is invalid JSON (%v): %s", err, rawServices)
+	}
+	if len(parsedServices) != 1 || parsedServices[0].Name != evilService || parsedServices[0].Version != evilVersion {
+		t.Fatalf("decoded data-open-services = %+v", parsedServices)
+	}
+}
+
+func TestTemplatesAvoidInlineHandlerInterpolation(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+	h.cfg.Scanning.Networks = []string{"10.0.0.0/24"}
+	h.cfg.Scanning.OnlyConfiguredNetworks = true
+	h.cfg.Scanning.NetworkNames = map[string]string{"10.0.0.0/24": `Home's "LAN"`}
+
+	dev := types.Device{
+		IP:           "10.0.0.42",
+		MAC:          "aa:bb:cc:dd:ee:42",
+		Hostname:     "test-host",
+		RxRateBps:    100,
+		WanRxRateBps: 200,
+		FirstSeen:    time.Now(),
+		LastSeen:     time.Now(),
+	}
+	if err := h.store.UpdateDevice(&dev); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	indexBody := rec.Body.String()
+
+	for _, forbidden := range []string{
+		`toggleNotifyOnSeenMain('`,
+		`deleteDevice('10.0.0.42'`,
+		`openTrafficModal('`,
+		`toggleNetworkDropdownFilter('home`,
+	} {
+		if strings.Contains(indexBody, forbidden) {
+			t.Errorf("index.html should not interpolate values into inline handlers (found %q)", forbidden)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	token, ok := newTestLoginToken(t, h.auth)
+	if !ok {
+		t.Fatal("login failed")
+	}
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: token})
+	recSettings := httptest.NewRecorder()
+	h.handleSettings(recSettings, req)
+	settingsBody := recSettings.Body.String()
+
+	for _, forbidden := range []string{
+		`saveNotification('`,
+		`testNotification('`,
+		`onclick="deleteToken(`,
+	} {
+		if strings.Contains(settingsBody, forbidden) {
+			t.Errorf("settings.html should not interpolate values into inline handlers (found %q)", forbidden)
+		}
+	}
+}
+
+func newTestLoginToken(t *testing.T, authn *auth.Authenticator) (string, bool) {
+	t.Helper()
+	return authn.Login("127.0.0.1:5000", testPassword)
+}
+
+func TestWebHandlerServeHTTPRoutes(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+
+	cases := []struct {
+		path        string
+		wantCode    int
+		wantContent string
+		wantBodySub string
+	}{
+		{"/static/style.css", http.StatusOK, "text/css", ":root"},
+		{"/", http.StatusOK, "text/html", "LAN Orangutan"},
+		{"/index.html", http.StatusOK, "text/html", "LAN Orangutan"},
+		{"/scans", http.StatusOK, "text/html", "Scans - LAN Orangutan"},
+		{"/scans.html", http.StatusOK, "text/html", "Scans - LAN Orangutan"},
+		{"/settings", http.StatusOK, "text/html", "Settings"},
+		{"/settings.html", http.StatusOK, "text/html", "Settings"},
+		{"/nonexistent-route", http.StatusNotFound, "", "404 page not found"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if rec.Code != tc.wantCode {
+				t.Fatalf("GET %s status = %d, want %d", tc.path, rec.Code, tc.wantCode)
+			}
+			if tc.wantContent != "" {
+				if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, tc.wantContent) {
+					t.Errorf("GET %s Content-Type = %q, want substring %q", tc.path, ct, tc.wantContent)
+				}
+			}
+			if tc.wantBodySub != "" && !strings.Contains(rec.Body.String(), tc.wantBodySub) {
+				t.Errorf("GET %s body missing %q", tc.path, tc.wantBodySub)
+			}
+		})
 	}
 }

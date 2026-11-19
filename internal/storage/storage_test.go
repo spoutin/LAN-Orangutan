@@ -4,21 +4,61 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
+var (
+	templateDBOnce  sync.Once
+	templateDBBytes []byte
+	templateDBErr   error
+)
+
+func getTemplateDBBytes() ([]byte, error) {
+	templateDBOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "lan-orangutan-storage-template-*")
+		if err != nil {
+			templateDBErr = err
+			return
+		}
+		defer os.RemoveAll(dir)
+
+		s, err := New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+		if err != nil {
+			templateDBErr = err
+			return
+		}
+		if err := s.Close(); err != nil {
+			templateDBErr = err
+			return
+		}
+		templateDBBytes, templateDBErr = os.ReadFile(filepath.Join(dir, "devices.db"))
+	})
+	return templateDBBytes, templateDBErr
+}
+
 // newTestStorage returns storage backed by a throwaway directory.
 func newTestStorage(t *testing.T) *Storage {
 	t.Helper()
 
+	tpl, err := getTemplateDBBytes()
+	if err != nil {
+		t.Fatalf("getTemplateDBBytes: %v", err)
+	}
+
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "devices.db"), tpl, 0600); err != nil {
+		t.Fatalf("write template db: %v", err)
+	}
+
 	s, err := New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -75,6 +115,7 @@ func TestMostRecentScanSurvivesReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(func() { _ = first.Close() })
 
 	when := time.Now().Add(-15 * time.Minute).Truncate(time.Second)
 	if err := first.SetLastScan("192.168.1.0/24", when); err != nil {
@@ -87,6 +128,7 @@ func TestMostRecentScanSurvivesReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopening storage: %v", err)
 	}
+	t.Cleanup(func() { _ = second.Close() })
 
 	if got := second.GetMostRecentScan(); !got.Equal(when) {
 		t.Errorf("after reload GetMostRecentScan() = %v, want %v", got, when)
@@ -94,11 +136,7 @@ func TestMostRecentScanSurvivesReload(t *testing.T) {
 }
 
 func TestContinuousScanDefaultsToConfigWhenUnset(t *testing.T) {
-	dir := t.TempDir()
-	s, err := New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestStorage(t)
 	if !s.ContinuousScanEnabled(true) {
 		t.Error("with no override saved, want the config default (true) to win")
 	}
@@ -116,6 +154,7 @@ func TestContinuousScanOverrideSurvivesReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = first.Close() })
 	// User turns continuous scanning off even though config defaults it on.
 	if err := first.SetContinuousScan(false); err != nil {
 		t.Fatal(err)
@@ -125,6 +164,7 @@ func TestContinuousScanOverrideSurvivesReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = second.Close() })
 	if second.ContinuousScanEnabled(true) {
 		t.Error("saved override (false) should win over the config default (true) after reload")
 	}
@@ -192,6 +232,7 @@ func TestPruneEphemeralIPv6OnLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	devs := s.GetDevices()
 	if len(devs) != 2 {
 		t.Fatalf("expected 2 real devices after pruning phantoms, got %d: %+v", len(devs), devs)
@@ -233,6 +274,7 @@ func TestPruneKeepsCuratedIPv6Device(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 	devs := s.GetDevices()
 	if d, ok := devs["fe80::abcd"]; !ok || d.Label != "Front door cam" {
 		t.Errorf("a curated device must survive the prune with its label; got %+v", devs["fe80::abcd"])
@@ -530,6 +572,108 @@ func TestLinkedDevicesAndCombinedTimeline(t *testing.T) {
 	}
 	if len(childEvents) != len(parentEvents) {
 		t.Errorf("child timeline length (%d) should equal parent timeline length (%d)", len(childEvents), len(parentEvents))
+	}
+}
+
+func TestUpdateDeviceFields_GroupInheritanceMixedCaseAndTxRollback(t *testing.T) {
+	s := newTestStorage(t)
+	defer s.Close()
+
+	parentIP := "10.5.5.60"
+	parentMAC := "aa:bb:cc:33:33:33"
+	childIP := "10.5.5.61"
+	childMAC := "aa:bb:cc:44:44:44"
+
+	if err := mergeDevicesForTest(s, []types.Device{
+		{IP: parentIP, MAC: parentMAC, Hostname: "parent-host"},
+		{IP: childIP, MAC: childMAC, Hostname: "child-host"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	parentGroup := "Servers"
+	parentLabel := "Main Server"
+	if err := s.UpdateDeviceFields(parentIP, &parentLabel, nil, &parentGroup, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("update parent: %v", err)
+	}
+
+	// Give child its own label & group before linking, then link with mixed-case hyphenated MAC.
+	childLabel := "Child Pre-Link Label"
+	childGroup := "Pre-Link Group"
+	if err := s.UpdateDeviceFields(childIP, &childLabel, nil, &childGroup, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("update child pre-link: %v", err)
+	}
+
+	mixedLinkedMAC := "AA-BB-CC-33-33-33"
+	if err := s.UpdateDeviceFields(childIP, nil, nil, nil, nil, nil, nil, &mixedLinkedMAC, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("link child with mixed-case MAC: %v", err)
+	}
+
+	// Verify group inheritance across GetDevice, GetDevices, GetDeviceLocked, GetDeviceByMAC.
+	if got := s.GetDevice(childIP); got == nil || got.Group != "Servers" || got.Label != "Main Server" {
+		t.Fatalf("GetDevice(child) = %+v, want Group=Servers, Label=Main Server", got)
+	}
+	if got := s.GetDeviceByMAC(childMAC); got == nil || got.Group != "Servers" || got.Label != "Main Server" {
+		t.Fatalf("GetDeviceByMAC(child) = %+v, want Group=Servers, Label=Main Server", got)
+	}
+	all := s.GetDevices()
+	if got := all[childIP]; got == nil || got.Group != "Servers" || got.Label != "Main Server" {
+		t.Fatalf("GetDevices()[child] = %+v, want Group=Servers, Label=Main Server", got)
+	}
+	if parentInAll := all[parentIP]; parentInAll == nil || len(parentInAll.LinkedChildren) != 1 {
+		t.Fatalf("GetDevices()[parent].LinkedChildren = %+v, want 1 child", parentInAll)
+	}
+	s.mu.RLock()
+	lockedChild := s.GetDeviceLocked(childIP)
+	s.mu.RUnlock()
+	if lockedChild == nil || lockedChild.Group != "Servers" {
+		t.Fatalf("GetDeviceLocked(child) = %+v, want Group=Servers", lockedChild)
+	}
+
+	// Updating group through child should forward to parent and reflect on both.
+	newGroup := "Critical Infra"
+	if err := s.UpdateDeviceFields(childIP, nil, nil, &newGroup, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("update group via child: %v", err)
+	}
+	if got := s.GetDevice(parentIP); got == nil || got.Group != "Critical Infra" {
+		t.Fatalf("parent Group = %+v, want Critical Infra", got)
+	}
+	if got := s.GetDevice(childIP); got == nil || got.Group != "Critical Infra" {
+		t.Fatalf("child Group = %+v, want Critical Infra", got)
+	}
+
+	// Test transaction rollback: force parent UPDATE to fail while updating child's own unlinked/linked transition,
+	// or updating parent via linked child when child already has values (unlink+relink or direct parent fail).
+	// Unlink first and set child's own label/group so we can verify child values aren't wiped if parent fails.
+	empty := ""
+	if err := s.UpdateDeviceFields(childIP, &childLabel, nil, &childGroup, nil, nil, nil, &empty, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("unlink child: %v", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE TRIGGER fail_parent_update
+		BEFORE UPDATE ON devices
+		WHEN NEW.ip = '10.5.5.60'
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated parent update failure');
+		END;
+	`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	forwardedLabel := "Should Rollback"
+	err := s.UpdateDeviceFields(childIP, &forwardedLabel, nil, nil, nil, nil, nil, &parentMAC, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected UpdateDeviceFields to return error when parent update fails")
+	}
+
+	// Child's pre-existing label, group, and unlinked state must be preserved by rollback!
+	var rawLabel, rawGroup, rawLinked string
+	if err := s.db.QueryRow(`SELECT label, "group", linked_mac FROM devices WHERE ip = ?`, childIP).Scan(&rawLabel, &rawGroup, &rawLinked); err != nil {
+		t.Fatalf("query raw child row: %v", err)
+	}
+	if rawLabel != childLabel || rawGroup != childGroup || rawLinked != "" {
+		t.Fatalf("child row corrupted after parent failure: label=%q group=%q linked_mac=%q", rawLabel, rawGroup, rawLinked)
 	}
 }
 
@@ -868,6 +1012,13 @@ func TestAPITokensAndDeviceFactsStorage(t *testing.T) {
 	}
 	if len(tokensFinal) != 0 {
 		t.Errorf("got %d tokens after delete, want 0", len(tokensFinal))
+	}
+}
+
+func TestCreateAPITokenRejectsShortTokens(t *testing.T) {
+	s := newTestStorage(t)
+	if _, err := s.CreateAPIToken("too-short", "short123"); err == nil {
+		t.Fatal("CreateAPIToken should reject tokens shorter than 16 characters")
 	}
 }
 
@@ -1828,6 +1979,140 @@ func TestTrafficStorage_RecordSeriesRollupPrune(t *testing.T) {
 	t.Logf("pruned rows: %d", pruned)
 }
 
+func TestRollupAndPruneTraffic_IdempotentAndUTC(t *testing.T) {
+	s := newTestStorage(t)
+	defer s.Close()
+
+	mac := "aa:bb:cc:dd:ee:99"
+	if err := s.UpdateDevice(&types.Device{
+		IP:       "10.0.0.99",
+		MAC:      mac,
+		Hostname: "rollup-test",
+	}); err != nil {
+		t.Fatalf("UpdateDevice failed: %v", err)
+	}
+
+	// Use non-UTC timezones (UTC-5 and UTC+5) to verify timestamps are normalized to UTC
+	// so SQLite strftime/datetime comparisons never compare local wall-clock strings against UTC 'now'.
+	est := time.FixedZone("EST", -5*3600)
+	ist := time.FixedZone("IST", 5*3600)
+
+	nowUTC := time.Now().UTC()
+	// Completed hour 2 hours ago (two samples within the same UTC hour)
+	completedHourStart := nowUTC.Truncate(time.Hour).Add(-2 * time.Hour)
+	// Older completed hour 26 hours ago (eligible for raw-sample pruning with retention=24h, kept in 7d hourly)
+	oldHourStart := nowUTC.Truncate(time.Hour).Add(-26 * time.Hour)
+	// Current incomplete hour (1 minute after start of current UTC hour, expressed in UTC-5)
+	currentHourSample := nowUTC.Truncate(time.Hour).Add(1 * time.Minute).In(est)
+
+	samples := []types.TrafficSample{
+		{
+			MAC:       mac,
+			Timestamp: completedHourStart.Add(10 * time.Minute).In(est),
+			RxBytes:   1000,
+			TxBytes:   200,
+			RxRate:    100,
+			TxRate:    20,
+			Source:    "unifi",
+		},
+		{
+			MAC:       mac,
+			Timestamp: completedHourStart.Add(40 * time.Minute).In(ist),
+			RxBytes:   2500,
+			TxBytes:   700,
+			RxRate:    200,
+			TxRate:    40,
+			Source:    "unifi",
+		},
+		{
+			MAC:       mac,
+			Timestamp: oldHourStart.Add(15 * time.Minute).In(est),
+			RxBytes:   500,
+			TxBytes:   100,
+			RxRate:    50,
+			TxRate:    10,
+			Source:    "unifi",
+		},
+		{
+			MAC:       mac,
+			Timestamp: oldHourStart.Add(45 * time.Minute).In(est),
+			RxBytes:   900,
+			TxBytes:   250,
+			RxRate:    70,
+			TxRate:    20,
+			Source:    "unifi",
+		},
+		{
+			MAC:       mac,
+			Timestamp: currentHourSample,
+			RxBytes:   3000,
+			TxBytes:   900,
+			RxRate:    300,
+			TxRate:    60,
+			Source:    "unifi",
+		},
+	}
+	if err := s.RecordTrafficSamples(samples); err != nil {
+		t.Fatalf("RecordTrafficSamples failed: %v", err)
+	}
+
+	// First rollup: should roll up the 2 completed hours (2h ago & 26h ago), NOT the current hour,
+	// and prune the 2 samples from 26h ago (beyond 24h retention).
+	pruned1, err := s.RollupAndPruneTraffic(24, 7)
+	if err != nil {
+		t.Fatalf("first RollupAndPruneTraffic failed: %v", err)
+	}
+	if pruned1 != 2 {
+		t.Fatalf("first RollupAndPruneTraffic pruned = %d, want 2", pruned1)
+	}
+
+	// Second rollup: must be idempotent (still exactly 2 hourly rows, no duplicates).
+	pruned2, err := s.RollupAndPruneTraffic(24, 7)
+	if err != nil {
+		t.Fatalf("second RollupAndPruneTraffic failed: %v", err)
+	}
+	if pruned2 != 0 {
+		t.Fatalf("second RollupAndPruneTraffic pruned = %d, want 0", pruned2)
+	}
+
+	var hourlyCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM traffic_hourly WHERE mac = ? AND source = 'unifi'`, mac).Scan(&hourlyCount); err != nil {
+		t.Fatalf("count traffic_hourly failed: %v", err)
+	}
+	if hourlyCount != 2 {
+		t.Fatalf("traffic_hourly row count after 2 rollups = %d, want 2 (no duplicates, no current incomplete hour)", hourlyCount)
+	}
+
+	// Verify 7d series retrieves the 2 hourly buckets with UTC timestamps and expected deltas.
+	resp7d, err := s.GetDeviceTrafficSeries(mac, "7d")
+	if err != nil {
+		t.Fatalf("GetDeviceTrafficSeries(7d) failed: %v", err)
+	}
+	if len(resp7d.Series) != 2 {
+		t.Fatalf("GetDeviceTrafficSeries(7d) returned %d points, want 2: %+v", len(resp7d.Series), resp7d.Series)
+	}
+	if resp7d.Series[0].RxBytes != 400 || resp7d.Series[0].TxBytes != 150 {
+		t.Errorf("oldest bucket deltas = %d/%d, want 400/150", resp7d.Series[0].RxBytes, resp7d.Series[0].TxBytes)
+	}
+	if resp7d.Series[1].RxBytes != 1500 || resp7d.Series[1].TxBytes != 500 {
+		t.Errorf("recent bucket deltas = %d/%d, want 1500/500", resp7d.Series[1].RxBytes, resp7d.Series[1].TxBytes)
+	}
+	for i, pt := range resp7d.Series {
+		if pt.Timestamp.Location() != time.UTC {
+			t.Errorf("series[%d].Timestamp location = %v, want UTC", i, pt.Timestamp.Location())
+		}
+	}
+
+	// Verify 24h series retrieves remaining raw samples (2 from 2h ago + 1 from current hour = 3)
+	resp24h, err := s.GetDeviceTrafficSeries(mac, "24h")
+	if err != nil {
+		t.Fatalf("GetDeviceTrafficSeries(24h) failed: %v", err)
+	}
+	if len(resp24h.Series) != 3 {
+		t.Fatalf("GetDeviceTrafficSeries(24h) returned %d points, want 3", len(resp24h.Series))
+	}
+}
+
 func TestRecordTrafficSamples_OpenWrtWAN(t *testing.T) {
 	s := newTestStorage(t)
 	defer s.Close()
@@ -2068,3 +2353,554 @@ func TestUpdateDeviceHostnameIfBlank(t *testing.T) {
 	}
 }
 
+func TestMergeRouterDHCP_PreservesSliceAndOnlineLastSeenAndRespectsScanInterval(t *testing.T) {
+	s := newTestStorage(t)
+	s.SetNetworkNames(map[string]string{"192.168.1.0/24": "Home LAN"})
+	s.SetScanInterval(1800) // 30m -> online window is 90m
+
+	now := time.Now()
+
+	// Online device at 192.168.1.10
+	if err := s.UpdateDevice(&types.Device{
+		IP:        "192.168.1.10",
+		MAC:       "aa:bb:cc:77:77:01",
+		Hostname:  "online-box",
+		FirstSeen: now.Add(-2 * time.Hour),
+		LastSeen:  now.Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed 192.168.1.10: %v", err)
+	}
+
+	// Device seen 70m ago: online under 30m scan interval (3*30m = 90m), offline under default 60m
+	if err := s.UpdateDevice(&types.Device{
+		IP:        "192.168.1.11",
+		MAC:       "aa:bb:cc:77:77:02",
+		Hostname:  "interval-box",
+		FirstSeen: now.Add(-3 * time.Hour),
+		LastSeen:  now.Add(-70 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed 192.168.1.11: %v", err)
+	}
+
+	// Device seen 4h ago, currently marked is_online = 1 in DB -> should transition to offline and log 'leave'
+	if _, err := s.db.Exec(`
+		INSERT INTO devices (ip, mac, hostname, first_seen, last_seen, is_online, last_presence_change)
+		VALUES ('192.168.1.12', 'aa:bb:cc:77:77:03', 'stale-box', ?, ?, 1, ?)
+	`, now.Add(-6*time.Hour), now.Add(-4*time.Hour), now.Add(-5*time.Hour)); err != nil {
+		t.Fatalf("seed 192.168.1.12: %v", err)
+	}
+
+	// Reservations slice with extra capacity to catch in-place append mutation
+	reservations := make([]types.Device, 1, 4)
+	reservations[0] = types.Device{
+		IP:           "192.168.1.20",
+		MAC:          "aa:bb:cc:77:77:01", // same MAC as online 192.168.1.10
+		Hostname:     "online-box-dhcp",
+		RouterSource: "OPNsense",
+	}
+	resBacking := reservations[:cap(reservations)]
+	resBacking[1] = types.Device{IP: "9.9.9.9", Hostname: "canary"}
+
+	leases := []types.Device{
+		{
+			IP:           "192.168.1.30",
+			MAC:          "aa:bb:cc:77:77:04", // brand-new offline DHCP-only device
+			Hostname:     "new-dhcp-only",
+			RouterSource: "OPNsense",
+		},
+	}
+
+	if err := s.MergeRouterDHCP(leases, reservations); err != nil {
+		t.Fatalf("MergeRouterDHCP: %v", err)
+	}
+
+	// 1. Caller's reservations backing array must NOT be mutated
+	if resBacking[1].IP != "9.9.9.9" {
+		t.Fatalf("MergeRouterDHCP mutated caller's reservations backing array: got %+v", resBacking[1])
+	}
+
+	// 2. Online device 192.168.1.10 must NOT have LastSeen regressed to now.Add(-65m)
+	dev10 := s.GetDevice("192.168.1.10")
+	if dev10 == nil {
+		t.Fatalf("expected 192.168.1.10 to remain primary")
+	}
+	if time.Since(dev10.LastSeen) > 10*time.Minute {
+		t.Fatalf("192.168.1.10 LastSeen regressed by DHCP merge: %v", dev10.LastSeen)
+	}
+
+	// 3. 192.168.1.11 (70m ago) must stay is_online = 1 under 30m scan interval
+	var isOnline11 int
+	if err := s.db.QueryRow(`SELECT is_online FROM devices WHERE ip = '192.168.1.11'`).Scan(&isOnline11); err != nil {
+		t.Fatalf("query is_online 1.11: %v", err)
+	}
+	if isOnline11 != 1 {
+		t.Fatalf("192.168.1.11 is_online = %d, want 1 under 30m scan interval", isOnline11)
+	}
+
+	// 4. 192.168.1.12 (4h ago, was is_online=1) must transition to 0 and log 'leave'
+	var isOnline12 int
+	if err := s.db.QueryRow(`SELECT is_online FROM devices WHERE ip = '192.168.1.12'`).Scan(&isOnline12); err != nil {
+		t.Fatalf("query is_online 1.12: %v", err)
+	}
+	if isOnline12 != 0 {
+		t.Fatalf("192.168.1.12 is_online = %d, want 0", isOnline12)
+	}
+	var leaveCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM device_presence_history WHERE ip = '192.168.1.12' AND event = 'leave'`).Scan(&leaveCount); err != nil {
+		t.Fatalf("count leave: %v", err)
+	}
+	if leaveCount != 1 {
+		t.Fatalf("expected 1 'leave' event for 192.168.1.12, got %d", leaveCount)
+	}
+
+	// 5. Brand-new DHCP-only device 192.168.1.30 must be offline in BOTH DB and IsOnline(scanInterval)
+	var isOnline30 int
+	if err := s.db.QueryRow(`SELECT is_online FROM devices WHERE ip = '192.168.1.30'`).Scan(&isOnline30); err != nil {
+		t.Fatalf("query is_online 1.30: %v", err)
+	}
+	if isOnline30 != 0 {
+		t.Fatalf("new DHCP-only device is_online = %d, want 0", isOnline30)
+	}
+	dev30 := s.GetDevice("192.168.1.30")
+	if dev30 == nil || dev30.IsOnline(s.GetScanInterval()) {
+		t.Fatalf("new DHCP-only device must not report IsOnline(scanInterval) == true: %+v", dev30)
+	}
+}
+
+func TestMergeUniFiClients_RelocationMigratesHistoryPortsIPsAndChecksNotifyOnSeen(t *testing.T) {
+	s := newTestStorage(t)
+	s.SetNetworkNames(map[string]string{
+		"192.168.1.0/24":  "Home LAN",
+		"192.168.20.0/24": "IoT LAN",
+	})
+
+	now := time.Now()
+	if _, err := s.db.Exec(`
+		INSERT INTO devices (
+			ip, mac, hostname, network_name, first_seen, last_seen, is_online, last_presence_change, notify_on_seen, ips
+		) VALUES (
+			'192.168.1.80', 'aa:bb:cc:88:88:01', 'wifi-client', 'Home LAN', ?, ?, 0, ?, 1,
+			'[{"ip":"192.168.1.80","network_name":"Home LAN","is_active":true}]'
+		)
+	`, now.Add(-2*time.Hour), now.Add(-90*time.Minute), now.Add(-90*time.Minute)); err != nil {
+		t.Fatalf("seed wifi-client: %v", err)
+	}
+	if _, err := s.db.Exec(`
+		INSERT INTO device_presence_history (ip, mac, hostname, event, duration, created_at)
+		VALUES ('192.168.1.80', 'aa:bb:cc:88:88:01', 'wifi-client', 'join', 0, ?)
+	`, now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("seed presence: %v", err)
+	}
+	if err := s.UpdateOpenPorts("192.168.1.80", []int{22}, []types.OpenService{{Port: 22, Name: "ssh"}}); err != nil {
+		t.Fatalf("seed open ports: %v", err)
+	}
+
+	// Relocate via UniFi with mixed-case/hyphenated MAC to 192.168.20.80
+	_, seen, err := s.MergeUniFiClients([]types.Device{
+		{
+			IP:   "192.168.20.80",
+			MAC:  "AA-BB-CC-88-88-01",
+			SSID: "IoT-WiFi",
+		},
+	})
+	if err != nil {
+		t.Fatalf("MergeUniFiClients: %v", err)
+	}
+	if len(seen) != 1 || seen[0].IP != "192.168.20.80" {
+		t.Fatalf("expected 1 seenDevice at 192.168.20.80, got %+v", seen)
+	}
+
+	relocated := s.GetDevice("192.168.20.80")
+	if relocated == nil {
+		t.Fatalf("expected relocated device at 192.168.20.80")
+	}
+	if relocated.NetworkName != "IoT LAN" {
+		t.Errorf("relocated NetworkName = %q, want 'IoT LAN'", relocated.NetworkName)
+	}
+	if len(relocated.OpenPorts) != 1 || relocated.OpenPorts[0] != 22 {
+		t.Errorf("expected open port 22 migrated to 192.168.20.80, got %+v", relocated.OpenPorts)
+	}
+	hasNewIP, hasOldIP := false, false
+	for _, att := range relocated.IPs {
+		if att.IP == "192.168.20.80" {
+			hasNewIP = true
+		}
+		if att.IP == "192.168.1.80" {
+			hasOldIP = true
+		}
+	}
+	if !hasNewIP || hasOldIP {
+		t.Errorf("expected relocated.IPs to replace 192.168.1.80 with 192.168.20.80, got %+v", relocated.IPs)
+	}
+
+	var presCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM device_presence_history WHERE ip = '192.168.20.80'`).Scan(&presCount); err != nil {
+		t.Fatalf("count migrated presence: %v", err)
+	}
+	if presCount < 2 {
+		t.Errorf("expected original 'join' + new 'return' at 192.168.20.80 (count >= 2), got %d", presCount)
+	}
+}
+
+func TestUpdateDevice_SSHOverrideConflict_GetStatsInterval_SetLastDuration_SetNetworkNamesClone(t *testing.T) {
+	s := newTestStorage(t)
+	s.SetScanInterval(1800) // 30m -> 90m online threshold
+
+	// 1. UpdateDevice ON CONFLICT must update ssh_override and ssh_override_port
+	now := time.Now()
+	if err := s.UpdateDevice(&types.Device{
+		IP:        "10.88.0.10",
+		MAC:       "00:11:22:33:44:88",
+		Hostname:  "ssh-host",
+		FirstSeen: now.Add(-2 * time.Hour),
+		LastSeen:  now.Add(-75 * time.Minute), // online under 30m scan interval (90m), offline under 60m
+		Group:     "Infra",
+	}); err != nil {
+		t.Fatalf("initial UpdateDevice: %v", err)
+	}
+	if err := s.UpdateDevice(&types.Device{
+		IP:              "10.88.0.10",
+		MAC:             "00:11:22:33:44:88",
+		Hostname:        "ssh-host",
+		FirstSeen:       now.Add(-2 * time.Hour),
+		LastSeen:        now.Add(-75 * time.Minute),
+		Group:           "Infra",
+		SSHOverride:     "force_on",
+		SSHOverridePort: 2222,
+	}); err != nil {
+		t.Fatalf("conflict UpdateDevice: %v", err)
+	}
+	got := s.GetDevice("10.88.0.10")
+	if got == nil || got.SSHOverride != "force_on" || got.SSHOverridePort != 2222 {
+		t.Fatalf("UpdateDevice ON CONFLICT dropped ssh_override*: %+v", got)
+	}
+
+	// 2. GetStats must use s.GetScanInterval()
+	stats := s.GetStats()
+	if stats.Online != 1 || stats.Offline != 0 {
+		t.Fatalf("GetStats() = %+v, want Online=1 Offline=0 under 30m scan interval", stats)
+	}
+
+	// 3. SetLastDuration before SetLastScan must not insert zero time.Time{}
+	if err := s.SetLastDuration("10.88.0.0/24", 4.25); err != nil {
+		t.Fatalf("SetLastDuration: %v", err)
+	}
+	if dur := s.GetLastDuration("10.88.0.0/24"); dur != 4.25 {
+		t.Fatalf("GetLastDuration = %v, want 4.25", dur)
+	}
+	if last := s.GetLastScan("10.88.0.0/24"); last.Year() <= 1 {
+		t.Fatalf("SetLastDuration inserted zero/year-1 timestamp into scan_state: %v", last)
+	}
+
+	// 4. SetNetworkNames must clone the caller's map
+	nets := map[string]string{"10.88.0.0/24": "Original Net"}
+	s.SetNetworkNames(nets)
+	nets["10.88.0.0/24"] = "Mutated Net"
+	if _, _, err := s.MergeDevices([]types.Device{{IP: "10.88.0.20", MAC: "00:11:22:33:44:89"}}); err != nil {
+		t.Fatalf("MergeDevices: %v", err)
+	}
+	d20 := s.GetDevice("10.88.0.20")
+	if d20 == nil || d20.NetworkName != "Original Net" {
+		t.Fatalf("SetNetworkNames did not clone caller map: got %q, want 'Original Net'", d20.NetworkName)
+	}
+}
+
+func TestStorage_DeviceLifecycleStatsAndCounts(t *testing.T) {
+	s := newTestStorage(t)
+	s.SetScanInterval(600) // 10m -> online threshold 30m
+
+	now := time.Now()
+	seed := []types.Device{
+		{IP: "10.0.0.1", MAC: "00:11:22:33:44:01", Hostname: "gw", NetworkName: "Core", Group: "Infra", FirstSeen: now.Add(-2 * time.Hour), LastSeen: now.Add(-5 * time.Minute)},
+		{IP: "10.0.0.2", MAC: "00:11:22:33:44:02", Hostname: "nas", NetworkName: "Core", Group: "Storage", FirstSeen: now.Add(-5 * time.Minute), LastSeen: now.Add(-2 * time.Minute)},
+		{IP: "10.0.1.10", MAC: "00:11:22:33:44:03", Hostname: "iot", NetworkName: "IoT", Group: "Infra", FirstSeen: now.Add(-3 * time.Minute), LastSeen: now.Add(-2 * time.Hour)},
+	}
+	for i := range seed {
+		if err := s.UpdateDevice(&seed[i]); err != nil {
+			t.Fatalf("seed %s: %v", seed[i].IP, err)
+		}
+	}
+
+	// GetStats: 2 online (10.0.0.1, 10.0.0.2), 1 offline (10.0.1.10), Groups: Infra=2, Storage=1
+	stats := s.GetStats()
+	if stats.Total != 3 || stats.Online != 2 || stats.Offline != 1 || stats.Groups["Infra"] != 2 || stats.Groups["Storage"] != 1 {
+		t.Fatalf("unexpected GetStats(): %+v", stats)
+	}
+
+	// GetNewDevicesCount
+	if got := s.GetNewDevicesCount(now.Add(-10 * time.Minute)); got != 2 {
+		t.Fatalf("GetNewDevicesCount(-10m) = %d, want 2", got)
+	}
+
+	// UpdateDeviceCustomOSByIP
+	if err := s.UpdateDeviceCustomOSByIP("", "Linux", "24.04", "Ubuntu"); err == nil {
+		t.Fatal("UpdateDeviceCustomOSByIP('') expected error")
+	}
+	if err := s.UpdateDeviceCustomOSByIP("10.0.0.99", "Linux", "24.04", "Ubuntu"); err == nil {
+		t.Fatal("UpdateDeviceCustomOSByIP(missing) expected error")
+	}
+	if err := s.UpdateDeviceCustomOSByIP("10.0.0.2", "TrueNAS SCALE", "24.10", "Linux"); err != nil {
+		t.Fatalf("UpdateDeviceCustomOSByIP: %v", err)
+	}
+	d2 := s.GetDevice("10.0.0.2")
+	if d2 == nil || d2.CustomOS != "TrueNAS SCALE" || d2.CustomOSVersion != "24.10" || d2.CustomOSFamily != "Linux" {
+		t.Fatalf("unexpected custom OS fields: %+v", d2)
+	}
+
+	// UpdateDeviceMAC (with and without vendor, error on empty MAC)
+	if err := s.UpdateDeviceMAC("10.0.0.2", "", "Vendor"); err == nil {
+		t.Fatal("UpdateDeviceMAC('') expected error")
+	}
+	if err := s.UpdateDeviceMAC("10.0.0.2", "AA-BB-CC-DD-EE-02", "iXsystems"); err != nil {
+		t.Fatalf("UpdateDeviceMAC with vendor: %v", err)
+	}
+	d2 = s.GetDevice("10.0.0.2")
+	if d2.MAC != "aa:bb:cc:dd:ee:02" || d2.Vendor != "iXsystems" {
+		t.Fatalf("unexpected MAC/Vendor after UpdateDeviceMAC: %q / %q", d2.MAC, d2.Vendor)
+	}
+	if err := s.UpdateDeviceMAC("10.0.0.2", "AA:BB:CC:DD:EE:99", ""); err != nil {
+		t.Fatalf("UpdateDeviceMAC without vendor: %v", err)
+	}
+	d2 = s.GetDevice("10.0.0.2")
+	if d2.MAC != "aa:bb:cc:dd:ee:99" || d2.Vendor != "iXsystems" {
+		t.Fatalf("UpdateDeviceMAC without vendor cleared vendor or missed MAC: %q / %q", d2.MAC, d2.Vendor)
+	}
+
+	// DeleteDevice (success and not found)
+	if err := s.DeleteDevice("10.0.0.1"); err != nil {
+		t.Fatalf("DeleteDevice(10.0.0.1): %v", err)
+	}
+	if s.GetDevice("10.0.0.1") != nil {
+		t.Fatal("10.0.0.1 still present after DeleteDevice")
+	}
+	if err := s.DeleteDevice("10.0.0.1"); err == nil {
+		t.Fatal("DeleteDevice(missing) expected error")
+	}
+
+	// ClearDevices by network name (case-insensitive) and "all"
+	cleared, err := s.ClearDevices("core")
+	if err != nil {
+		t.Fatalf("ClearDevices('core'): %v", err)
+	}
+	if cleared != 1 {
+		t.Fatalf("ClearDevices('core') = %d, want 1", cleared)
+	}
+	if s.GetDevice("10.0.0.2") != nil || s.GetDevice("10.0.1.10") == nil {
+		t.Fatal("ClearDevices('core') did not remove only Core devices")
+	}
+	clearedAll, err := s.ClearDevices("all")
+	if err != nil {
+		t.Fatalf("ClearDevices('all'): %v", err)
+	}
+	if clearedAll != 1 || len(s.GetDevices()) != 0 {
+		t.Fatalf("ClearDevices('all') = %d, remaining=%d", clearedAll, len(s.GetDevices()))
+	}
+
+	// Verify MergeDevicesWithMoves preserves full device fields (e.g. DetectedSSHPort, CustomOS)
+	// when a previously offline device returns and notifies, and GetDeviceByMAC matches GetDevice for linked children.
+	parentDev := types.Device{
+		IP:             "10.10.0.10",
+		MAC:            "aa:bb:cc:77:88:01",
+		Hostname:       "parent-box",
+		Vendor:         "ParentVendor",
+		Type:           "Server",
+		FirstSeen:      now.Add(-2 * time.Hour),
+		LastSeen:       now.Add(-5 * time.Minute),
+		NotifyOnSeen:   true,
+		AnsibleManaged: true,
+	}
+	childDev := types.Device{
+		IP:              "10.10.0.11",
+		MAC:             "aa:bb:cc:77:88:02",
+		Hostname:        "child-nic",
+		Vendor:          "ChildVendor",
+		Type:            "VM",
+		LinkedMAC:       "aa:bb:cc:77:88:01",
+		DetectedSSHPort: 2222,
+		CustomOS:        "Debian",
+		FirstSeen:       now.Add(-2 * time.Hour),
+		LastSeen:        now.Add(-2 * time.Hour),
+	}
+	if err := s.UpdateDevice(&parentDev); err != nil {
+		t.Fatalf("UpdateDevice(parent): %v", err)
+	}
+	if err := s.UpdateDevice(&childDev); err != nil {
+		t.Fatalf("UpdateDevice(child): %v", err)
+	}
+	// Mark child offline so MergeDevicesWithMoves emits it in seenDevices when parent NotifyOnSeen=true or child returns.
+	if _, err := s.db.Exec("UPDATE devices SET is_online = 0, notify_on_seen = 1 WHERE ip = ?", childDev.IP); err != nil {
+		t.Fatalf("mark child offline: %v", err)
+	}
+	_, seen, _, err := s.MergeDevicesWithMoves([]types.Device{{
+		IP:  childDev.IP,
+		MAC: childDev.MAC,
+	}})
+	if err != nil {
+		t.Fatalf("MergeDevicesWithMoves(child return): %v", err)
+	}
+	if len(seen) != 1 || seen[0].DetectedSSHPort != 2222 || seen[0].CustomOS != "Debian" {
+		t.Fatalf("MergeDevicesWithMoves lost full device columns on seen device: %+v", seen)
+	}
+
+	byIP := s.GetDevice(childDev.IP)
+	byMAC := s.GetDeviceByMAC(childDev.MAC)
+	if byIP == nil || byMAC == nil {
+		t.Fatalf("expected child via GetDevice and GetDeviceByMAC, got %v / %v", byIP, byMAC)
+	}
+	if byMAC.Hostname != byIP.Hostname || byMAC.Vendor != byIP.Vendor || byMAC.Type != byIP.Type {
+		t.Fatalf("GetDeviceByMAC mismatch vs GetDevice: MAC=(%q,%q,%q) IP=(%q,%q,%q)",
+			byMAC.Hostname, byMAC.Vendor, byMAC.Type, byIP.Hostname, byIP.Vendor, byIP.Type)
+	}
+}
+
+func TestStorage_NetworkNotificationsAndDurations(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Missing duration returns 0.0; updating existing scan_state updates duration
+	if got := s.GetLastDuration("10.99.0.0/24"); got != 0.0 {
+		t.Fatalf("GetLastDuration(missing) = %v, want 0", got)
+	}
+	if err := s.SetLastScan("10.99.0.0/24", time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("SetLastScan: %v", err)
+	}
+	if err := s.SetLastDuration("10.99.0.0/24", 12.5); err != nil {
+		t.Fatalf("SetLastDuration(update): %v", err)
+	}
+	if got := s.GetLastDuration("10.99.0.0/24"); got != 12.5 {
+		t.Fatalf("GetLastDuration(updated) = %v, want 12.5", got)
+	}
+
+	// Network notifications CRUD
+	missing, err := s.GetNetworkNotification("10.99.0.0/24")
+	if err != nil || missing != nil {
+		t.Fatalf("GetNetworkNotification(missing) = (%v, %v), want (nil, nil)", missing, err)
+	}
+	if err := s.SaveNetworkNotification("10.99.0.0/24", "https://hooks.slack.com/services/A/B/C", true); err != nil {
+		t.Fatalf("SaveNetworkNotification insert: %v", err)
+	}
+	if err := s.SaveNetworkNotification("10.99.0.0/24", "https://hooks.slack.com/services/X/Y/Z", false); err != nil {
+		t.Fatalf("SaveNetworkNotification upsert: %v", err)
+	}
+	got, err := s.GetNetworkNotification("10.99.0.0/24")
+	if err != nil || got == nil {
+		t.Fatalf("GetNetworkNotification: (%v, %v)", got, err)
+	}
+	if got.SlackWebhook != "https://hooks.slack.com/services/X/Y/Z" || got.Enabled {
+		t.Fatalf("unexpected GetNetworkNotification result: %+v", got)
+	}
+	all, err := s.GetNetworkNotifications()
+	if err != nil || len(all) != 1 {
+		t.Fatalf("GetNetworkNotifications = (%+v, %v), want 1 item", all, err)
+	}
+
+	// Verify 00021_add_performance_indexes.sql created all 6 performance indexes.
+	expectedIndexes := []string{
+		"idx_devices_mac",
+		"idx_devices_linked_mac",
+		"idx_devices_is_online",
+		"idx_presence_ip_created",
+		"idx_presence_mac_created",
+		"idx_scan_history_timestamp",
+	}
+	for _, idxName := range expectedIndexes {
+		var name string
+		err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, idxName).Scan(&name)
+		if err != nil || name != idxName {
+			t.Fatalf("expected index %s in sqlite_master, got (%q, %v)", idxName, name, err)
+		}
+	}
+
+	// Verify cached longest-prefix CIDR resolution in SetNetworkNames / inSameSubnetLocked.
+	s.SetNetworkNames(map[string]string{
+		"10.20.0.0/16": "Supernet",
+		"10.20.5.0/24": "Specific Subnet",
+	})
+	s.mu.RLock()
+	if len(s.networkCIDRs) != 2 {
+		s.mu.RUnlock()
+		t.Fatalf("expected 2 cached networkCIDRs, got %d", len(s.networkCIDRs))
+	}
+	if got := s.resolveNetworkNameLocked("10.20.5.42"); got != "Specific Subnet" {
+		s.mu.RUnlock()
+		t.Fatalf("resolveNetworkNameLocked(10.20.5.42) = %q, want Specific Subnet", got)
+	}
+	if got := s.resolveNetworkNameLocked("10.20.9.42"); got != "Supernet" {
+		s.mu.RUnlock()
+		t.Fatalf("resolveNetworkNameLocked(10.20.9.42) = %q, want Supernet", got)
+	}
+	if !s.inSameSubnetLocked("10.20.5.10", "10.20.5.20") {
+		s.mu.RUnlock()
+		t.Fatal("inSameSubnetLocked(10.20.5.10, 10.20.5.20) = false, want true")
+	}
+	if s.inSameSubnetLocked("10.20.5.10", "172.16.0.10") {
+		s.mu.RUnlock()
+		t.Fatal("inSameSubnetLocked(10.20.5.10, 172.16.0.10) = true, want false")
+	}
+	s.mu.RUnlock()
+}
+
+func TestStorage_MigrateLegacyJSON(t *testing.T) {
+	dir := t.TempDir()
+	devicesPath := filepath.Join(dir, "devices.json")
+	statePath := filepath.Join(dir, "state.json")
+
+	now := time.Now().UTC().Truncate(time.Second)
+	legacyDevices := map[string]types.Device{
+		"192.168.50.10": {
+			IP:          "192.168.50.10",
+			MAC:         "00:11:22:33:50:10",
+			Hostname:    "legacy-host",
+			NetworkName: "Legacy LAN",
+			FirstSeen:   now.Add(-time.Hour),
+			LastSeen:    now,
+			WebUI:       true,
+		},
+	}
+	devBytes, err := json.Marshal(legacyDevices)
+	if err != nil {
+		t.Fatalf("marshal devices.json: %v", err)
+	}
+	if err := os.WriteFile(devicesPath, devBytes, 0600); err != nil {
+		t.Fatalf("write devices.json: %v", err)
+	}
+
+	cont := true
+	legacyState := types.ScanState{
+		LastScan:       map[string]time.Time{"192.168.50.0/24": now.Add(-5 * time.Minute)},
+		LastDuration:   map[string]float64{"192.168.50.0/24": 3.75},
+		ContinuousScan: &cont,
+	}
+	stateBytes, err := json.Marshal(legacyState)
+	if err != nil {
+		t.Fatalf("marshal state.json: %v", err)
+	}
+	if err := os.WriteFile(statePath, stateBytes, 0600); err != nil {
+		t.Fatalf("write state.json: %v", err)
+	}
+
+	s, err := New(devicesPath, statePath)
+	if err != nil {
+		t.Fatalf("New with legacy JSON: %v", err)
+	}
+	defer s.Close()
+
+	d := s.GetDevice("192.168.50.10")
+	if d == nil || d.Hostname != "legacy-host" || !d.WebUI {
+		t.Fatalf("migrated device mismatch: %+v", d)
+	}
+	if dur := s.GetLastDuration("192.168.50.0/24"); dur != 3.75 {
+		t.Fatalf("migrated last_duration = %v, want 3.75", dur)
+	}
+	if s.GetLastScan("192.168.50.0/24").IsZero() {
+		t.Fatal("migrated last_scan is zero")
+	}
+	if !s.ContinuousScanEnabled(false) {
+		t.Fatal("migrated ContinuousScanEnabled(false) = false, want true")
+	}
+	if _, err := os.Stat(devicesPath + ".bak"); err != nil {
+		t.Fatalf("expected devices.json.bak: %v", err)
+	}
+	if _, err := os.Stat(statePath + ".bak"); err != nil {
+		t.Fatalf("expected state.json.bak: %v", err)
+	}
+}

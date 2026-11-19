@@ -3,12 +3,10 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/spoutin/LAN-Orangutan/internal/config"
-	"github.com/spoutin/LAN-Orangutan/internal/storage"
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
@@ -116,11 +114,8 @@ func TestScanProgressReportsMultipleActiveDeepNetworks(t *testing.T) {
 }
 
 func TestScanStartRejectsUnknownMode(t *testing.T) {
-	store, err := storage.New(filepath.Join(t.TempDir(), "devices.json"), filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatalf("storage.New: %v", err)
-	}
-	h := NewHandler(store, config.Default())
+	store := newScanJobTestStore(t)
+	h := newTestHandler(t, store, config.Default())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/scan/start?network=all&mode=invalid", nil)

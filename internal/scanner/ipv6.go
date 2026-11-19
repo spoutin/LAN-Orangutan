@@ -24,9 +24,9 @@ const ipv6CommandTimeout = 3 * time.Second
 // (link-local is skipped); storage folds these into the inventory by MAC rather
 // than listing each address as its own device.
 func (s *Scanner) DiscoverIPv6(ctx context.Context) []types.Device {
-	solicitIPv6Neighbors(ctx)
+	s.solicitIPv6Neighbors(ctx)
 
-	devices := readIPv6Neighbors(ctx)
+	devices := s.readIPv6Neighbors(ctx)
 	for i := range devices {
 		if devices[i].Vendor == "" && devices[i].MAC != "" {
 			devices[i].Vendor = GetMACVendor(devices[i].MAC)
@@ -36,33 +36,47 @@ func (s *Scanner) DiscoverIPv6(ctx context.Context) []types.Device {
 	return devices
 }
 
+func (s *Scanner) ipv6Interfaces() []string {
+	if s.hooks.IPv6Interfaces != nil {
+		return s.hooks.IPv6Interfaces()
+	}
+	return ipv6Interfaces()
+}
+
+func (s *Scanner) runIPv6Command(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if s.hooks.RunIPv6Command != nil {
+		return s.hooks.RunIPv6Command(ctx, name, args...)
+	}
+	return runIPv6Command(ctx, name, args...)
+}
+
 // solicitIPv6Neighbors pings the all-nodes link-local multicast (ff02::1) on
 // each IPv6 interface, so hosts reply and enter the neighbor cache. Best effort:
 // failures are ignored, since the cache may already hold neighbors from ordinary
 // traffic.
-func solicitIPv6Neighbors(ctx context.Context) {
-	for _, iface := range ipv6Interfaces() {
+func (s *Scanner) solicitIPv6Neighbors(ctx context.Context) {
+	for _, iface := range s.ipv6Interfaces() {
 		target := "ff02::1%" + iface
 		switch runtime.GOOS {
 		case "linux":
-			_, _ = runIPv6Command(ctx, "ping", "-6", "-c", "1", "-W", "1", target)
+			_, _ = s.runIPv6Command(ctx, "ping", "-6", "-c", "1", "-W", "1", target)
 		case "darwin":
-			_, _ = runIPv6Command(ctx, "ping6", "-c", "1", target)
+			_, _ = s.runIPv6Command(ctx, "ping6", "-c", "1", target)
 		}
 	}
 }
 
 // readIPv6Neighbors reads and parses the OS neighbor cache.
-func readIPv6Neighbors(ctx context.Context) []types.Device {
+func (s *Scanner) readIPv6Neighbors(ctx context.Context) []types.Device {
 	switch runtime.GOOS {
 	case "linux":
-		out, err := runIPv6Command(ctx, "ip", "-6", "neigh", "show")
+		out, err := s.runIPv6Command(ctx, "ip", "-6", "neigh", "show")
 		if err != nil {
 			return nil
 		}
 		return parseIPNeigh(string(out))
 	case "darwin":
-		out, err := runIPv6Command(ctx, "ndp", "-an")
+		out, err := s.runIPv6Command(ctx, "ndp", "-an")
 		if err != nil {
 			return nil
 		}

@@ -8,6 +8,11 @@ import (
 	"github.com/spoutin/LAN-Orangutan/internal/network"
 )
 
+var (
+	getDefaultGatewayFunc = network.GetDefaultGateway
+	getDNSServersFunc     = network.GetDNSServers
+)
+
 var networksCmd = &cobra.Command{
 	Use:   "networks",
 	Short: "List detected network interfaces",
@@ -15,8 +20,8 @@ var networksCmd = &cobra.Command{
 }
 
 func runNetworks(cmd *cobra.Command, args []string) error {
-	networks, err := network.DetectNetworks()
-	networks = network.WithConfigured(networks, network.Filter{Configured: cfg.Scanning.Networks, Excluded: cfg.Scanning.ExcludeNetworks, OnlyConfigured: cfg.Scanning.OnlyConfiguredNetworks})
+	out := cmdOut(cmd)
+	networks, err := resolveConfiguredNetworks(network.Filter{Configured: cfg.Scanning.Networks, Excluded: cfg.Scanning.ExcludeNetworks, OnlyConfigured: cfg.Scanning.OnlyConfiguredNetworks})
 	if err != nil {
 		return fmt.Errorf("failed to detect networks: %w", err)
 	}
@@ -29,36 +34,36 @@ func runNetworks(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(networks) == 0 {
-		fmt.Println("No networks detected")
+		fmt.Fprintln(out, "No networks detected")
 		return nil
 	}
 
-	fmt.Println("Detected Networks:")
-	fmt.Println()
+	fmt.Fprintln(out, "Detected Networks:")
+	fmt.Fprintln(out)
 
 	for _, n := range networks {
-		fmt.Printf("  %s\n", n.CIDR)
-		fmt.Printf("    Interface: %s\n", n.Interface)
-		fmt.Printf("    Type: %s\n", n.FriendlyName)
-		fmt.Printf("    IP: %s\n", n.IP)
+		fmt.Fprintf(out, "  %s\n", n.CIDR)
+		fmt.Fprintf(out, "    Interface: %s\n", n.Interface)
+		fmt.Fprintf(out, "    Type: %s\n", n.FriendlyName)
+		fmt.Fprintf(out, "    IP: %s\n", n.IP)
 		if n.IsTailscale {
-			fmt.Printf("    Tailscale: yes\n")
+			fmt.Fprintf(out, "    Tailscale: yes\n")
 		}
 		if n.IsWireless {
-			fmt.Printf("    Wireless: yes\n")
+			fmt.Fprintf(out, "    Wireless: yes\n")
 		}
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
 
 	// Show gateway and DNS
-	gateway, err := network.GetDefaultGateway()
+	gateway, err := getDefaultGatewayFunc()
 	if err == nil && gateway != "" {
-		fmt.Printf("Default Gateway: %s\n", gateway)
+		fmt.Fprintf(out, "Default Gateway: %s\n", gateway)
 	}
 
-	dns := network.GetDNSServers()
+	dns := getDNSServersFunc()
 	if len(dns) > 0 {
-		fmt.Printf("DNS Servers: %v\n", dns)
+		fmt.Fprintf(out, "DNS Servers: %v\n", dns)
 	}
 
 	return nil

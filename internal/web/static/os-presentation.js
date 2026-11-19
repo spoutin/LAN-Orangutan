@@ -1,11 +1,18 @@
 (function (root, factory) {
-    const presentation = factory();
+    const htmlUtils = (typeof module === 'object' && module.exports && typeof require === 'function')
+        ? require('./html-utils.js')
+        : (root.htmlUtils || root);
+    const presentation = factory(htmlUtils);
     if (typeof module === 'object' && module.exports) module.exports = presentation;
     root.formatOSDisplay = presentation.formatOSDisplay;
     root.formatOSName = presentation.formatOSName;
     root.formatOSVersion = presentation.formatOSVersion;
     root.getOSFamilyIcon = presentation.getOSFamilyIcon;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (htmlUtils) {
+    const escapeHtml = (htmlUtils && typeof htmlUtils.escapeHtml === 'function')
+        ? htmlUtils.escapeHtml
+        : (str => String(str ?? ''));
+
     const osIcons = {
         'linux': '<svg class="os-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a5 5 0 0 0-5 5v5a5 5 0 0 0 10 0V7a5 5 0 0 0-5-5z"/><path d="M7 16a4 4 0 0 0-4 4v1h18v-1a4 4 0 0 0-4-4"/><circle cx="10" cy="7" r="1"/><circle cx="14" cy="7" r="1"/></svg>',
         'windows': '<svg class="os-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="8" x="3" y="3" rx="1"/><rect width="8" height="8" x="13" y="3" rx="1"/><rect width="8" height="8" x="3" y="13" rx="1"/><rect width="8" height="8" x="13" y="13" rx="1"/></svg>',
@@ -14,16 +21,6 @@
         'android': '<svg class="os-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 16v-6a7 7 0 0 1 14 0v6"/><line x1="8" x2="8" y1="3" y2="6"/><line x1="16" x2="16" y1="3" y2="6"/><circle cx="9" cy="11" r="1"/><circle cx="15" cy="11" r="1"/><rect width="14" height="6" x="5" y="16" rx="2"/></svg>',
         'bsd': '<svg class="os-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v20M8 5v6a4 4 0 0 0 8 0V5M5 2l3 3M19 2l-3 3M10 22h4"/></svg>'
     };
-
-    function escapeHtml(str) {
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
 
     function getOSFamilyIcon(familyOrName) {
         if (!familyOrName) return null;
@@ -39,35 +36,43 @@
     function formatOSDisplay(dev) {
         if (!dev) return { html: '—', text: '—', icon: '' };
         const custom = (dev.custom_os || dev.customOS || '').trim();
+        const customVer = (dev.custom_os_version || dev.customOSVersion || '').trim();
+        const customFamily = (dev.custom_os_family || dev.customOSFamily || '').trim();
         const os = (dev.os || '').trim();
         const ver = (dev.os_version || dev.osVersion || '').trim();
         const family = (dev.os_family || dev.osFamily || '').trim();
+        const effectiveFamily = customFamily || family;
 
         if (custom) {
-            const iconSvg = getOSFamilyIcon(family) || getOSFamilyIcon(custom);
+            let customText = custom;
+            if (customVer && !customText.includes(customVer)) {
+                customText = `${customText} ${customVer}`;
+            }
+            const iconSvg = getOSFamilyIcon(customFamily) || getOSFamilyIcon(custom) || getOSFamilyIcon(family);
             if (iconSvg) {
                 return {
-                    html: `${iconSvg} <span>${escapeHtml(custom)}</span>`,
-                    text: custom,
+                    html: `${iconSvg} <span>${escapeHtml(customText)}</span>`,
+                    text: customText,
                     icon: iconSvg
                 };
             }
-            return { html: escapeHtml(custom), text: custom, icon: '' };
+            return { html: escapeHtml(customText), text: customText, icon: '' };
         }
 
-        if (!os && !ver) {
+        const effectiveVer = customVer || ver;
+        if (!os && !effectiveVer) {
             return { html: '—', text: '—', icon: '' };
         }
 
         let fullText = os;
-        if (family === 'Linux') {
+        if (effectiveFamily.toLowerCase() === 'linux') {
             fullText = fullText.replace(/\s+Linux$/i, '');
         }
-        if (ver && !fullText.includes(ver)) {
-            fullText = fullText ? `${fullText} ${ver}` : ver;
+        if (effectiveVer && !fullText.includes(effectiveVer)) {
+            fullText = fullText ? `${fullText} ${effectiveVer}` : effectiveVer;
         }
 
-        const iconSvg = getOSFamilyIcon(family) || getOSFamilyIcon(os);
+        const iconSvg = getOSFamilyIcon(effectiveFamily) || getOSFamilyIcon(os);
         if (iconSvg) {
             return {
                 html: `${iconSvg} <span>${escapeHtml(fullText)}</span>`,
@@ -81,11 +86,13 @@
     function formatOSName(dev) {
         if (!dev) return { html: '—', text: '—', icon: '' };
         const custom = (dev.custom_os || dev.customOS || '').trim();
+        const customFamily = (dev.custom_os_family || dev.customOSFamily || '').trim();
         const os = (dev.os || '').trim();
         const family = (dev.os_family || dev.osFamily || '').trim();
+        const effectiveFamily = customFamily || family;
 
         if (custom) {
-            const iconSvg = getOSFamilyIcon(family) || getOSFamilyIcon(custom);
+            const iconSvg = getOSFamilyIcon(customFamily) || getOSFamilyIcon(custom) || getOSFamilyIcon(family);
             if (iconSvg) {
                 return {
                     html: `${iconSvg} <span>${escapeHtml(custom)}</span>`,
@@ -101,11 +108,11 @@
         }
 
         let nameText = os;
-        if (family === 'Linux') {
+        if (effectiveFamily.toLowerCase() === 'linux') {
             nameText = nameText.replace(/\s+Linux$/i, '');
         }
 
-        const iconSvg = getOSFamilyIcon(family) || getOSFamilyIcon(os);
+        const iconSvg = getOSFamilyIcon(effectiveFamily) || getOSFamilyIcon(os);
         if (iconSvg) {
             return {
                 html: `${iconSvg} <span>${escapeHtml(nameText)}</span>`,

@@ -19,7 +19,7 @@
             <a href="/scans" class="nav-link active">Scans</a>
             <a href="/settings" class="nav-link">Settings</a>
             <button type="button" class="nav-link" onclick="openLogsModal()" title="View System &amp; Scan Logs">Logs</button>
-            {{if .AuthEnabled}}<a href="/logout" class="nav-link">Sign out</a>{{end}}
+            {{if .AuthEnabled}}<form method="post" action="/logout" style="display:inline;margin:0;"><button type="submit" class="nav-link">Sign out</button></form>{{end}}
             <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">◐</button>
         </nav>
     </header>
@@ -146,7 +146,7 @@
             </section>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr; gap: 2rem; @media (min-width: 900px) { grid-template-columns: 1fr 1fr; }">
+        <div class="scans-columns-grid">
             <div style="display: flex; flex-direction: column; gap: 2rem;">
                 <!-- Chronological Presence Timeline -->
                 <section class="section">
@@ -464,6 +464,7 @@
 
     <div id="toast" class="toast"></div>
 
+    <script src="/static/html-utils.js?v={{.Version}}"></script>
     <script src="/static/scans-view.js?v={{.Version}}"></script>
     <script src="/static/traffic-chart.js?v={{.Version}}"></script>
     <script src="/static/app.js?v={{.Version}}"></script>

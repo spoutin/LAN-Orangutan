@@ -3,7 +3,10 @@ package cli
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/spoutin/LAN-Orangutan/internal/config"
 )
 
 func TestHostIsLoopback(t *testing.T) {
@@ -80,5 +83,56 @@ func TestGuardHost_NetworkBindIsPassthrough(t *testing.T) {
 	guard.ServeHTTP(w, r)
 	if !reached || w.Code != http.StatusOK {
 		t.Fatalf("network bind should pass any Host: reached=%v code=%d", reached, w.Code)
+	}
+}
+
+func TestInsecureSSLWarnings(t *testing.T) {
+	cfg := config.Default()
+	if warnings := insecureSSLWarnings(cfg); len(warnings) != 0 {
+		t.Fatalf("expected no warnings when integrations are disabled, got: %v", warnings)
+	}
+
+	cfg.OPNsense.Enable = true
+	cfg.OPNsense.URL = "https://10.0.0.1"
+	cfg.OPNsense.VerifySSL = false
+
+	cfg.OpenWrt.Enable = true
+	cfg.OpenWrt.URL = "https://10.5.5.1"
+	cfg.OpenWrt.VerifySSL = false
+
+	cfg.OpenWrts.Names = []string{"branch"}
+	cfg.OpenWrts.Configs["branch"] = config.OpenWrtConfig{
+		ID:        "branch",
+		Enable:    true,
+		URL:       "https://10.6.6.1",
+		VerifySSL: false,
+	}
+
+	cfg.UniFi.Enable = true
+	cfg.UniFi.URL = "https://10.0.0.2:8443"
+	cfg.UniFi.VerifySSL = false
+
+	warnings := insecureSSLWarnings(cfg)
+	if len(warnings) != 4 {
+		t.Fatalf("expected 4 warnings (opnsense, openwrt, openwrt.branch, unifi), got %d: %v", len(warnings), warnings)
+	}
+
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{"opnsense", "openwrt", "branch", "unifi", "verify_ssl"} {
+		if !strings.Contains(strings.ToLower(joined), want) {
+			t.Errorf("expected warnings to mention %q, got:\n%s", want, joined)
+		}
+	}
+
+	// Enabling VerifySSL clears all warnings.
+	cfg.OPNsense.VerifySSL = true
+	cfg.OpenWrt.VerifySSL = true
+	b := cfg.OpenWrts.Configs["branch"]
+	b.VerifySSL = true
+	cfg.OpenWrts.Configs["branch"] = b
+	cfg.UniFi.VerifySSL = true
+
+	if warnings := insecureSSLWarnings(cfg); len(warnings) != 0 {
+		t.Fatalf("expected no warnings when VerifySSL=true everywhere, got: %v", warnings)
 	}
 }

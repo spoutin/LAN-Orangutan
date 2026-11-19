@@ -1193,3 +1193,188 @@ networks = 10.6.6.0/24
 		}
 	})
 }
+
+func TestRemoteScannerHostKeyConfig_INIAndEnv(t *testing.T) {
+	path := writeConfig(t, `
+[remote_scanners]
+enable = true
+ssh_known_hosts_file = /etc/lan-orangutan/known_hosts
+ssh_insecure_host_key = false
+
+[remote_scanner.site_b]
+host = 192.168.10.1
+networks = 192.168.10.0/24
+ssh_host_key = ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleSiteBKey
+ssh_known_hosts_file = /etc/lan-orangutan/site_b_known_hosts
+ssh_insecure_host_key = true
+
+[opnsense]
+enable = true
+url = https://10.0.0.1
+remote_scan = true
+ssh_host_key = ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOPNsenseKey
+networks = 10.0.0.0/24
+
+[openwrt]
+enable = true
+url = https://10.5.5.1
+remote_scan = true
+ssh_known_hosts_file = /etc/lan-orangutan/openwrt_known_hosts
+networks = 10.5.5.0/24
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.RemoteScanners.SSHKnownHostsFile != "/etc/lan-orangutan/known_hosts" {
+		t.Fatalf("RemoteScanners.SSHKnownHostsFile = %q, want /etc/lan-orangutan/known_hosts", cfg.RemoteScanners.SSHKnownHostsFile)
+	}
+	if cfg.RemoteScanners.SSHInsecureHostKey {
+		t.Fatal("RemoteScanners.SSHInsecureHostKey = true, want false")
+	}
+
+	siteB, ok := cfg.RemoteScanners.FindScannerForCIDR("192.168.10.0/24")
+	if !ok {
+		t.Fatal("site_b scanner not found")
+	}
+	if siteB.SSHHostKey != "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleSiteBKey" {
+		t.Fatalf("siteB.SSHHostKey = %q", siteB.SSHHostKey)
+	}
+	if siteB.SSHKnownHostsFile != "/etc/lan-orangutan/site_b_known_hosts" {
+		t.Fatalf("siteB.SSHKnownHostsFile = %q", siteB.SSHKnownHostsFile)
+	}
+	if !siteB.SSHInsecureHostKey {
+		t.Fatal("siteB.SSHInsecureHostKey = false, want true")
+	}
+
+	opn, ok := cfg.RemoteScanners.FindScannerForCIDR("10.0.0.0/24")
+	if !ok {
+		t.Fatal("opnsense scanner not found")
+	}
+	if opn.SSHHostKey != "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOPNsenseKey" {
+		t.Fatalf("opn.SSHHostKey = %q", opn.SSHHostKey)
+	}
+
+	wrt, ok := cfg.RemoteScanners.FindScannerForCIDR("10.5.5.0/24")
+	if !ok {
+		t.Fatal("openwrt scanner not found")
+	}
+	if wrt.SSHKnownHostsFile != "/etc/lan-orangutan/openwrt_known_hosts" {
+		t.Fatalf("wrt.SSHKnownHostsFile = %q", wrt.SSHKnownHostsFile)
+	}
+
+	t.Setenv("ORANGUTAN_REMOTE_SCAN_KNOWN_HOSTS_FILE", "/tmp/env_known_hosts")
+	t.Setenv("ORANGUTAN_REMOTE_SCAN_INSECURE_HOST_KEY", "true")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_SITE_B_SSH_INSECURE_HOST_KEY", "false")
+	t.Setenv("ORANGUTAN_REMOTE_SCANNER_SITE_B_SSH_HOST_KEY", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEnvOverrideKey")
+
+	if err := cfg.ApplyEnv(); err != nil {
+		t.Fatalf("ApplyEnv: %v", err)
+	}
+
+	if cfg.RemoteScanners.SSHKnownHostsFile != "/tmp/env_known_hosts" {
+		t.Fatalf("after ApplyEnv RemoteScanners.SSHKnownHostsFile = %q", cfg.RemoteScanners.SSHKnownHostsFile)
+	}
+	if !cfg.RemoteScanners.SSHInsecureHostKey {
+		t.Fatal("after ApplyEnv RemoteScanners.SSHInsecureHostKey = false, want true")
+	}
+	siteB2, _ := cfg.RemoteScanners.FindScannerForCIDR("192.168.10.0/24")
+	if siteB2.SSHInsecureHostKey {
+		t.Fatal("after ApplyEnv siteB.SSHInsecureHostKey = true, want false")
+	}
+	if siteB2.SSHHostKey != "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEnvOverrideKey" {
+		t.Fatalf("after ApplyEnv siteB.SSHHostKey = %q", siteB2.SSHHostKey)
+	}
+}
+
+func TestLoad_LongLineExceeding64KB(t *testing.T) {
+	longVal := strings.Repeat("a", 80*1024)
+	path := writeConfig(t, "[remote_scanners]\nssh_key = "+longVal+"\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed on >64KB line: %v", err)
+	}
+	if cfg.RemoteScanners.SSHKey != longVal {
+		t.Fatalf("SSHKey len = %d, want %d", len(cfg.RemoteScanners.SSHKey), len(longVal))
+	}
+}
+
+func TestLoad_EmptySSHKeyBeforeMultilineBlockHasNoLeadingNewline(t *testing.T) {
+	path := writeConfig(t, `
+[remote_scanners]
+ssh_key =
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAA=
+-----END OPENSSH PRIVATE KEY-----
+
+[opnsense]
+ssh_key =
+-----BEGIN RSA PRIVATE KEY-----
+MIIEow==
+-----END RSA PRIVATE KEY-----
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if strings.HasPrefix(cfg.RemoteScanners.SSHKey, "\n") {
+		t.Fatalf("RemoteScanners.SSHKey has leading newline: %q", cfg.RemoteScanners.SSHKey)
+	}
+	if !strings.HasPrefix(cfg.RemoteScanners.SSHKey, "-----BEGIN OPENSSH PRIVATE KEY-----") {
+		t.Fatalf("RemoteScanners.SSHKey = %q", cfg.RemoteScanners.SSHKey)
+	}
+	if strings.HasPrefix(cfg.OPNsense.SSHKey, "\n") {
+		t.Fatalf("OPNsense.SSHKey has leading newline: %q", cfg.OPNsense.SSHKey)
+	}
+	if !strings.HasPrefix(cfg.OPNsense.SSHKey, "-----BEGIN RSA PRIVATE KEY-----") {
+		t.Fatalf("OPNsense.SSHKey = %q", cfg.OPNsense.SSHKey)
+	}
+}
+
+func TestEnsureSwitch_InsertsIntoMapAndNamesPreservesSubsections(t *testing.T) {
+	cfg := Default()
+	cfg.ensureSwitch("sw1")
+	if _, ok := cfg.Switches.Configs["sw1"]; !ok {
+		t.Fatal("expected ensureSwitch to insert default entry into Switches.Configs")
+	}
+
+	path := writeConfig(t, `
+[remote_scanner.edge1]
+host = 10.1.0.1
+networks = 10.1.0.0/24
+
+[remote_scanners]
+enable = true
+names = edge2
+
+[remote_scanner.edge2]
+host = 10.2.0.1
+networks = 10.2.0.0/24
+
+[openwrt.site1]
+enable = true
+url = http://10.3.0.1
+
+[openwrts]
+names = site2
+
+[openwrt.site2]
+enable = true
+url = http://10.4.0.1
+`)
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := loaded.RemoteScanners.FindScannerForCIDR("10.1.0.0/24"); !ok {
+		t.Fatalf("edge1 lost when names= appeared later; Names=%v", loaded.RemoteScanners.Names)
+	}
+	if _, ok := loaded.RemoteScanners.FindScannerForCIDR("10.2.0.0/24"); !ok {
+		t.Fatalf("edge2 missing; Names=%v", loaded.RemoteScanners.Names)
+	}
+	if len(loaded.AllOpenWrts()) != 2 {
+		t.Fatalf("AllOpenWrts() len = %d, want 2 (Names=%v)", len(loaded.AllOpenWrts()), loaded.OpenWrts.Names)
+	}
+}

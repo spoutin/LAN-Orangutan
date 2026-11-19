@@ -56,3 +56,22 @@ test('formatOSVersion prioritizes custom_os_version over detected os_version', (
     assert.equal(formatOSVersion({ os_version: '22.04', customOSVersion: '24.04.1 LTS' }), '24.04.1 LTS');
 });
 
+test('formatOSDisplay appends custom_os_version when custom_os is set and escapes HTML', () => {
+    const res = formatOSDisplay({
+        os: 'Linux',
+        os_version: '5.15',
+        custom_os: 'Ubuntu',
+        custom_os_version: '24.04 <LTS>',
+        custom_os_family: 'Linux',
+    });
+    assert.match(res.html, /svg class="os-icon"/);
+    assert.match(res.html, /Ubuntu 24\.04 &lt;LTS&gt;/);
+
+    const noDup = formatOSDisplay({
+        custom_os: 'Debian 12',
+        custom_os_version: '12',
+        custom_os_family: 'Linux',
+    });
+    assert.match(noDup.html, /<span>Debian 12<\/span>/);
+});
+

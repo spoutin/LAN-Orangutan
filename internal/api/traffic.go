@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
-	"strings"
+	"math"
 	"sync"
 	"time"
 
@@ -15,6 +15,13 @@ import (
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
+const (
+	maxTrafficPrevAge           = 24 * time.Hour
+	maxTrafficPrevEntries       = 10000
+	defaultTrafficSourceTimeout = 10 * time.Second
+	defaultTrafficCycleTimeout  = 50 * time.Second
+)
+
 type prevOctets struct {
 	timestamp time.Time
 	rxBytes   int64
@@ -24,28 +31,89 @@ type prevOctets struct {
 // TrafficCollector manages periodic polling of switch port octets, UniFi telemetry,
 // and OPNsense NetFlow to calculate instantaneous bandwidth and record rolling samples.
 type TrafficCollector struct {
-	store *storage.Storage
-	cfg   *config.Config
-	mu    sync.Mutex
-	prev  map[string]prevOctets
+	store         *storage.Storage
+	cfg           *config.Config
+	sourceTimeout time.Duration
+	mu            sync.Mutex
+	prev          map[string]prevOctets
 }
 
 // NewTrafficCollector creates a new TrafficCollector.
 func NewTrafficCollector(store *storage.Storage, cfg *config.Config) *TrafficCollector {
 	return &TrafficCollector{
-		store: store,
-		cfg:   cfg,
-		prev:  make(map[string]prevOctets),
+		store:         store,
+		cfg:           cfg,
+		sourceTimeout: defaultTrafficSourceTimeout,
+		prev:          make(map[string]prevOctets),
+	}
+}
+
+func clampUint64ToInt64(v uint64) int64 {
+	if v > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(v)
+}
+
+func (tc *TrafficCollector) withSourceTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := tc.sourceTimeout
+	if timeout <= 0 {
+		timeout = defaultTrafficSourceTimeout
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+func (tc *TrafficCollector) evictOldestPrevLocked() {
+	var oldestKey string
+	var oldestTime time.Time
+	first := true
+	for key, entry := range tc.prev {
+		if first || entry.timestamp.Before(oldestTime) {
+			oldestKey = key
+			oldestTime = entry.timestamp
+			first = false
+		}
+	}
+	if !first {
+		delete(tc.prev, oldestKey)
+	}
+}
+
+func (tc *TrafficCollector) prunePrev(now time.Time) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	cutoff := now.Add(-maxTrafficPrevAge)
+	for key, entry := range tc.prev {
+		if entry.timestamp.Before(cutoff) {
+			delete(tc.prev, key)
+		}
+	}
+	for len(tc.prev) > maxTrafficPrevEntries {
+		tc.evictOldestPrevLocked()
 	}
 }
 
 // ComputeRate computes the instantaneous rx and tx bytes/sec given previous sample.
 func (tc *TrafficCollector) ComputeRate(mac string, rxBytes, txBytes int64, now time.Time) (int64, int64) {
+	normMAC := storage.NormalizeMAC(mac)
+	if normMAC == "" {
+		return 0, 0
+	}
+	if rxBytes < 0 {
+		rxBytes = 0
+	}
+	if txBytes < 0 {
+		txBytes = 0
+	}
+
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
 
-	normMAC := strings.ToLower(strings.TrimSpace(mac))
 	prev, exists := tc.prev[normMAC]
+	if !exists && len(tc.prev) >= maxTrafficPrevEntries {
+		tc.evictOldestPrevLocked()
+	}
 	tc.prev[normMAC] = prevOctets{
 		timestamp: now,
 		rxBytes:   rxBytes,
@@ -86,22 +154,31 @@ func (tc *TrafficCollector) CollectCycle(
 ) ([]types.TrafficSample, error) {
 	var samples []types.TrafficSample
 	seenMACs := make(map[string]bool)
+	tc.prunePrev(now)
 
 	// 1. Cisco Switch (SNMPv3 64-bit Port Octets)
 	if tc.cfg.Switches.Enable && len(tc.cfg.Switches.Configs) > 0 && fetchSwitch != nil {
 		devices := tc.store.GetDevices()
 		vlanByMAC := make(map[string]int, len(devices))
 		for _, dev := range devices {
-			if dev.MAC != "" && dev.SwitchVLAN > 0 {
-				vlanByMAC[strings.ToLower(dev.MAC)] = dev.SwitchVLAN
+			normMAC := storage.NormalizeMAC(dev.MAC)
+			if normMAC == "" {
+				continue
 			}
+			vlan := dev.SwitchVLAN
+			if vlan <= 0 {
+				vlan = dev.VLAN
+			}
+			vlanByMAC[normMAC] = vlan
 		}
 
 		for _, switchCfg := range tc.cfg.Switches.Configs {
 			if ctx.Err() != nil {
 				break
 			}
-			conns, err := fetchSwitch(ctx, switchCfg, vlanByMAC)
+			srcCtx, srcCancel := tc.withSourceTimeout(ctx)
+			conns, err := fetchSwitch(srcCtx, switchCfg, vlanByMAC)
+			srcCancel()
 			if err != nil {
 				continue
 			}
@@ -110,15 +187,15 @@ func (tc *TrafficCollector) CollectCycle(
 				if !c.SingleMAC || (c.InOctets == 0 && c.OutOctets == 0) {
 					continue
 				}
-				normMAC := strings.ToLower(strings.TrimSpace(c.MAC))
+				normMAC := storage.NormalizeMAC(c.MAC)
 				if normMAC == "" {
 					continue
 				}
 
 				// Switch port Out is Device Rx (bytes sent by switch to device)
 				// Switch port In is Device Tx (bytes received by switch from device)
-				rxBytes := int64(c.OutOctets)
-				txBytes := int64(c.InOctets)
+				rxBytes := clampUint64ToInt64(c.OutOctets)
+				txBytes := clampUint64ToInt64(c.InOctets)
 				rxRate, txRate := tc.ComputeRate(normMAC, rxBytes, txBytes, now)
 
 				samples = append(samples, types.TrafficSample{
@@ -137,10 +214,12 @@ func (tc *TrafficCollector) CollectCycle(
 
 	// 2. UniFi Controller (Station Telemetry for Wireless Devices)
 	if tc.cfg.UniFi.Enable && tc.cfg.UniFi.URL != "" && fetchUniFi != nil && ctx.Err() == nil {
-		clients, err := fetchUniFi(ctx, tc.cfg.UniFi)
+		srcCtx, srcCancel := tc.withSourceTimeout(ctx)
+		clients, err := fetchUniFi(srcCtx, tc.cfg.UniFi)
+		srcCancel()
 		if err == nil {
 			for _, c := range clients {
-				normMAC := strings.ToLower(strings.TrimSpace(c.MAC))
+				normMAC := storage.NormalizeMAC(c.MAC)
 				if normMAC == "" || seenMACs[normMAC] {
 					continue
 				}
@@ -166,7 +245,9 @@ func (tc *TrafficCollector) CollectCycle(
 	// 3. OPNsense Firewall (NetFlow / Active States for Routed Traffic)
 	// Only collect WAN traffic for devices residing on the firewall's strictly configured networks.
 	if tc.cfg.OPNsense.Enable && tc.cfg.OPNsense.URL != "" && len(tc.cfg.OPNsense.Networks) > 0 && fetchNetFlow != nil && ctx.Err() == nil {
-		flowStats, err := fetchNetFlow(ctx, tc.cfg.OPNsense)
+		srcCtx, srcCancel := tc.withSourceTimeout(ctx)
+		flowStats, err := fetchNetFlow(srcCtx, tc.cfg.OPNsense)
+		srcCancel()
 		if err != nil {
 			logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense NetFlow query failed: %v", err))
 		} else {
@@ -190,8 +271,8 @@ func (tc *TrafficCollector) CollectCycle(
 				if isOnOpenWrt {
 					continue
 				}
-				normMAC := strings.ToLower(strings.TrimSpace(dev.MAC))
-				if st.RxBytes == 0 && st.TxBytes == 0 {
+				normMAC := storage.NormalizeMAC(dev.MAC)
+				if normMAC == "" || (st.RxBytes == 0 && st.TxBytes == 0) {
 					continue
 				}
 
@@ -215,10 +296,15 @@ func (tc *TrafficCollector) CollectCycle(
 	// 4. OpenWrt Firewall (nlbwmon Bandwidth Monitor)
 	if fetchNlbwmon != nil && ctx.Err() == nil {
 		for _, wrt := range tc.cfg.AllOpenWrts() {
+			if ctx.Err() != nil {
+				break
+			}
 			if !wrt.Enable || !wrt.TrafficMonitoring || len(wrt.Networks) == 0 {
 				continue
 			}
-			flowStats, err := fetchNlbwmon(ctx, wrt)
+			srcCtx, srcCancel := tc.withSourceTimeout(ctx)
+			flowStats, err := fetchNlbwmon(srcCtx, wrt)
+			srcCancel()
 			if err != nil {
 				logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OpenWrt (%s) nlbwmon query failed: %v", wrt.ID, err))
 				continue
@@ -236,8 +322,8 @@ func (tc *TrafficCollector) CollectCycle(
 				if tc.cfg.OPNsense.Enable && len(tc.cfg.OPNsense.Networks) > 0 && network.ContainsIP(tc.cfg.OPNsense.Networks, dev.IP) {
 					continue
 				}
-				normMAC := strings.ToLower(strings.TrimSpace(dev.MAC))
-				if st.RxBytes == 0 && st.TxBytes == 0 {
+				normMAC := storage.NormalizeMAC(dev.MAC)
+				if normMAC == "" || (st.RxBytes == 0 && st.TxBytes == 0) {
 					continue
 				}
 				wanRateKey := normMAC + ":wan"
@@ -272,17 +358,22 @@ func (h *Handler) StartTrafficCollector(ctx context.Context) {
 		h.trafficCollector = NewTrafficCollector(h.store, h.cfg)
 	}
 
+	runCtx, cancel := h.bgContext(ctx)
+	h.bgWG.Add(1)
 	go func() {
+		defer h.bgWG.Done()
+		defer cancel()
+
 		// Run initial collection shortly after startup
 		initTimer := time.NewTimer(2 * time.Second)
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			initTimer.Stop()
 			return
 		case <-initTimer.C:
 		}
 
-		h.runTrafficCycle(ctx)
+		h.runTrafficCycle(runCtx)
 
 		ticker := time.NewTicker(60 * time.Second)
 		pruneTicker := time.NewTicker(1 * time.Hour)
@@ -291,10 +382,10 @@ func (h *Handler) StartTrafficCollector(ctx context.Context) {
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-runCtx.Done():
 				return
 			case <-ticker.C:
-				h.runTrafficCycle(ctx)
+				h.runTrafficCycle(runCtx)
 			case <-pruneTicker.C:
 				_, _ = h.store.RollupAndPruneTraffic(24, 7)
 			}
@@ -303,7 +394,7 @@ func (h *Handler) StartTrafficCollector(ctx context.Context) {
 }
 
 func (h *Handler) runTrafficCycle(ctx context.Context) {
-	cycleCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	cycleCtx, cancel := context.WithTimeout(ctx, defaultTrafficCycleTimeout)
 	defer cancel()
 
 	_, _ = h.trafficCollector.CollectCycle(
@@ -312,6 +403,6 @@ func (h *Handler) runTrafficCycle(ctx context.Context) {
 		h.fetchSwitchConnections,
 		h.fetchUniFiClients,
 		h.fetchOPNsenseNetFlow,
-		scanner.FetchOpenWrtNlbwmon,
+		h.fetchOpenWrtNlbwmon,
 	)
 }

@@ -266,3 +266,43 @@ test('findSubrowForDeviceRow finds corresponding subrow element', () => {
 
   assert.equal(findSubrowForDeviceRow(mainRow), subrow);
 });
+
+test('resolveDeviceRow and findSubrowForDeviceRow escape selector values via CSS.escape', () => {
+  const prevCSS = globalThis.CSS;
+  const escapedInputs = [];
+  globalThis.CSS = {
+    escape(val) {
+      escapedInputs.push(val);
+      return String(val).replace(/([^\w-])/g, '\\$1');
+    },
+  };
+
+  try {
+    const maliciousIP = '10.0.0.1"], .evil[data-x="';
+    const seenSelectors = [];
+    const expectedRow = { classList: { contains: () => false }, dataset: { ip: maliciousIP } };
+    const expectedSubrow = { classList: { contains: () => false }, dataset: { ip: maliciousIP } };
+    const doc = {
+      querySelector(sel) {
+        seenSelectors.push(sel);
+        if (sel.startsWith('.device-row')) return expectedRow;
+        if (sel.startsWith('.device-subrow')) return expectedSubrow;
+        return null;
+      },
+    };
+
+    assert.equal(resolveDeviceRow(maliciousIP, doc), expectedRow);
+    assert.equal(findSubrowForDeviceRow({ dataset: { ip: maliciousIP }, nextElementSibling: null }, doc), expectedSubrow);
+    assert.ok(escapedInputs.includes(maliciousIP), 'expected CSS.escape to be called');
+    for (const sel of seenSelectors) {
+      assert.doesNotMatch(sel, /(^|[^\\])\.evil/);
+      assert.match(sel, /\\"/);
+    }
+  } finally {
+    if (prevCSS === undefined) {
+      delete globalThis.CSS;
+    } else {
+      globalThis.CSS = prevCSS;
+    }
+  }
+});

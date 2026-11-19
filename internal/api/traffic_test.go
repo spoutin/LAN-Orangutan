@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -219,7 +220,7 @@ func TestDeviceTrafficAPI(t *testing.T) {
 	})
 
 	cfg := config.Default()
-	h := NewHandler(store, cfg)
+	h := newTestHandler(t, store, cfg)
 
 	// 1. Query by MAC
 	rec := httptest.NewRecorder()
@@ -637,5 +638,168 @@ func TestTrafficCollector_FirewallSubnetMutualExclusion(t *testing.T) {
 				t.Errorf("expected openwrt source with 2000 bytes for wrt host, got %+v", s)
 			}
 		}
+	}
+}
+
+func TestTrafficCollector_HighBitUint64Octets(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	defer store.Close()
+
+	cfg := &config.Config{
+		Switches: config.SwitchesConfig{
+			Enable: true,
+			Configs: map[string]config.SwitchConfig{
+				"sw1": {ID: "sw1", Host: "10.0.0.2"},
+			},
+		},
+	}
+	tc := NewTrafficCollector(store, cfg)
+	t0 := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+
+	highVal := uint64(1) << 63 // math.MaxInt64 + 1: int64(highVal) overflows negative
+	fetchSwitch := func(_ context.Context, _ config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
+		return []scanner.SwitchConnection{
+			{
+				MAC:       "aa:bb:cc:dd:ee:01",
+				Port:      "gi1/1",
+				InOctets:  math.MaxUint64,
+				OutOctets: highVal,
+				SingleMAC: true,
+			},
+		}, nil
+	}
+
+	samples, err := tc.CollectCycle(context.Background(), t0, fetchSwitch, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CollectCycle: %v", err)
+	}
+	if len(samples) != 1 {
+		t.Fatalf("expected 1 sample, got %d", len(samples))
+	}
+	if samples[0].RxBytes < 0 || samples[0].TxBytes < 0 {
+		t.Fatalf("high-bit uint64 octets wrapped negative: rx=%d tx=%d", samples[0].RxBytes, samples[0].TxBytes)
+	}
+	if samples[0].RxBytes != math.MaxInt64 || samples[0].TxBytes != math.MaxInt64 {
+		t.Fatalf("expected clamped math.MaxInt64, got rx=%d tx=%d", samples[0].RxBytes, samples[0].TxBytes)
+	}
+}
+
+func TestTrafficCollector_PrunesStalePrevEntries(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	defer store.Close()
+
+	tc := NewTrafficCollector(store, &config.Config{})
+	t0 := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	tc.ComputeRate("00:11:22:33:44:01", 1000, 500, t0)
+	tc.ComputeRate("00:11:22:33:44:02", 2000, 500, t0.Add(24*time.Hour))
+
+	// Run CollectCycle 25 hours after t0; entry 01 is stale and should be pruned.
+	_, err = tc.CollectCycle(context.Background(), t0.Add(25*time.Hour), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CollectCycle: %v", err)
+	}
+
+	tc.mu.Lock()
+	_, hasStale := tc.prev["00:11:22:33:44:01"]
+	_, hasFresh := tc.prev["00:11:22:33:44:02"]
+	tc.mu.Unlock()
+
+	if hasStale {
+		t.Fatal("expected stale tc.prev entry older than 24h to be pruned")
+	}
+	if !hasFresh {
+		t.Fatal("expected recent tc.prev entry within 24h to remain")
+	}
+}
+
+func TestTrafficCollector_SwitchVLANMapNormalizesMAC(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.UpdateDevice(&types.Device{
+		IP:   "10.0.0.15",
+		MAC:  "AA-BB-CC-11-22-01",
+		VLAN: 30,
+	}); err != nil {
+		t.Fatalf("UpdateDevice: %v", err)
+	}
+
+	cfg := &config.Config{
+		Switches: config.SwitchesConfig{
+			Enable: true,
+			Configs: map[string]config.SwitchConfig{
+				"sw1": {ID: "sw1", Host: "10.0.0.2"},
+			},
+		},
+	}
+	tc := NewTrafficCollector(store, cfg)
+
+	var seenVLANMap map[string]int
+	fetchSwitch := func(_ context.Context, _ config.SwitchConfig, vlanByMAC map[string]int) ([]scanner.SwitchConnection, error) {
+		seenVLANMap = vlanByMAC
+		return nil, nil
+	}
+
+	_, err = tc.CollectCycle(context.Background(), time.Now(), fetchSwitch, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CollectCycle: %v", err)
+	}
+	if got, ok := seenVLANMap["aa:bb:cc:11:22:01"]; !ok || got != 30 {
+		t.Fatalf("vlanByMAC = %v, want normalized key aa:bb:cc:11:22:01 -> 30", seenVLANMap)
+	}
+}
+
+func TestTrafficCollector_PerSourceSubTimeout(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.New(filepath.Join(dir, "devices.json"), filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	defer store.Close()
+
+	cfg := &config.Config{
+		Switches: config.SwitchesConfig{
+			Enable: true,
+			Configs: map[string]config.SwitchConfig{
+				"slow-sw": {ID: "slow-sw", Host: "10.0.0.2"},
+			},
+		},
+		UniFi: config.UniFiConfig{
+			Enable: true,
+			URL:    "https://unifi.local",
+		},
+	}
+	tc := NewTrafficCollector(store, cfg)
+	tc.sourceTimeout = 30 * time.Millisecond
+
+	fetchSwitch := func(ctx context.Context, _ config.SwitchConfig, _ map[string]int) ([]scanner.SwitchConnection, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	fetchUniFi := func(ctx context.Context, _ config.UniFiConfig) ([]types.Device, error) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return []types.Device{{MAC: "aa:bb:cc:11:22:02", RxBytes: 1234, TxBytes: 567}}, nil
+	}
+
+	samples, err := tc.CollectCycle(context.Background(), time.Now(), fetchSwitch, fetchUniFi, nil, nil)
+	if err != nil {
+		t.Fatalf("CollectCycle: %v", err)
+	}
+	if len(samples) != 1 || samples[0].Source != "unifi" {
+		t.Fatalf("expected UniFi sample despite slow switch timeout, got %+v", samples)
 	}
 }

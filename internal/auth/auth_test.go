@@ -7,13 +7,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 const testPassword = "correct-horse-battery-staple"
 
 func newTestAuth(t *testing.T) *Authenticator {
 	t.Helper()
-	a, err := New(testPassword, time.Hour)
+	a, err := New(testPassword, time.Hour, WithBcryptCost(bcrypt.MinCost))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -29,7 +31,7 @@ func okHandler() http.Handler {
 }
 
 func TestDisabledWithoutPassword(t *testing.T) {
-	a, err := New("", time.Hour)
+	a, err := New("", time.Hour, WithBcryptCost(bcrypt.MinCost))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -164,7 +166,8 @@ func TestAPIRequestGets401JSON(t *testing.T) {
 }
 
 func TestSessionExpires(t *testing.T) {
-	a, err := New(testPassword, 20*time.Millisecond)
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	a, err := New(testPassword, 20*time.Millisecond, WithBcryptCost(bcrypt.MinCost), WithClock(func() time.Time { return now }))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -174,7 +177,7 @@ func TestSessionExpires(t *testing.T) {
 		t.Fatal("login failed")
 	}
 
-	time.Sleep(40 * time.Millisecond)
+	now = now.Add(40 * time.Millisecond)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: token})
@@ -331,7 +334,8 @@ func TestSetAndClearCookie(t *testing.T) {
 }
 
 func TestExpiredSessionsArePruned(t *testing.T) {
-	a, err := New(testPassword, 10*time.Millisecond)
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	a, err := New(testPassword, 10*time.Millisecond, WithBcryptCost(bcrypt.MinCost), WithClock(func() time.Time { return now }))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -339,7 +343,7 @@ func TestExpiredSessionsArePruned(t *testing.T) {
 	if _, ok := a.Login("192.168.1.5:5000", testPassword); !ok {
 		t.Fatal("login failed")
 	}
-	time.Sleep(30 * time.Millisecond)
+	now = now.Add(30 * time.Millisecond)
 
 	// A later login prunes anything that has expired in the meantime.
 	if _, ok := a.Login("192.168.1.6:5000", testPassword); !ok {
@@ -388,7 +392,7 @@ func TestPasswordLengthLimits(t *testing.T) {
 }
 
 func TestSetPasswordRejectsOverlongInput(t *testing.T) {
-	a, err := New("", time.Hour)
+	a, err := New("", time.Hour, WithBcryptCost(bcrypt.MinCost))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -433,5 +437,178 @@ func TestMiddlewareWithTokenValidator(t *testing.T) {
 	a.Middleware(okHandler()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("invalid token: got status %d, want 401", rec.Code)
+	}
+}
+
+func TestMiddlewareRejectsInvalidTokenWhenDisabledAndFallsBackFromEmptyBearer(t *testing.T) {
+	a, err := New("", time.Hour, WithBcryptCost(bcrypt.MinCost))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	a.SetTokenValidator(func(token string) bool {
+		return token == "ora_valid_secret_token"
+	})
+
+	// Explicit invalid Bearer token must be rejected even when password auth is disabled.
+	req := httptest.NewRequest(http.MethodGet, "/api/devices", nil)
+	req.Header.Set("Authorization", "Bearer ora_bogus_token")
+	rec := httptest.NewRecorder()
+	a.Middleware(okHandler()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid Bearer when disabled: got status %d, want 401", rec.Code)
+	}
+
+	// Explicit invalid X-API-Key must be rejected even when password auth is disabled.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/devices", nil)
+	req2.Header.Set("X-API-Key", "ora_bogus_key")
+	rec2 := httptest.NewRecorder()
+	a.Middleware(okHandler()).ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid X-API-Key when disabled: got status %d, want 401", rec2.Code)
+	}
+
+	// Empty "Bearer " header must fall back to X-API-Key.
+	req3 := httptest.NewRequest(http.MethodGet, "/api/devices", nil)
+	req3.Header.Set("Authorization", "Bearer   ")
+	req3.Header.Set("X-API-Key", "ora_valid_secret_token")
+	rec3 := httptest.NewRecorder()
+	a.Middleware(okHandler()).ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("empty Bearer + valid X-API-Key: got status %d, want 200", rec3.Code)
+	}
+}
+
+func TestLoginConcurrentSetPasswordAndLockoutTOCTOU(t *testing.T) {
+	// 1. Concurrent SetPassword during Login must not mint a session for old password.
+	a := newTestAuth(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	a.comparePassword = func(hash, pw []byte) error {
+		close(entered)
+		<-release
+		return bcrypt.CompareHashAndPassword(hash, pw)
+	}
+
+	done := make(chan bool, 1)
+	go func() {
+		tok, ok := a.Login("192.168.1.10:5000", testPassword)
+		done <- (ok && tok != "")
+	}()
+
+	<-entered
+	if _, err := a.SetPassword("brand-new-password-123"); err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	close(release)
+	if <-done {
+		t.Fatal("Login should not mint a session after SetPassword rotated the password mid-flight")
+	}
+
+	// 2. Concurrent lockout triggered while Login is running bcrypt must reject Login.
+	a2 := newTestAuth(t)
+	entered2 := make(chan struct{})
+	release2 := make(chan struct{})
+	a2.comparePassword = func(hash, pw []byte) error {
+		select {
+		case <-entered2:
+		default:
+			close(entered2)
+			<-release2
+		}
+		return bcrypt.CompareHashAndPassword(hash, pw)
+	}
+
+	done2 := make(chan bool, 1)
+	go func() {
+		tok, ok := a2.Login("192.168.1.20:5000", testPassword)
+		done2 <- (ok && tok != "")
+	}()
+
+	<-entered2
+	for i := 0; i < maxAttempts; i++ {
+		a2.Login("192.168.1.20:6000", "wrong-password")
+	}
+	close(release2)
+	if <-done2 {
+		t.Fatal("Login should not succeed once concurrent failures locked out the IP")
+	}
+}
+
+func TestAttemptsMapPrunesExpiredEntries(t *testing.T) {
+	a := newTestAuth(t)
+	a.mu.Lock()
+	for i := 0; i < 10; i++ {
+		a.attempts[string(rune('a'+i))] = &attemptRecord{
+			count:  1,
+			resets: time.Now().Add(-time.Minute),
+		}
+	}
+	a.mu.Unlock()
+
+	a.Login("10.0.0.1:1234", "wrong")
+
+	a.mu.Lock()
+	remaining := len(a.attempts)
+	a.mu.Unlock()
+
+	if remaining != 1 {
+		t.Fatalf("expected expired attempt records to be pruned leaving 1 active entry, got %d", remaining)
+	}
+}
+
+func TestCookieSecureHonorsForwardedProto(t *testing.T) {
+	a := newTestAuth(t)
+
+	// Plain HTTP without proxy header -> Secure=false
+	reqPlain := httptest.NewRequest(http.MethodGet, "/", nil)
+	recPlain := httptest.NewRecorder()
+	a.SetCookie(recPlain, reqPlain, "tok")
+	if recPlain.Result().Cookies()[0].Secure {
+		t.Error("expected Secure=false for plain HTTP without X-Forwarded-Proto")
+	}
+
+	// X-Forwarded-Proto: https -> Secure=true for both SetCookie and ClearCookie
+	reqProxy := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqProxy.Header.Set("X-Forwarded-Proto", "https, http")
+
+	recSet := httptest.NewRecorder()
+	a.SetCookie(recSet, reqProxy, "tok")
+	if !recSet.Result().Cookies()[0].Secure {
+		t.Error("expected Secure=true on SetCookie when X-Forwarded-Proto=https")
+	}
+
+	recClear := httptest.NewRecorder()
+	a.ClearCookie(recClear, reqProxy)
+	if !recClear.Result().Cookies()[0].Secure {
+		t.Error("expected Secure=true on ClearCookie when X-Forwarded-Proto=https")
+	}
+}
+
+func TestHashPasswordValidatesLength(t *testing.T) {
+	if _, err := HashPassword("short"); err == nil {
+		t.Error("HashPassword should reject passwords shorter than MinPasswordLength")
+	}
+	if _, err := HashPassword(strings.Repeat("a", MaxPasswordBytes+1)); err == nil {
+		t.Error("HashPassword should reject passwords longer than MaxPasswordBytes")
+	}
+}
+
+func TestNewGuardsNonPositiveSessionTTL(t *testing.T) {
+	for _, ttl := range []time.Duration{0, -5 * time.Minute} {
+		a, err := New(testPassword, ttl, WithBcryptCost(bcrypt.MinCost))
+		if err != nil {
+			t.Fatalf("New(%v): %v", ttl, err)
+		}
+		tok, ok := a.Login("192.168.1.5:5000", testPassword)
+		if !ok {
+			t.Fatalf("Login with initial TTL %v failed", ttl)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(&http.Cookie{Name: SessionCookie, Value: tok})
+		rec := httptest.NewRecorder()
+		a.Middleware(okHandler()).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("session issued with initial TTL %v should remain valid, got %d", ttl, rec.Code)
+		}
 	}
 }

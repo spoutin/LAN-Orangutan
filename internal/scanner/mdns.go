@@ -62,7 +62,12 @@ type ptrEntry struct{ service, instance string }
 // device type. These have no MAC (mDNS does not carry one); merging by IP folds
 // them into whatever an IP scan found for the same address.
 func (s *Scanner) DiscoverMDNS(ctx context.Context) []types.Device {
-	packets := queryMDNS(ctx)
+	var packets [][]byte
+	if s.hooks.QueryMDNS != nil {
+		packets = s.hooks.QueryMDNS(ctx)
+	} else {
+		packets = queryMDNS(ctx)
+	}
 
 	aRecords := map[string]string{} // host name -> IP
 	srv := map[string]string{}      // service instance -> target host

@@ -6,15 +6,42 @@ import (
 	"fmt"
 	"net"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/spoutin/LAN-Orangutan/internal/types"
 )
 
+type netInterfaceInfo struct {
+	Name  string
+	Flags net.Flags
+	Addrs []net.Addr
+}
+
+var listInterfacesFunc = func() ([]netInterfaceInfo, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]netInterfaceInfo, 0, len(ifaces))
+	for _, iface := range ifaces {
+		addrs, addrErr := iface.Addrs()
+		if addrErr != nil {
+			continue
+		}
+		out = append(out, netInterfaceInfo{
+			Name:  iface.Name,
+			Flags: iface.Flags,
+			Addrs: addrs,
+		})
+	}
+	return out, nil
+}
+
 // DetectNetworks discovers available network interfaces and their CIDRs
 // Uses Go's standard library for cross-platform compatibility
 func DetectNetworks() ([]types.Network, error) {
-	ifaces, err := net.Interfaces()
+	ifaces, err := listInterfacesFunc()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get interfaces: %w", err)
 	}
@@ -29,12 +56,7 @@ func DetectNetworks() ([]types.Network, error) {
 			continue
 		}
 
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
-		for _, addr := range addrs {
+		for _, addr := range iface.Addrs {
 			ipNet, ok := addr.(*net.IPNet)
 			if !ok {
 				continue
@@ -79,6 +101,9 @@ func calculateCIDR(ip string, prefixLen int) string {
 
 	// Create subnet mask
 	mask := net.CIDRMask(prefixLen, 32)
+	if mask == nil {
+		return ""
+	}
 
 	// Calculate network address
 	network := make(net.IP, 4)
@@ -191,18 +216,26 @@ func GetDefaultGateway() (string, error) {
 		name, args = "netstat", []string{"-rn"}
 	}
 
-	output, err := runCommand(name, args...)
+	output, err := runCommandFunc(name, args...)
 	if err != nil {
 		return "", fmt.Errorf("failed to get default route: %w", err)
 	}
 
-	if runtime.GOOS == "linux" {
+	return parseDefaultGateway(runtime.GOOS, output), nil
+}
+
+func parseDefaultGateway(goos string, output []byte) string {
+	if goos == "linux" {
 		// Parse JSON output from ip command
 		var routes []struct {
 			Gateway string `json:"gateway"`
 		}
-		if err := json.Unmarshal(output, &routes); err == nil && len(routes) > 0 {
-			return routes[0].Gateway, nil
+		if err := json.Unmarshal(output, &routes); err == nil {
+			for _, route := range routes {
+				if gw := strings.TrimSpace(route.Gateway); gw != "" && net.ParseIP(gw) != nil {
+					return gw
+				}
+			}
 		}
 	}
 
@@ -213,18 +246,18 @@ func GetDefaultGateway() (string, error) {
 		if len(fields) >= 2 && (fields[0] == "default" || fields[0] == "0.0.0.0") {
 			gateway := fields[1]
 			if net.ParseIP(gateway) != nil {
-				return gateway, nil
+				return gateway
 			}
 		}
 	}
 
-	return "", nil
+	return ""
 }
 
 // GetDNSServers returns configured DNS servers
 func GetDNSServers() []string {
 	// Try systemd-resolved first
-	output, err := runCommand("resolvectl", "status")
+	output, err := runCommandFunc("resolvectl", "status")
 	if err == nil {
 		return parseDNSFromResolvectl(string(output))
 	}
@@ -252,14 +285,21 @@ func parseDNSFromResolvectl(output string) []string {
 }
 
 func parseDNSFromResolvConf() []string {
-	output, err := runCommand("grep", "nameserver", "/etc/resolv.conf")
+	return parseDNSFromResolvConfFile("/etc/resolv.conf")
+}
+
+func parseDNSFromResolvConfFile(path string) []string {
+	data, err := readFileFunc(path)
 	if err != nil {
 		return nil
 	}
 
 	var servers []string
-	lines := strings.Split(string(output), "\n")
+	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
+		if idx := strings.IndexByte(line, '#'); idx != -1 {
+			line = line[:idx]
+		}
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && fields[0] == "nameserver" {
 			if net.ParseIP(fields[1]) != nil {
@@ -276,18 +316,19 @@ func ValidateCIDR(cidr string) bool {
 	return err == nil
 }
 
-// ParseIPRange parses a port range string (e.g., "1-1024")
+// ParsePortRange parses a port range string (e.g., "1-1024")
 func ParsePortRange(rangeStr string) (start, end int, err error) {
 	parts := strings.Split(rangeStr, "-")
 	if len(parts) != 2 {
 		return 0, 0, fmt.Errorf("invalid port range format")
 	}
 
-	var startPort, endPort int
-	if _, err := fmt.Sscanf(parts[0], "%d", &startPort); err != nil {
+	startPort, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
 		return 0, 0, fmt.Errorf("invalid start port")
 	}
-	if _, err := fmt.Sscanf(parts[1], "%d", &endPort); err != nil {
+	endPort, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
 		return 0, 0, fmt.Errorf("invalid end port")
 	}
 

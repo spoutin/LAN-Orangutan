@@ -15,41 +15,42 @@ var configCmd = &cobra.Command{
 }
 
 func runConfig(cmd *cobra.Command, args []string) error {
-	fmt.Println("=== LAN Orangutan Configuration ===")
-	fmt.Printf("Config file: %s\n", cfgFile)
-	fmt.Println()
+	out := cmdOut(cmd)
+	fmt.Fprintln(out, "=== LAN Orangutan Configuration ===")
+	fmt.Fprintf(out, "Config file: %s\n", cfgFile)
+	fmt.Fprintln(out)
 
-	fmt.Println("[server]")
-	fmt.Printf("  port = %d\n", cfg.Server.Port)
-	fmt.Printf("  bind_address = %s\n", cfg.Server.BindAddress)
-	fmt.Printf("  enable_api = %v\n", cfg.Server.EnableAPI)
+	fmt.Fprintln(out, "[server]")
+	fmt.Fprintf(out, "  port = %d\n", cfg.Server.Port)
+	fmt.Fprintf(out, "  bind_address = %s\n", cfg.Server.BindAddress)
+	fmt.Fprintf(out, "  enable_api = %v\n", cfg.Server.EnableAPI)
 	// Never print the password or its hash. Show only whether one is set, and
 	// where it came from, which is what someone checking their setup needs.
-	fmt.Printf("  password = %s\n", passwordSummary())
-	fmt.Printf("  session_hours = %d\n", cfg.Server.SessionHours)
-	fmt.Printf("  allow_insecure = %v\n", cfg.Server.AllowInsecure)
-	fmt.Println()
+	fmt.Fprintf(out, "  password = %s\n", passwordSummary())
+	fmt.Fprintf(out, "  session_hours = %d\n", cfg.Server.SessionHours)
+	fmt.Fprintf(out, "  allow_insecure = %v\n", cfg.Server.AllowInsecure)
+	fmt.Fprintln(out)
 
-	fmt.Println("[scanning]")
-	fmt.Printf("  scan_interval = %d\n", cfg.Scanning.ScanInterval)
-	fmt.Printf("  min_scan_interval = %d\n", cfg.Scanning.MinScanInterval)
-	fmt.Printf("  enable_port_scan = %v\n", cfg.Scanning.EnablePortScan)
-	fmt.Printf("  port_scan_range = %s\n", cfg.Scanning.PortScanRange)
-	fmt.Println()
+	fmt.Fprintln(out, "[scanning]")
+	fmt.Fprintf(out, "  scan_interval = %d\n", cfg.Scanning.ScanInterval)
+	fmt.Fprintf(out, "  min_scan_interval = %d\n", cfg.Scanning.MinScanInterval)
+	fmt.Fprintf(out, "  enable_port_scan = %v\n", cfg.Scanning.EnablePortScan)
+	fmt.Fprintf(out, "  port_scan_range = %s\n", cfg.Scanning.PortScanRange)
+	fmt.Fprintln(out)
 
-	fmt.Println("[storage]")
-	fmt.Printf("  max_devices = %d\n", cfg.Storage.MaxDevices)
-	fmt.Printf("  retention_days = %d\n", cfg.Storage.RetentionDays)
-	fmt.Printf("  data_dir = %s\n", cfg.Storage.DataDir)
-	fmt.Println()
+	fmt.Fprintln(out, "[storage]")
+	fmt.Fprintf(out, "  max_devices = %d\n", cfg.Storage.MaxDevices)
+	fmt.Fprintf(out, "  retention_days = %d\n", cfg.Storage.RetentionDays)
+	fmt.Fprintf(out, "  data_dir = %s\n", cfg.Storage.DataDir)
+	fmt.Fprintln(out)
 
-	fmt.Println("[tailscale]")
-	fmt.Printf("  enable = %v\n", cfg.Tailscale.Enable)
-	fmt.Printf("  auto_detect = %v\n", cfg.Tailscale.AutoDetect)
-	fmt.Println()
+	fmt.Fprintln(out, "[tailscale]")
+	fmt.Fprintf(out, "  enable = %v\n", cfg.Tailscale.Enable)
+	fmt.Fprintf(out, "  auto_detect = %v\n", cfg.Tailscale.AutoDetect)
+	fmt.Fprintln(out)
 
-	fmt.Println("[ui]")
-	fmt.Printf("  theme = %s\n", cfg.UI.Theme)
+	fmt.Fprintln(out, "[ui]")
+	fmt.Fprintf(out, "  theme = %s\n", cfg.UI.Theme)
 
 	return nil
 }

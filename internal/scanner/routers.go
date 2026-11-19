@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -171,26 +172,84 @@ func formatOpenWrtInterface(iface, device, network string) string {
 	return network
 }
 
+func sameOriginRedirect(reqURL, origURL *url.URL) bool {
+	if reqURL == nil || origURL == nil {
+		return false
+	}
+	if !strings.EqualFold(reqURL.Scheme, origURL.Scheme) {
+		return false
+	}
+	if !strings.EqualFold(reqURL.Hostname(), origURL.Hostname()) {
+		return false
+	}
+	return effectiveURLPort(reqURL) == effectiveURLPort(origURL)
+}
+
+func effectiveURLPort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	default:
+		return ""
+	}
+}
+
+func openWrtCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if len(via) > 0 {
+		allSameOrigin := true
+		for _, prev := range via {
+			if !sameOriginRedirect(req.URL, prev.URL) {
+				allSameOrigin = false
+				break
+			}
+		}
+		if allSameOrigin {
+			if auth := via[0].Header.Get("Authorization"); auth != "" {
+				req.Header.Set("Authorization", auth)
+			}
+		} else {
+			req.Header.Del("Authorization")
+		}
+	}
+	return nil
+}
+
+var (
+	routerVerifiedTransport = &http.Transport{
+		MaxIdleConns:        16,
+		IdleConnTimeout:     60 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+	routerInsecureTransport = &http.Transport{
+		MaxIdleConns:        16,
+		IdleConnTimeout:     60 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+	}
+)
+
+func routerTransport(verifySSL bool) *http.Transport {
+	if verifySSL {
+		return routerVerifiedTransport
+	}
+	return routerInsecureTransport
+}
+
 // FetchOpenWrtDHCP contacts the OpenWrt router to retrieve active leases and static reservations.
 func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []types.Device, reservations []types.Device, err error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
-	}
 	client := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: tr,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("stopped after 10 redirects")
-			}
-			if len(via) > 0 && req.URL.Hostname() == via[0].URL.Hostname() {
-				if auth := via[0].Header.Get("Authorization"); auth != "" {
-					req.Header.Set("Authorization", auth)
-				}
-			}
-			return nil
-		},
+		Timeout:       10 * time.Second,
+		Transport:     routerTransport(cfg.VerifySSL),
+		CheckRedirect: openWrtCheckRedirect,
 	}
 
 	// 1. Fetch Active Leases
@@ -205,15 +264,16 @@ func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []t
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to execute leases request: %w", err)
 	}
-	defer respLeases.Body.Close()
-
 	if respLeases.StatusCode != http.StatusOK {
+		respLeases.Body.Close()
 		return nil, nil, fmt.Errorf("unexpected openwrt leases API response status: %s", respLeases.Status)
 	}
 
 	var rawLeases []openWrtLease
-	if err := json.NewDecoder(respLeases.Body).Decode(&rawLeases); err != nil {
-		return nil, nil, fmt.Errorf("failed to decode openwrt leases: %w", err)
+	decodeLeasesErr := json.NewDecoder(respLeases.Body).Decode(&rawLeases)
+	respLeases.Body.Close()
+	if decodeLeasesErr != nil {
+		return nil, nil, fmt.Errorf("failed to decode openwrt leases: %w", decodeLeasesErr)
 	}
 
 	for _, rl := range rawLeases {
@@ -271,15 +331,16 @@ func FetchOpenWrtDHCP(ctx context.Context, cfg config.OpenWrtConfig) (leases []t
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to execute hosts request: %w", err)
 	}
-	defer respHosts.Body.Close()
-
 	if respHosts.StatusCode != http.StatusOK {
+		respHosts.Body.Close()
 		return nil, nil, fmt.Errorf("unexpected openwrt hosts API response status: %s", respHosts.Status)
 	}
 
 	var rawHosts []openWrtHost
-	if err := json.NewDecoder(respHosts.Body).Decode(&rawHosts); err != nil {
-		return nil, nil, fmt.Errorf("failed to decode openwrt hosts: %w", err)
+	decodeHostsErr := json.NewDecoder(respHosts.Body).Decode(&rawHosts)
+	respHosts.Body.Close()
+	if decodeHostsErr != nil {
+		return nil, nil, fmt.Errorf("failed to decode openwrt hosts: %w", decodeHostsErr)
 	}
 
 	for _, rh := range rawHosts {
@@ -326,23 +387,10 @@ func FetchOpenWrtNlbwmon(ctx context.Context, cfg config.OpenWrtConfig) (map[str
 	if baseURL == "" {
 		return nil, fmt.Errorf("missing openwrt url")
 	}
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
-	}
 	client := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: tr,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("stopped after 10 redirects")
-			}
-			if len(via) > 0 && req.URL.Hostname() == via[0].URL.Hostname() {
-				if auth := via[0].Header.Get("Authorization"); auth != "" {
-					req.Header.Set("Authorization", auth)
-				}
-			}
-			return nil
-		},
+		Timeout:       10 * time.Second,
+		Transport:     routerTransport(cfg.VerifySSL),
+		CheckRedirect: openWrtCheckRedirect,
 	}
 
 	// 1. Try uapi REST endpoint: GET /api/v3/traffic/hosts
@@ -354,34 +402,37 @@ func FetchOpenWrtNlbwmon(ctx context.Context, cfg config.OpenWrtConfig) (map[str
 		reqUAPI.Header.Set("Accept", "application/json")
 		respUAPI, err := client.Do(reqUAPI)
 		if err == nil {
-			defer respUAPI.Body.Close()
-			if respUAPI.StatusCode == http.StatusOK {
-				var items []struct {
-					IP      string      `json:"ip"`
-					MAC     string      `json:"mac"`
-					RxBytes interface{} `json:"rx_bytes"`
-					TxBytes interface{} `json:"tx_bytes"`
-				}
-				if err := json.NewDecoder(respUAPI.Body).Decode(&items); err == nil && len(items) > 0 {
-					result := make(map[string]*types.NetFlowDeviceStats)
-					for _, item := range items {
-						ip := cleanHostIP(item.IP)
-						if ip == "" {
-							continue
-						}
-						rxBytes, _ := parseNumeric(item.RxBytes)
-						txBytes, _ := parseNumeric(item.TxBytes)
-
-						st, exists := result[ip]
-						if !exists {
-							st = &types.NetFlowDeviceStats{IP: ip}
-							result[ip] = st
-						}
-						st.RxBytes += rxBytes
-						st.TxBytes += txBytes
+			var items []struct {
+				IP      string      `json:"ip"`
+				MAC     string      `json:"mac"`
+				RxBytes interface{} `json:"rx_bytes"`
+				TxBytes interface{} `json:"tx_bytes"`
+			}
+			statusOK := respUAPI.StatusCode == http.StatusOK
+			var decodeErr error
+			if statusOK {
+				decodeErr = json.NewDecoder(respUAPI.Body).Decode(&items)
+			}
+			respUAPI.Body.Close()
+			if statusOK && decodeErr == nil && len(items) > 0 {
+				result := make(map[string]*types.NetFlowDeviceStats)
+				for _, item := range items {
+					ip := cleanHostIP(item.IP)
+					if ip == "" {
+						continue
 					}
-					return result, nil
+					rxBytes, _ := parseNumeric(item.RxBytes)
+					txBytes, _ := parseNumeric(item.TxBytes)
+
+					st, exists := result[ip]
+					if !exists {
+						st = &types.NetFlowDeviceStats{IP: ip}
+						result[ip] = st
+					}
+					st.RxBytes += rxBytes
+					st.TxBytes += txBytes
 				}
+				return result, nil
 			}
 		}
 	}
@@ -540,12 +591,9 @@ func FetchOpenWrtNlbwmon(ctx context.Context, cfg config.OpenWrtConfig) (map[str
 // FetchOPNsenseDHCP contacts the OPNsense firewall to retrieve Kea leases, reservations, and ARP entries.
 func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases []types.Device, reservations []types.Device, arpEntries []types.Device, err error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
-	}
 	client := &http.Client{
 		Timeout:   10 * time.Second,
-		Transport: tr,
+		Transport: routerTransport(cfg.VerifySSL),
 	}
 
 	searchBody := []byte(`{"current": 1, "rowCount": -1}`)
@@ -562,15 +610,16 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to execute leases request: %w", err)
 	}
-	defer respLeases.Body.Close()
-
 	if respLeases.StatusCode != http.StatusOK {
+		respLeases.Body.Close()
 		return nil, nil, nil, fmt.Errorf("unexpected opnsense leases API response status: %s", respLeases.Status)
 	}
 
 	var rawLeases opnSenseLeasesResponse
-	if err := json.NewDecoder(respLeases.Body).Decode(&rawLeases); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to decode opnsense leases: %w", err)
+	decodeLeasesErr := json.NewDecoder(respLeases.Body).Decode(&rawLeases)
+	respLeases.Body.Close()
+	if decodeLeasesErr != nil {
+		return nil, nil, nil, fmt.Errorf("failed to decode opnsense leases: %w", decodeLeasesErr)
 	}
 
 	for _, rl := range rawLeases.Rows {
@@ -631,15 +680,16 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to execute reservations request: %w", err)
 	}
-	defer respReservations.Body.Close()
-
 	if respReservations.StatusCode != http.StatusOK {
+		respReservations.Body.Close()
 		return nil, nil, nil, fmt.Errorf("unexpected opnsense reservations API response status: %s", respReservations.Status)
 	}
 
 	var rawReservations opnSenseReservationsResponse
-	if err := json.NewDecoder(respReservations.Body).Decode(&rawReservations); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to decode opnsense reservations: %w", err)
+	decodeReservationsErr := json.NewDecoder(respReservations.Body).Decode(&rawReservations)
+	respReservations.Body.Close()
+	if decodeReservationsErr != nil {
+		return nil, nil, nil, fmt.Errorf("failed to decode opnsense reservations: %w", decodeReservationsErr)
 	}
 
 	for _, rr := range rawReservations.Rows {
@@ -672,13 +722,24 @@ func FetchOPNsenseDHCP(ctx context.Context, cfg config.OPNsenseConfig) (leases [
 
 	// 3. Fetch OPNsense ARP Table as supplementary leases/devices
 	reqArp, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/diagnostics/interface/getArp", nil)
-	if err == nil {
+	if err != nil {
+		logging.GlobalBuffer.Add("warn", fmt.Sprintf("[router] OPNsense getArp request creation failed: %v", err))
+	} else {
 		reqArp.SetBasicAuth(cfg.APIKey, cfg.APISecret)
-		if respArp, err := client.Do(reqArp); err == nil {
-			defer respArp.Body.Close()
-			if respArp.StatusCode == http.StatusOK {
+		respArp, err := client.Do(reqArp)
+		if err != nil {
+			logging.GlobalBuffer.Add("warn", fmt.Sprintf("[router] OPNsense getArp request failed: %v", err))
+		} else {
+			if respArp.StatusCode != http.StatusOK {
+				logging.GlobalBuffer.Add("warn", fmt.Sprintf("[router] OPNsense getArp returned HTTP %d %s", respArp.StatusCode, respArp.Status))
+				respArp.Body.Close()
+			} else {
 				var rawArp []opnSenseArp
-				if err := json.NewDecoder(respArp.Body).Decode(&rawArp); err == nil {
+				decodeErr := json.NewDecoder(respArp.Body).Decode(&rawArp)
+				respArp.Body.Close()
+				if decodeErr != nil {
+					logging.GlobalBuffer.Add("warn", fmt.Sprintf("[router] OPNsense getArp decode failed: %v", decodeErr))
+				} else {
 					for _, ra := range rawArp {
 						if ra.IP == "" {
 							continue
@@ -708,12 +769,9 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 	if baseURL == "" || cfg.APIKey == "" || cfg.APISecret == "" {
 		return nil, fmt.Errorf("missing opnsense credentials")
 	}
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.VerifySSL},
-	}
 	client := &http.Client{
 		Timeout:   10 * time.Second,
-		Transport: tr,
+		Transport: routerTransport(cfg.VerifySSL),
 	}
 
 	result := make(map[string]*types.NetFlowDeviceStats)
@@ -726,15 +784,18 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 		if err != nil {
 			logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense networkinsight/top connection failed: %v", err))
 		} else {
-			defer respFlow.Body.Close()
-			rawBody, _ := io.ReadAll(respFlow.Body)
-			preview := string(rawBody)
-			if len(preview) > 160 {
-				preview = preview[:160] + "..."
-			}
-
-			if respFlow.StatusCode != http.StatusOK {
-				logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense networkinsight/top returned HTTP %d %s: %s", respFlow.StatusCode, respFlow.Status, preview))
+			rawBody, readErr := io.ReadAll(respFlow.Body)
+			statusCode := respFlow.StatusCode
+			statusStr := respFlow.Status
+			respFlow.Body.Close()
+			if readErr != nil {
+				logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense networkinsight/top read failed: %v", readErr))
+			} else if statusCode != http.StatusOK {
+				preview := string(rawBody)
+				if len(preview) > 160 {
+					preview = preview[:160] + "..."
+				}
+				logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense networkinsight/top returned HTTP %d %s: %s", statusCode, statusStr, preview))
 			} else {
 				records := parseNetFlowRecords(rawBody)
 				if len(records) > 0 {
@@ -786,57 +847,71 @@ func FetchOPNsenseNetFlow(ctx context.Context, cfg config.OPNsenseConfig) (map[s
 		logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense firewall/query_states connection failed: %v", err))
 		return nil, fmt.Errorf("failed to execute firewall states request: %w", err)
 	}
-	defer respStates.Body.Close()
 
 	if respStates.StatusCode != http.StatusOK {
-		logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense firewall/query_states returned HTTP %d %s", respStates.StatusCode, respStates.Status))
+		statusCode := respStates.StatusCode
+		statusStr := respStates.Status
+		respStates.Body.Close()
+		logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense firewall/query_states returned HTTP %d %s", statusCode, statusStr))
 		// Fallback to GET /api/diagnostics/firewall/pf_states
 		reqPf, errPf := http.NewRequestWithContext(ctx, "GET", baseURL+"/api/diagnostics/firewall/pf_states", nil)
 		if errPf == nil {
 			reqPf.SetBasicAuth(cfg.APIKey, cfg.APISecret)
 			respPf, errDo := client.Do(reqPf)
-			if errDo == nil && respPf.StatusCode == http.StatusOK {
-				defer respPf.Body.Close()
-				rawPf, _ := io.ReadAll(respPf.Body)
-				records := parseNetFlowRecords(rawPf)
-				logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense firewall/pf_states: HTTP 200, parsed %d records", len(records)))
-				for _, rec := range records {
-					origBytes, replyBytes := extractFlowDirectionalBytes(rec, "bytes", "octets", "byte_count")
-					if origBytes <= 0 && replyBytes <= 0 {
-						continue
-					}
-					srcIP := cleanHostIP(extractFlowField(rec, "src_addr", "source", "src", "address"))
-					dstIP := cleanHostIP(extractFlowField(rec, "dst_addr", "destination", "dst"))
-					if srcIP != "" {
-						st, ok := result[srcIP]
-						if !ok {
-							st = &types.NetFlowDeviceStats{IP: srcIP}
-							result[srcIP] = st
-						}
-						st.TxBytes += origBytes
-						st.RxBytes += replyBytes
-					}
-					if dstIP != "" {
-						st, ok := result[dstIP]
-						if !ok {
-							st = &types.NetFlowDeviceStats{IP: dstIP}
-							result[dstIP] = st
-						}
-						st.RxBytes += origBytes
-						st.TxBytes += replyBytes
-					}
+			if errDo == nil {
+				pfStatusOK := respPf.StatusCode == http.StatusOK
+				var rawPf []byte
+				var pfReadErr error
+				if pfStatusOK {
+					rawPf, pfReadErr = io.ReadAll(respPf.Body)
 				}
-				if len(result) > 0 {
-					return result, nil
-				}
-			} else if respPf != nil {
 				respPf.Body.Close()
+				if pfStatusOK && pfReadErr != nil {
+					logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense firewall/pf_states read failed: %v", pfReadErr))
+				} else if pfStatusOK {
+					records := parseNetFlowRecords(rawPf)
+					logging.GlobalBuffer.Add("info", fmt.Sprintf("[traffic] OPNsense firewall/pf_states: HTTP 200, parsed %d records", len(records)))
+					for _, rec := range records {
+						origBytes, replyBytes := extractFlowDirectionalBytes(rec, "bytes", "octets", "byte_count")
+						if origBytes <= 0 && replyBytes <= 0 {
+							continue
+						}
+						srcIP := cleanHostIP(extractFlowField(rec, "src_addr", "source", "src", "address"))
+						dstIP := cleanHostIP(extractFlowField(rec, "dst_addr", "destination", "dst"))
+						if srcIP != "" {
+							st, ok := result[srcIP]
+							if !ok {
+								st = &types.NetFlowDeviceStats{IP: srcIP}
+								result[srcIP] = st
+							}
+							st.TxBytes += origBytes
+							st.RxBytes += replyBytes
+						}
+						if dstIP != "" {
+							st, ok := result[dstIP]
+							if !ok {
+								st = &types.NetFlowDeviceStats{IP: dstIP}
+								result[dstIP] = st
+							}
+							st.RxBytes += origBytes
+							st.TxBytes += replyBytes
+						}
+					}
+					if len(result) > 0 {
+						return result, nil
+					}
+				}
 			}
 		}
-		return nil, fmt.Errorf("unexpected firewall states response status: %s", respStates.Status)
+		return nil, fmt.Errorf("unexpected firewall states response status: %s", statusStr)
 	}
 
-	rawStates, _ := io.ReadAll(respStates.Body)
+	rawStates, readStatesErr := io.ReadAll(respStates.Body)
+	respStates.Body.Close()
+	if readStatesErr != nil {
+		logging.GlobalBuffer.Add("warn", fmt.Sprintf("[traffic] OPNsense firewall/query_states read failed: %v", readStatesErr))
+		return nil, fmt.Errorf("failed to read firewall states response: %w", readStatesErr)
+	}
 	previewStates := string(rawStates)
 	if len(previewStates) > 160 {
 		previewStates = previewStates[:160] + "..."
