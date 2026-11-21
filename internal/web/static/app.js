@@ -1223,8 +1223,8 @@ async function deleteDevice(ip) {
             document.querySelector(`.device-row[data-ip="${CSS.escape(ip)}"]`)?.remove();
             document.querySelector(`.device-subrow[data-ip="${CSS.escape(ip)}"]`)?.remove();
             const sbIp = document.getElementById('sb-edit-ip')?.value;
-            if (sbIp === ip) {
-                closeDeviceSidebar();
+            if (sbIp === ip || lastSidebarDeviceIp === ip) {
+                closeDeviceSidebar({ clearHistory: true });
             }
             filterDevices(); // Update count
         } else {
@@ -1310,9 +1310,17 @@ function safeHttpUrl(url) {
     return /^https?:\/\//i.test(trimmed) ? trimmed : '';
 }
 
-function selectDeviceRow(target) {
+function selectDeviceRow(target, options = {}) {
     const row = deviceOperationState.resolveDeviceRow(target, document);
     if (!row) return;
+
+    const toggle = options.toggle !== false;
+    const sidebar = document.getElementById('device-sidebar');
+    const isSidebarOpen = sidebar && !sidebar.classList.contains('hidden');
+    if (toggle && isSidebarOpen && row.classList.contains('selected-row')) {
+        closeDeviceSidebar();
+        return;
+    }
 
     document.querySelectorAll('.device-row.selected-row, .device-subrow.selected-row').forEach(r => r.classList.remove('selected-row'));
     row.classList.add('selected-row');
@@ -1838,10 +1846,56 @@ function populateSidebarEditForm(data) {
 	updateSSHPortControl();
 }
 
+let lastSidebarDeviceIp = '';
+let lastSidebarDeviceLabel = '';
+
+function updateSidebarReopenTab() {
+    const tab = document.getElementById('sidebar-reopen-tab');
+    const labelEl = document.getElementById('sidebar-reopen-label');
+    const sidebar = document.getElementById('device-sidebar');
+    const isSidebarOpen = sidebar && !sidebar.classList.contains('hidden');
+
+    if (!tab) return;
+    if (isSidebarOpen || !lastSidebarDeviceIp) {
+        tab.classList.add('hidden');
+        tab.setAttribute('aria-expanded', isSidebarOpen ? 'true' : 'false');
+        return;
+    }
+
+    const rowExists = document.querySelector(`.device-row[data-ip="${CSS.escape(lastSidebarDeviceIp)}"]`);
+    if (!rowExists) {
+        lastSidebarDeviceIp = '';
+        lastSidebarDeviceLabel = '';
+        tab.classList.add('hidden');
+        tab.setAttribute('aria-expanded', 'false');
+        return;
+    }
+
+    const label = lastSidebarDeviceLabel || lastSidebarDeviceIp;
+    if (labelEl) labelEl.textContent = label;
+    tab.title = `Re-open ${label}`;
+    tab.setAttribute('aria-label', `Re-open ${label} details`);
+    tab.setAttribute('aria-expanded', 'false');
+    tab.classList.remove('hidden');
+}
+
+function reopenDeviceSidebar() {
+    if (!lastSidebarDeviceIp) {
+        updateSidebarReopenTab();
+        return;
+    }
+    const row = document.querySelector(`.device-row[data-ip="${CSS.escape(lastSidebarDeviceIp)}"]`);
+    if (row) {
+        selectDeviceRow(row, { toggle: false });
+    } else {
+        closeDeviceSidebar({ clearHistory: true });
+    }
+}
+
 function openDeviceSidebar(target) {
     let row = null;
     let data = null;
-    if (target instanceof HTMLElement) {
+    if (typeof HTMLElement !== 'undefined' && target instanceof HTMLElement) {
         row = target;
         data = target.dataset;
     } else if (typeof target === 'string') {
@@ -1854,12 +1908,19 @@ function openDeviceSidebar(target) {
         data = target || {};
     }
 
+    const deviceIp = data.ip || row?.dataset?.ip || '';
+    if (deviceIp) {
+        lastSidebarDeviceIp = deviceIp;
+        lastSidebarDeviceLabel = data.customHostnameOriginal || data.labelOriginal || data.hostnameDisplay || data.unifiName || data.hostname || deviceIp;
+    }
+
     syncDeviceSidebarTelemetry(data);
     populateSidebarEditForm(data);
 
     // Show sidebar
     const sidebar = document.getElementById('device-sidebar');
     if (sidebar) sidebar.classList.remove('hidden');
+    updateSidebarReopenTab();
     initializeSidebarSaveState();
 }
 
@@ -1965,11 +2026,16 @@ async function rescanSidebarDeviceDeepServices() {
 	}
 }
 
-function closeDeviceSidebar() {
+function closeDeviceSidebar(options = {}) {
     const sidebar = document.getElementById('device-sidebar');
     if (sidebar) sidebar.classList.add('hidden');
-    document.querySelectorAll('.device-row.selected-row').forEach(r => r.classList.remove('selected-row'));
-	resetSidebarSaveState();
+    document.querySelectorAll('.device-row.selected-row, .device-subrow.selected-row').forEach(r => r.classList.remove('selected-row'));
+    if (options && options.clearHistory) {
+        lastSidebarDeviceIp = '';
+        lastSidebarDeviceLabel = '';
+    }
+    resetSidebarSaveState();
+    updateSidebarReopenTab();
 }
 
 let sidebarSaveBaseline = '';
@@ -1998,6 +2064,7 @@ function updateSidebarSaveBar() {
 	const inlineSaveVisible = sidebarInlineSaveVisible && inlineSave && elementIsInViewport(inlineSave);
 	bar.classList.toggle('hidden', !sidebarHasUnsavedChanges() || inlineSaveVisible);
 	syncSidebarSaveBarPosition();
+	syncScanFooterOffset();
 }
 
 function syncSidebarSaveBarPosition() {
@@ -2382,6 +2449,7 @@ async function saveSidebarDevice() {
 window.selectDeviceRow = selectDeviceRow;
 window.openDeviceSidebar = openDeviceSidebar;
 window.closeDeviceSidebar = closeDeviceSidebar;
+window.reopenDeviceSidebar = reopenDeviceSidebar;
 window.saveSidebarDevice = saveSidebarDevice;
 window.viewSidebarPresenceHistory = viewSidebarPresenceHistory;
 window.openTrafficModal = openTrafficModal;
@@ -2883,6 +2951,8 @@ async function refreshInPlace() {
         const rowToSelect = document.querySelector(`.device-row[data-ip="${CSS.escape(selectedIp)}"]`);
         if (rowToSelect) {
             rowToSelect.classList.add('selected-row');
+            const subrowToSelect = deviceOperationState.findSubrowForDeviceRow(rowToSelect, document);
+            if (subrowToSelect) subrowToSelect.classList.add('selected-row');
             const sidebar = document.getElementById('device-sidebar');
             if (sidebar && !sidebar.classList.contains('hidden')) {
                 syncDeviceSidebarTelemetry(rowToSelect.dataset);
@@ -2897,8 +2967,14 @@ async function refreshInPlace() {
                     initializeSidebarSaveState();
                 }
             }
+        } else {
+            const sidebar = document.getElementById('device-sidebar');
+            if (sidebar && !sidebar.classList.contains('hidden')) {
+                closeDeviceSidebar({ clearHistory: true });
+            }
         }
     }
+    updateSidebarReopenTab();
 
     // The search box, filter dropdowns and column sort are deliberately left
     // alone, so re-apply what they currently say to the rows that just arrived.
@@ -3213,6 +3289,27 @@ async function disconnectTailscale() {
     window.addEventListener('devices-refreshed', remeasure);
 })();
 
+function syncScanFooterOffset() {
+    const footer = document.getElementById('scan-status-footer');
+    let footerH = 0;
+    if (footer) {
+        if (footer.offsetHeight > 0) {
+            footerH = footer.offsetHeight;
+        } else {
+            footerH = footer.classList.contains('minimized') ? 26 : 38;
+        }
+    }
+    document.documentElement.style.setProperty('--scan-footer-h', footerH + 'px');
+
+    const scrollTopBtn = document.getElementById('scroll-top');
+    if (scrollTopBtn) {
+        const saveBar = document.getElementById('sb-save-bar');
+        const saveBarVisible = saveBar && !saveBar.classList.contains('hidden');
+        const saveBarH = saveBarVisible ? ((saveBar.offsetHeight > 0 ? saveBar.offsetHeight : 48) + 12) : 0;
+        scrollTopBtn.style.bottom = (16 + footerH + saveBarH) + 'px';
+    }
+}
+
 // Back-to-top button: a floating orangutan that appears once the page is
 // scrolled past a threshold and smoothly returns to the top when clicked.
 (function initScrollTop() {
@@ -3231,6 +3328,7 @@ async function disconnectTailscale() {
         const scrollbar = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
         btn.style.left = 'auto';
         btn.style.right = (18 + scrollbar) + 'px';
+        syncScanFooterOffset();
     }
 
     function onScroll() {
@@ -3262,6 +3360,7 @@ async function disconnectTailscale() {
         document.documentElement.style.setProperty('--section-header-h', secHeaderH + 'px');
         document.documentElement.style.setProperty('--table-toolbar-h', toolbarH + 'px');
         document.documentElement.style.setProperty('--table-thead-top', (headerH + secHeaderH + toolbarH) + 'px');
+        syncScanFooterOffset();
     }
 
     if (document.readyState === 'loading') {
@@ -3349,16 +3448,21 @@ function toggleScanFooter() {
     } else {
         footer.classList.toggle('minimized');
     }
+    syncScanFooterOffset();
 }
 
 (function initScanFooter() {
     const footer = document.getElementById('scan-status-footer');
-    if (!footer) return;
+    if (!footer) {
+        syncScanFooterOffset();
+        return;
+    }
     try {
         if (localStorage.getItem('scan-footer-minimized') === 'true') {
             footer.classList.add('minimized');
         }
     } catch (_) {}
+    syncScanFooterOffset();
     if (typeof scanCoordinator !== 'undefined') {
         scanCoordinator.addListener(updateScanStatusFooter);
     }
@@ -3597,7 +3701,7 @@ function toggleScanFooter() {
 
             const targetRow = visibleRows[nextIndex];
             if (targetRow) {
-                selectDeviceRow(targetRow);
+                selectDeviceRow(targetRow, { toggle: false });
                 targetRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
             }
         }
@@ -3691,6 +3795,7 @@ function toggleScanFooter() {
                 return;
             }
             Object.keys(widths).forEach(className => {
+                if (className === 'col-actions') return;
                 const elements = table.querySelectorAll('.' + className);
                 elements.forEach(el => {
                     el.style.width = widths[className];
@@ -3749,7 +3854,7 @@ function toggleScanFooter() {
                     const widths = {};
                     table.querySelectorAll('thead th').forEach(h => {
                         const colClass = Array.from(h.classList).find(c => c.startsWith('col-'));
-                        if (colClass && h.style.width) {
+                        if (colClass && colClass !== 'col-actions' && h.style.width) {
                             widths[colClass] = h.style.width;
                         }
                     });

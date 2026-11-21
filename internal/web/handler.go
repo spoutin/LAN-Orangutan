@@ -296,6 +296,7 @@ func (h *Handler) renderSetup(w http.ResponseWriter, message string, status int)
 	data := PageData{
 		Title:             "Welcome - LAN Orangutan",
 		Theme:             h.cfg.UI.Theme,
+		Version:           h.version,
 		Error:             message,
 		MinPasswordLength: auth.MinPasswordLength,
 	}
@@ -369,9 +370,10 @@ func (h *Handler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 // renderLogin draws the sign in page, optionally with an error message.
 func (h *Handler) renderLogin(w http.ResponseWriter, message string) {
 	data := PageData{
-		Title: "Sign in - LAN Orangutan",
-		Theme: h.cfg.UI.Theme,
-		Error: message,
+		Title:   "Sign in - LAN Orangutan",
+		Theme:   h.cfg.UI.Theme,
+		Version: h.version,
+		Error:   message,
 	}
 
 	var buf bytes.Buffer

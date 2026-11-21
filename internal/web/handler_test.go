@@ -1749,3 +1749,62 @@ func TestWebHandlerServeHTTPRoutes(t *testing.T) {
 		})
 	}
 }
+
+func TestTemplatesIncludeVersionedCSSAndSidebarStructure(t *testing.T) {
+	h, _ := newTestHandler(t, testPassword)
+
+	// Index page should have sidebar-header-text, #sidebar-reopen-tab, and valid list structure
+	rec := httptest.NewRecorder()
+	h.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index status = %d, want 200", rec.Code)
+	}
+	indexBody := rec.Body.String()
+	if !strings.Contains(indexBody, `class="sidebar-header-text"`) {
+		t.Error("index.html missing sidebar-header-text class on sidebar title wrapper")
+	}
+	if !strings.Contains(indexBody, `id="sidebar-reopen-tab"`) {
+		t.Error("index.html missing #sidebar-reopen-tab re-open button")
+	}
+	if strings.Contains(indexBody, "<ul class=\"sidebar-spec-list\">") {
+		ulStart := strings.Index(indexBody, `id="sb-hardware-card"`)
+		if ulStart > 0 {
+			hwSection := indexBody[ulStart:]
+			ulEnd := strings.Index(hwSection, "</ul>")
+			btnIdx := strings.Index(hwSection, `id="sb-services-btn"`)
+			if ulEnd > 0 && btnIdx > 0 && btnIdx < ulEnd {
+				t.Error("index.html must not place #sb-services-btn directly inside <ul>")
+			}
+		}
+	}
+
+	// Scans, Settings, and Login pages must cache-bust /static/style.css?v=...
+	wantCSS := `/static/style.css?v=` + h.version
+	for _, route := range []string{"/scans", "/settings"} {
+		r := httptest.NewRecorder()
+		h.ServeHTTP(r, httptest.NewRequest(http.MethodGet, route, nil))
+		if r.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200", route, r.Code)
+		}
+		if !strings.Contains(r.Body.String(), wantCSS) {
+			t.Errorf("GET %s missing versioned CSS link %q", route, wantCSS)
+		}
+	}
+
+	loginRec := httptest.NewRecorder()
+	h.HandleLogin(loginRec, httptest.NewRequest(http.MethodGet, auth.LoginPath, nil))
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("HandleLogin status = %d, want 200", loginRec.Code)
+	}
+	if !strings.Contains(loginRec.Body.String(), wantCSS) {
+		t.Errorf("login.html missing versioned CSS link %q", wantCSS)
+	}
+
+	// Setup page (fresh instance without password) must also cache-bust /static/style.css?v=...
+	setupH, _ := newTestHandler(t, "")
+	sr := httptest.NewRecorder()
+	setupH.renderSetup(sr, "", http.StatusOK)
+	if !strings.Contains(sr.Body.String(), `/static/style.css?v=`+setupH.version) {
+		t.Errorf("setup.html missing versioned CSS link")
+	}
+}

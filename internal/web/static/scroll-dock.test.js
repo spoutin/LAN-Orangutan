@@ -38,6 +38,11 @@ function loadScrollDockApp({
     headerHeight = 64,
     secHeaderHeight = 54,
     toolbarHeight = 38,
+    scanFooterHeight = 38,
+    scanFooterMinimized = false,
+    hasScanFooter = true,
+    saveBarVisible = false,
+    saveBarHeight = 48,
     holderTop = 200,
     stripHeight = 44,
     stripScrollWidth = 600,
@@ -59,6 +64,17 @@ function loadScrollDockApp({
     };
     const secHeaderEl = { offsetHeight: secHeaderHeight };
     const toolbarEl = { offsetHeight: toolbarHeight };
+    const scanFooterEl = hasScanFooter ? {
+        offsetHeight: scanFooterMinimized ? 26 : scanFooterHeight,
+        classList: makeClassList(scanFooterMinimized ? ['scan-status-footer', 'minimized'] : ['scan-status-footer']),
+        querySelector: () => null,
+        querySelectorAll: () => [],
+    } : null;
+    const saveBarEl = {
+        style: makeStyle(),
+        offsetHeight: saveBarHeight,
+        classList: makeClassList(saveBarVisible ? ['sidebar-save-bar'] : ['sidebar-save-bar', 'hidden']),
+    };
     const stripEl = {
         offsetHeight: stripHeight,
         get scrollWidth() { return stripScrollWidth; },
@@ -95,7 +111,12 @@ function loadScrollDockApp({
             classList: makeClassList(),
             appendChild: () => {},
         },
-        getElementById: (id) => id === 'scroll-top' ? scrollTopBtn : null,
+        getElementById: (id) => {
+            if (id === 'scroll-top') return scrollTopBtn;
+            if (id === 'scan-status-footer') return scanFooterEl;
+            if (id === 'sb-save-bar') return saveBarEl;
+            return null;
+        },
         querySelector: (sel) => {
             switch (sel) {
                 case '.header': return headerEl;
@@ -183,8 +204,11 @@ function loadScrollDockApp({
         holderStyle,
         headerEl,
         toolbarEl,
+        scanFooterEl,
+        saveBarEl,
         scrollTopBtn,
         scrollCalls,
+        sandbox,
         setStripOverflow(overflowing) {
             stripScrollWidth = overflowing ? 900 : 600;
             stripClientWidth = 600;
@@ -258,4 +282,33 @@ test('initStatDock docks stat strip past touchAt and hides overflowing pieces wh
     assert.equal(app.document.body.classList.contains('strip-docked'), false);
     assert.equal(app.document.body.classList.contains('dock-hide-scan'), false);
     assert.equal(app.document.body.classList.contains('dock-hide-meta'), false);
+});
+
+test('initStickyHeader and initScrollTop adjust --scan-footer-h and #scroll-top bottom offset for scan footer and save bar', () => {
+    const app = loadScrollDockApp({ scanFooterHeight: 38, saveBarVisible: false });
+    assert.equal(app.rootStyle.getPropertyValue('--scan-footer-h'), '38px');
+    assert.equal(app.scrollTopBtn.style.bottom, '54px');
+
+    // Minimizing the scan footer shrinks --scan-footer-h to 26px and lowers #scroll-top
+    app.scanFooterEl.classList.add('minimized');
+    app.scanFooterEl.offsetHeight = 26;
+    app.sandbox.toggleScanFooter();
+    // After toggleScanFooter() toggles minimized off then back on or syncs state:
+    // Verify explicit minimized state syncs properly
+    app.scanFooterEl.classList.add('minimized');
+    app.scanFooterEl.offsetHeight = 26;
+    app.window.dispatchEvent(new app.Event('resize'));
+    assert.equal(app.rootStyle.getPropertyValue('--scan-footer-h'), '26px');
+    assert.equal(app.scrollTopBtn.style.bottom, '42px');
+
+    // Showing the floating save bar lifts #scroll-top clear of it
+    app.saveBarEl.classList.remove('hidden');
+    app.window.dispatchEvent(new app.Event('resize'));
+    assert.equal(parseInt(app.scrollTopBtn.style.bottom, 10) >= 90, true);
+});
+
+test('initStickyHeader sets --scan-footer-h to 0px when scan footer is absent', () => {
+    const app = loadScrollDockApp({ hasScanFooter: false });
+    assert.equal(app.rootStyle.getPropertyValue('--scan-footer-h'), '0px');
+    assert.equal(app.scrollTopBtn.style.bottom, '16px');
 });

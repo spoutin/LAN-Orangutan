@@ -96,6 +96,7 @@ function loadAppContext(extraElements = {}, extraQuery = null) {
         innerWidth: 1280,
         scrollY: 0,
         location: { href: 'http://localhost/', reload: () => {} },
+        matchMedia: () => ({ matches: false, addEventListener: () => {} }),
         addEventListener(type, fn) {
             if (!winListeners.has(type)) winListeners.set(type, new Set());
             winListeners.get(type).add(fn);
@@ -153,6 +154,7 @@ function loadAppContext(extraElements = {}, extraQuery = null) {
         },
         clearTimeout() {},
         Event: class Event { constructor(type) { this.type = type; } },
+        HTMLElement: class HTMLElement {},
         document,
         window: windowObj,
         globalThis: null,
@@ -535,4 +537,135 @@ test('shared JS helpers are consolidated without duplicate definitions across mo
     assert.equal(/\bfunction\s+escapeHtml\b/.test(appJs), false, 'app.js must not duplicate escapeHtml');
     assert.equal(/all\.filter\(row\s*=>/.test(appJs), false, 'app.js must not duplicate filterScanHistoryRows logic');
     assert.equal(/target\.closest\('\.device-subrow'\)\?\.previousElementSibling/.test(appJs), false, 'app.js must not duplicate resolveDeviceRow logic');
+});
+
+test('selectDeviceRow toggles sidebar, Escape dismisses it, and reopenDeviceSidebar pops it back out', () => {
+    const makeClassList = (initial = []) => {
+        const set = new Set(initial);
+        return {
+            add: (...cls) => cls.forEach(c => set.add(c)),
+            remove: (...cls) => cls.forEach(c => set.delete(c)),
+            toggle: (c, force) => {
+                if (force === undefined) {
+                    if (set.has(c)) { set.delete(c); return false; }
+                    set.add(c); return true;
+                }
+                if (force) set.add(c); else set.delete(c);
+                return !!force;
+            },
+            contains: c => set.has(c),
+        };
+    };
+
+    const sidebar = {
+        id: 'device-sidebar',
+        classList: makeClassList(['device-sidebar', 'hidden']),
+        getBoundingClientRect: () => ({ right: 1260, width: 380 }),
+        setAttribute: () => {},
+    };
+    const reopenLabel = { textContent: '' };
+    const reopenTab = {
+        id: 'sidebar-reopen-tab',
+        classList: makeClassList(['sidebar-reopen-tab', 'hidden']),
+        title: '',
+        attrs: {},
+        setAttribute(k, v) { this.attrs[k] = String(v); },
+    };
+
+    const row = {
+        dataset: {
+            ip: '10.0.0.42',
+            hostname: 'proxmox-01',
+            hostnameDisplay: 'proxmox-01',
+            macOriginal: 'aa:bb:cc:dd:ee:42',
+            vendorOriginal: 'Supermicro',
+            status: 'online',
+            statusClass: 'status-online',
+            ipsJson: '[]',
+        },
+        classList: makeClassList(['device-row']),
+        style: {},
+    };
+    const subrow = {
+        dataset: { ip: '10.0.0.42' },
+        classList: makeClassList(['device-subrow']),
+        style: {},
+    };
+
+    const extraEls = {
+        'device-sidebar': sidebar,
+        'sidebar-reopen-tab': reopenTab,
+        'sidebar-reopen-label': reopenLabel,
+        'sb-title': { textContent: '' },
+        'sb-mac': { textContent: '' },
+        'sb-vendor': { textContent: '' },
+        'sb-edit-ip': { value: '' },
+        'sb-save-bar': { classList: makeClassList(['sidebar-save-bar', 'hidden']), style: { setProperty: () => {} } },
+    };
+
+    const ctx = loadAppContext(extraEls, {
+        querySelector(sel) {
+            if (sel === '.device-row.selected-row') {
+                return row.classList.contains('selected-row') ? row : null;
+            }
+            if (sel === '.device-row[data-ip="10\\.0\\.0\\.42"]' || sel === '.device-row[data-ip="10.0.0.42"]') {
+                return row;
+            }
+            if (sel === '.device-subrow[data-ip="10\\.0\\.0\\.42"]' || sel === '.device-subrow[data-ip="10.0.0.42"]') {
+                return subrow;
+            }
+            return undefined;
+        },
+        querySelectorAll(sel) {
+            if (sel === '.device-row.selected-row, .device-subrow.selected-row') {
+                return [row, subrow].filter(el => el.classList.contains('selected-row'));
+            }
+            if (sel === '.device-row.selected-row') {
+                return row.classList.contains('selected-row') ? [row] : [];
+            }
+            return undefined;
+        },
+    });
+
+    // First click opens sidebar and hides reopen tab
+    Object.setPrototypeOf(row, ctx.sandbox.HTMLElement.prototype);
+    ctx.sandbox.selectDeviceRow(row);
+    assert.equal(sidebar.classList.contains('hidden'), false);
+    assert.equal(row.classList.contains('selected-row'), true);
+    assert.equal(subrow.classList.contains('selected-row'), true);
+    assert.equal(reopenTab.classList.contains('hidden'), true);
+
+    // Second click on same row toggles sidebar closed and exposes reopen tab
+    ctx.sandbox.selectDeviceRow(row);
+    assert.equal(sidebar.classList.contains('hidden'), true);
+    assert.equal(row.classList.contains('selected-row'), false);
+    assert.equal(subrow.classList.contains('selected-row'), false);
+    assert.equal(reopenTab.classList.contains('hidden'), false);
+    assert.equal(reopenLabel.textContent, 'proxmox-01');
+
+    // Reopen tab pops the drawer right back out for the last selected device
+    assert.equal(typeof ctx.sandbox.reopenDeviceSidebar, 'function');
+    ctx.sandbox.reopenDeviceSidebar();
+    assert.equal(sidebar.classList.contains('hidden'), false);
+    assert.equal(row.classList.contains('selected-row'), true);
+    assert.equal(reopenTab.classList.contains('hidden'), true);
+
+    // Arrow navigation / explicit { toggle: false } does NOT collapse on same row
+    ctx.sandbox.selectDeviceRow(row, { toggle: false });
+    assert.equal(sidebar.classList.contains('hidden'), false);
+
+    // Escape closes sidebar and reveals reopen tab
+    ctx.document.dispatchEvent({
+        type: 'keydown',
+        key: 'Escape',
+        preventDefault: () => {},
+        target: { closest: () => null, matches: () => false },
+        stopImmediatePropagation: () => {},
+    });
+    assert.equal(sidebar.classList.contains('hidden'), true);
+    assert.equal(reopenTab.classList.contains('hidden'), false);
+
+    // Clearing history (e.g. after delete) hides the reopen tab
+    ctx.sandbox.closeDeviceSidebar({ clearHistory: true });
+    assert.equal(reopenTab.classList.contains('hidden'), true);
 });

@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settings - LAN Orangutan</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v={{.Version}}">
     <link rel="icon" type="image/svg+xml" href="/static/orangutan.svg">
 </head>
 <body>
@@ -309,11 +309,11 @@ orangutan export out.csv</code></pre>
     <div id="token-created-modal" class="modal" style="display:none">
         <div class="modal-content" style="max-width: 520px; width: 90%;">
             <div class="modal-header">
-                <h3 style="color: var(--primary, #2da44e);">Token Generated</h3>
+                <h3 style="color: var(--success, #2c9e6b);">Token Generated</h3>
                 <button class="modal-close" onclick="closeTokenCreatedModal()">×</button>
             </div>
             <div class="modal-body" style="padding: 1.5rem;">
-                <div style="background: rgba(227, 98, 9, 0.1); border: 1px solid #e36209; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--text);">
+                <div style="background: rgba(227, 98, 9, 0.1); border: 1px solid #e36209; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--text-primary);">
                     ⚠️ <strong>Copy this token now.</strong> It will never be displayed again.
                 </div>
                 <div class="form-group">
@@ -345,7 +345,7 @@ orangutan export out.csv</code></pre>
                     <strong>Target:</strong> <code id="error-modal-target"></code>
                 </div>
                 <div style="margin-bottom: 0.5rem; font-size: 0.85rem; font-weight: bold; color: var(--text-muted);">Error Output:</div>
-                <pre id="error-modal-text" style="background: var(--bg-main); border: 1px solid var(--border); padding: 1rem; border-radius: 6px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; color: var(--text);"></pre>
+                <pre id="error-modal-text" style="background: var(--bg-primary); border: 1px solid var(--border); padding: 1rem; border-radius: 6px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; color: var(--text-primary);"></pre>
             </div>
             <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
                 <button class="btn btn-secondary" id="error-modal-logs-btn" onclick="openLogsModalForError()">Search in Logs</button>
@@ -381,7 +381,7 @@ orangutan export out.csv</code></pre>
                         <button class="btn" onclick="copyLogsToClipboard()" title="Copy visible logs">Copy</button>
                     </div>
                 </div>
-                <div style="flex-grow: 1; min-height: 350px; max-height: 520px; overflow-y: auto; background: var(--bg-main); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; line-height: 1.5;" id="logs-terminal-container">
+                <div style="flex-grow: 1; min-height: 350px; max-height: 520px; overflow-y: auto; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; line-height: 1.5;" id="logs-terminal-container">
                     <div id="logs-terminal-content">Loading logs...</div>
                 </div>
             </div>

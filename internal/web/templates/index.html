@@ -461,14 +461,14 @@ orangutan export out.csv</code></pre>
                         <div class="sidebar-header-box">
                             <div class="sidebar-header-info">
                                 <span id="sb-icon" class="sidebar-device-icon">💻</span>
-                                <div>
+                                <div class="sidebar-header-text">
                                     <h3 id="sb-title" class="sidebar-title">Device Details</h3>
                                     <div class="sidebar-subtitle">
                                         <span id="sb-mac">--:--:--:--:--:--</span> &middot; <span id="sb-vendor">Unknown</span>
                                     </div>
                                 </div>
                             </div>
-                            <button type="button" class="sidebar-close-btn" onclick="closeDeviceSidebar()" aria-label="Close sidebar">&times;</button>
+                            <button type="button" class="sidebar-close-btn" onclick="closeDeviceSidebar()" aria-label="Close sidebar" title="Close sidebar (Esc)">&times;</button>
                         </div>
 
                         <!-- Quick Action Bar -->
@@ -686,7 +686,6 @@ orangutan export out.csv</code></pre>
 										<span class="spec-label">Open services:</span>
 										<span class="spec-val" id="sb-open-services-summary">Not scanned yet</span>
 									</li>
-									<button type="button" class="btn sb-services-button" id="sb-services-btn" onclick="openServiceDetails()">View services</button>
 									<li>
 										<span class="spec-label">Last deep scan:</span>
 										<span class="spec-val" id="sb-last-deep-scan">Never</span>
@@ -707,6 +706,7 @@ orangutan export out.csv</code></pre>
                                             <span class="spec-val" id="sb-last-seen">—</span>
                                         </li>
                                     </ul>
+                                    <button type="button" class="btn sb-services-button" id="sb-services-btn" onclick="openServiceDetails()">View services</button>
                                     <button type="button" id="sb-history-btn" class="btn" style="width: 100%; margin-top: 0.5rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: var(--bg-card-hover); border: 1px solid var(--border);" onclick="viewSidebarPresenceHistory()">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                             <circle cx="12" cy="12" r="10"/>
@@ -788,6 +788,10 @@ orangutan export out.csv</code></pre>
                             </div>
                         </div>
                     </aside>
+                    <button type="button" id="sidebar-reopen-tab" class="sidebar-reopen-tab hidden" onclick="reopenDeviceSidebar()" aria-label="Re-open device details" aria-expanded="false" title="Re-open device details">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+                        <span id="sidebar-reopen-label">Details</span>
+                    </button>
                 </div>
                 {{/* Everything above is a snapshot from the last scan, not a
                      live view. State when that was, so "last seen" times are
@@ -928,7 +932,7 @@ orangutan export out.csv</code></pre>
                         </div>
                         <div class="form-group" id="detail-linked-children-group" style="display: none;">
                             <label>Linked Aliases (Child Devices)</label>
-                            <div id="detail-linked-children-list" style="padding: 10px; border: 1px dashed var(--border); border-radius: var(--radius-sm); font-size: 0.85rem; color: var(--text); background: var(--bg-main); display: flex; flex-direction: column; gap: 4px;">
+                            <div id="detail-linked-children-list" style="padding: 10px; border: 1px dashed var(--border); border-radius: var(--radius-sm); font-size: 0.85rem; color: var(--text-primary); background: var(--bg-primary); display: flex; flex-direction: column; gap: 4px;">
                             </div>
                         </div>
                     </form>
@@ -986,7 +990,7 @@ orangutan export out.csv</code></pre>
                     <strong>Target:</strong> <code id="error-modal-target"></code>
                 </div>
                 <div style="margin-bottom: 0.5rem; font-size: 0.85rem; font-weight: bold; color: var(--text-muted);">Error Output:</div>
-                <pre id="error-modal-text" style="background: var(--bg-main); border: 1px solid var(--border); padding: 1rem; border-radius: 6px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; color: var(--text);"></pre>
+                <pre id="error-modal-text" style="background: var(--bg-primary); border: 1px solid var(--border); padding: 1rem; border-radius: 6px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; color: var(--text-primary);"></pre>
             </div>
             <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
                 <button class="btn btn-secondary" id="error-modal-logs-btn" onclick="openLogsModalForError()">Search in Logs</button>
@@ -1022,7 +1026,7 @@ orangutan export out.csv</code></pre>
                         <button class="btn" onclick="copyLogsToClipboard()" title="Copy visible logs">Copy</button>
                     </div>
                 </div>
-                <div style="flex-grow: 1; min-height: 350px; max-height: 520px; overflow-y: auto; background: var(--bg-main); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; line-height: 1.5;" id="logs-terminal-container">
+                <div style="flex-grow: 1; min-height: 350px; max-height: 520px; overflow-y: auto; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; line-height: 1.5;" id="logs-terminal-container">
                     <div id="logs-terminal-content">Loading logs...</div>
                 </div>
             </div>

@@ -39,7 +39,7 @@
         return `
             <tr style="border-bottom: 1px solid var(--border);">
                 <td style="padding: 0.75rem 0.5rem; font-weight: 500;">${name}</td>
-                <td style="padding: 0.75rem 0.5rem;"><code style="background: var(--bg-main); padding: 0.2rem 0.4rem; border-radius: 4px; font-size: 0.85rem;">${prefix}…</code></td>
+                <td style="padding: 0.75rem 0.5rem;"><code style="background: var(--bg-primary); padding: 0.2rem 0.4rem; border-radius: 4px; font-size: 0.85rem;">${prefix}…</code></td>
                 <td style="padding: 0.75rem 0.5rem; color: var(--text-muted); font-size: 0.85rem;">${createdDate}</td>
                 <td style="padding: 0.75rem 0.5rem; color: var(--text-muted); font-size: 0.85rem;">${lastUsed}</td>
                 <td style="padding: 0.75rem 0.5rem; text-align: right;">
@@ -230,7 +230,7 @@
                     <span class="scan-status-badge ${badgeClass}" style="padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.7rem; text-transform: uppercase;">${escapeHtml(event?.event || '')}</span>
                     <span style="color:var(--text-muted); font-size:0.75rem;">${escapeHtml(ago)}</span>
                 </div>
-                <div style="color:var(--text); margin-top:2px;">${detailText}</div>
+                <div style="color:var(--text-primary); margin-top:2px;">${detailText}</div>
             </div>
         `;
     }
@@ -247,7 +247,7 @@
                     <span class="scan-status-badge ${badgeClass}" style="padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; text-transform: uppercase;">${escapeHtml(event?.event || '')}</span>
                     <span style="color:var(--text-muted); font-size:0.8rem;">${escapeHtml(ago)}</span>
                 </div>
-                <div style="color:var(--text); margin-top:4px;">${detailText}</div>
+                <div style="color:var(--text-primary); margin-top:4px;">${detailText}</div>
                 <div style="color:var(--text-muted); font-size:0.75rem; margin-top:2px;">
                     Logged on ${createdStr} (IP: ${ip}${macPart})
                 </div>
